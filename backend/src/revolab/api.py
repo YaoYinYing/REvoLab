@@ -57,7 +57,19 @@ def get_project(project_id: UUID, session: Session = Depends(get_session)) -> Pr
         objects=[ObjectRead.from_model(item) for item in project.objects],
         relations=[RelationRead.model_validate(item) for item in project.relations],
         evidence=[EvidenceRead.from_model(item) for item in project.evidence],
-        decisions=[DecisionRead.model_validate(item) for item in project.decisions],
+        decisions=[
+            DecisionRead.from_model(
+                item,
+                list(
+                    session.scalars(
+                        select(models.DecisionEvidence.evidence_id).where(
+                            models.DecisionEvidence.decision_id == item.id
+                        )
+                    )
+                ),
+            )
+            for item in project.decisions
+        ],
     )
 
 
@@ -145,7 +157,7 @@ def create_evidence(project_id: UUID, payload: EvidenceCreate, session: Session 
 
 
 @router.post("/projects/{project_id}/decisions", response_model=DecisionRead, status_code=201)
-def create_decision(project_id: UUID, payload: DecisionCreate, session: Session = Depends(get_session)) -> models.Decision:
+def create_decision(project_id: UUID, payload: DecisionCreate, session: Session = Depends(get_session)) -> DecisionRead:
     get_project_or_404(session, project_id)
     if payload.evidence_ids:
         all_evidence = session.scalars(
@@ -169,4 +181,4 @@ def create_decision(project_id: UUID, payload: DecisionCreate, session: Session 
         session.add(models.DecisionEvidence(decision_id=decision.id, evidence_id=evidence_id))
     session.commit()
     session.refresh(decision)
-    return decision
+    return DecisionRead.from_model(decision, list(dict.fromkeys(payload.evidence_ids)))

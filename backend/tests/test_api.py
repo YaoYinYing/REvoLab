@@ -45,11 +45,13 @@ def test_project_graph_vertical_slice(client):
         },
     )
     assert decision.status_code == 201
+    assert decision.json()["evidence_ids"] == [evidence["id"]]
     graph = client.get(f"/api/projects/{project_id}")
     assert graph.status_code == 200
     assert len(graph.json()["objects"]) == 2
     assert graph.json()["relations"][0]["relation_type"] == "variant_of"
     assert graph.json()["decisions"][0]["title"] == "Select variant"
+    assert graph.json()["decisions"][0]["evidence_ids"] == [evidence["id"]]
 
 
 def test_rejects_cross_project_relation(client):

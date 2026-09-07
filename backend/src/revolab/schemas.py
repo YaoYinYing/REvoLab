@@ -127,6 +127,18 @@ class DecisionRead(DecisionCreate):
     id: UUID
     project_id: UUID
 
+    @classmethod
+    def from_model(cls, item: Any, evidence_ids: list[UUID] | None = None) -> DecisionRead:
+        return cls(
+            id=item.id,
+            project_id=item.project_id,
+            title=item.title,
+            statement=item.statement,
+            status=item.status,
+            next_actions=item.next_actions,
+            evidence_ids=evidence_ids or [],
+        )
+
 
 class ProjectGraph(ProjectSummary):
     objects: list[ObjectRead] = Field(default_factory=list)
