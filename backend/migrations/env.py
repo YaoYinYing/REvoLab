@@ -1,3 +1,4 @@
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -9,6 +10,13 @@ from revolab.db import Base
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
+
+# Allow the migration target database to be supplied at runtime (defaults to the
+# ini value). Keeps the durable PostgreSQL store the canonical deployment target
+# while leaving the local SQLite default untouched.
+database_url = os.environ.get("REVOLAB_DATABASE_URL")
+if database_url:
+    config.set_main_option("sqlalchemy.url", database_url)
 
 target_metadata = Base.metadata
 

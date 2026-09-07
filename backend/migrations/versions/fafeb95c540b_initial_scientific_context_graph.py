@@ -84,7 +84,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["decision_id"], ["decisions.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["evidence_id"], ["evidence.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("decision_id", "evidence_id"),
-        sa.UniqueConstraint("decision_id", "evidence_id"),
     )
     op.create_table(
         "relations",

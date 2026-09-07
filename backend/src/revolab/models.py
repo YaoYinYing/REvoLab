@@ -129,7 +129,6 @@ class Decision(Base):
 
 class DecisionEvidence(Base):
     __tablename__ = "decision_evidence"
-    __table_args__ = (UniqueConstraint("decision_id", "evidence_id"),)
 
     decision_id: Mapped[UUID] = mapped_column(ForeignKey("decisions.id", ondelete="CASCADE"), primary_key=True)
     evidence_id: Mapped[UUID] = mapped_column(ForeignKey("evidence.id", ondelete="CASCADE"), primary_key=True)
