@@ -32,7 +32,7 @@ jobs:
       - run: ruff check backend
       - run: mypy
       - run: pytest
-      - run: alembic upgrade head && alembic check
+      - run: cd backend && alembic upgrade head && alembic check
 
   frontend:
     runs-on: ubuntu-latest

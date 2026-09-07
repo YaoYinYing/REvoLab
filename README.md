@@ -19,9 +19,11 @@ The frontend currently uses a small fixture graph while the generated OpenAPI cl
 Backend:
 
 ```bash
+cd backend
 uv sync --extra dev
 uv run pytest
-uv run uvicorn revolab.main:app --app-dir backend/src --reload
+uv run uvicorn revolab.main:app --app-dir src --reload
+cd ..
 ```
 
 Frontend:
@@ -41,6 +43,14 @@ docker compose up -d postgres
 ```
 
 The default local backend database is SQLite. Set `REVOLAB_DATABASE_URL` to a PostgreSQL URL for deployment-like development.
+
+Schema migrations live under `backend/migrations/` and are managed from `backend/`:
+
+```bash
+cd backend
+alembic upgrade head
+alembic check
+```
 
 ## Architecture
 
