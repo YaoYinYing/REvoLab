@@ -79,8 +79,9 @@ External systems own their capabilities and execution truth.
 - **Owned concepts:** RunReference, SessionReference, ArtifactReference,
   LiteratureReference, ExternalReference, Evidence (interpreted claim), provenance
   edges (`consumed_as_input_by`, `produced`, `imported_as`, `derived_from`,
-  `generated_by`, `evaluates`, `selects`, `supports`, `contradicts`, `cites`,
-  `supersedes`).
+  `generated_by`, `evaluates`, `selects`, `cites`,
+  `supersedes`). (`supports`/`contradicts` are Evidence `polarity` fields, not
+  edges — see `SCIENTIFIC_GRAPH.md`.)
 - **Owned mutable state:** evidence interpretive fields (summary, confidence,
   scope); reference *status* (refreshable, resolved via the provider — never copied).
 - **Owned invariants:**

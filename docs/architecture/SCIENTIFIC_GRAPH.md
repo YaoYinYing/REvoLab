@@ -116,6 +116,8 @@ Evidence.source  (exactly one, required) — what was interpreted
     | LiteratureReference | ExternalReference
     | ScientificObjectRevision
     (nullable only for a direct human observation with no machine source)
+    — a project-side `note` that is the claim source maps to `Evidence.source` with
+      `kind=note`; it is still not itself a graph node.
 
 Evidence.target  (exactly one, required) — what the claim is about
     ScientificObjectRevision | Decision | Evidence
@@ -128,8 +130,10 @@ Evidence.target  (exactly one, required) — what the claim is about
   Only interpretive fields (`kind`/`role`/`polarity`/`confidence`/`scope`/
   `interpretation`) may change, and only while no Decision cites the Evidence.
 - **`experiment` and `note` are not canonical node types.** An experiment/observation
-  that is the claim source is modeled as an Evidence with `kind=experiment`
-  (a `hypothesis` is an Evidence with a `hypothesis` role). A free-form note is a
+  that is the claim source is modeled as an Evidence with `kind=experimental`
+  (a `hypothesis` is an Evidence with a `hypothesis` role); matching the frozen
+  `kind` enum in `EVIDENCE_PROVENANCE.md` (`experimental | literature | computation |
+  observation | note`). A free-form note is a
   project-side scoped record; it is not a graph node. The source list above is the
   frozen legal set.
 

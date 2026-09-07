@@ -15,7 +15,9 @@ preserve. No backward compatibility is required. Classify every current piece:
 - Provider/external-id pairing + validation (normalize into a first-class
   `ExternalId` registry).
 - Relation self-reference rejection.
-- Unique `(project, source, target, relation_type)` on relations.
+- Relation identity + uniqueness/supersession **deferred to the Phase-1 executable
+  spike** (see `SCIENTIFIC_GRAPH.md`); no `UNIQUE(project, source, target,
+  relation_type)` is presumed on relations.
 - `DecisionEvidence` composite primary key.
 - Relational logical graph over PostgreSQL (ADR-0003).
 - Alembic drift-check against **both** SQLite (dev) and PostgreSQL (CI).

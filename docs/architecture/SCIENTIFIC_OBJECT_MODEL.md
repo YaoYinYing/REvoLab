@@ -14,7 +14,7 @@ is the projection of a scientific entity REvoLab has decided to represent.
 ### Universal vs type-specific properties
 
 **Universal (the identity & lifecycle spine — true of every object):**
-- `id` — the stable global UUID (durable identity; never a path or username)
+- `series_id` — the stable global UUID (durable conceptual identity; never a path or username)
 - `object_type` — the type discriminator (a registry key)
 - `title`/`name` — human label (mutable, **not** identity)
 - `description`, `created_at`, `updated_at`, `created_by` (audit)
@@ -179,8 +179,10 @@ structure. That encodes three false claims:
   expression of scientific meaning. The complete `RelationType` closed enum is
   defined canonically in `SCIENTIFIC_GRAPH.md` (Edges section) — including
   `variant_of`, `derived_from`, `represents`, `generated_by`, `evaluates`,
-  `supports`, `contradicts`, `selects`, plus the provenance edges `consumed_as_input_by`,
-  `produced`, `imported_as`, `cites`, `supersedes`. That single enum is generated into
+  `selects`, plus the provenance edges `consumed_as_input_by`,
+  `produced`, `imported_as`, `cites`, `supersedes`. (`supports`/`contradicts`
+  are **not** edges — they are Evidence `polarity` fields; see
+  `SCIENTIFIC_GRAPH.md`.) That single enum is generated into
   the API/Agent/tool contracts. This is where science lives; the graph is assembled at
   the application layer over relational tables (ADR-0003).
 
@@ -198,6 +200,7 @@ scientific semantics or destructive ownership.*
   soft-suspended**, never CASCADEd — the destructive `delete-orphan` is removed
   from scientific objects.
 - Provider state stays in the provider; only `ExternalId` references live here.
-- Object `id` is the only durable identity, never a path or username.
+- `series_id` (Series identity) is the only durable identity, never a path or username;
+  `revision_id` (Revision identity) is what provenance edges address.
 
 Recorded in **ADR-0009**.
