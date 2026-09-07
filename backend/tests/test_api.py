@@ -100,3 +100,40 @@ def test_unknown_relation_object_is_rejected(client):
         json={"source_id": str(uuid4()), "target_id": str(uuid4()), "relation_type": "related_to"},
     )
     assert response.status_code == 422
+
+
+def test_object_listing_is_stable_and_grouped_by_parent(client):
+    project = client.post("/api/projects", json={"name": "Tree"}).json()
+    root = client.post(
+        f"/api/projects/{project['id']}/objects",
+        json={"name": "Root", "object_type": "protein"},
+    ).json()
+    child = client.post(
+        f"/api/projects/{project['id']}/objects",
+        json={"name": "Child", "object_type": "variant", "parent_id": root["id"]},
+    ).json()
+    sibling = client.post(
+        f"/api/projects/{project['id']}/objects",
+        json={"name": "Sibling", "object_type": "structure", "parent_id": root["id"]},
+    ).json()
+
+    response = client.get(f"/api/projects/{project['id']}/objects")
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()] == [root["id"], child["id"], sibling["id"]]
+
+
+def test_parent_from_another_project_is_rejected(client):
+    first = client.post("/api/projects", json={"name": "First"}).json()
+    second = client.post("/api/projects", json={"name": "Second"}).json()
+    parent = client.post(
+        f"/api/projects/{first['id']}/objects",
+        json={"name": "Parent", "object_type": "protein"},
+    ).json()
+
+    response = client.post(
+        f"/api/projects/{second['id']}/objects",
+        json={"name": "Child", "object_type": "variant", "parent_id": parent["id"]},
+    )
+
+    assert response.status_code == 422

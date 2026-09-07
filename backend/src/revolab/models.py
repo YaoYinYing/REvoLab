@@ -5,7 +5,16 @@ from enum import StrEnum
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from revolab.db import Base
@@ -56,6 +65,12 @@ class Project(Base):
 
 class ScientificObject(Base):
     __tablename__ = "scientific_objects"
+    __table_args__ = (
+        CheckConstraint(
+            "parent_id IS NULL OR parent_id != id",
+            name="ck_scientific_objects_not_own_parent",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)

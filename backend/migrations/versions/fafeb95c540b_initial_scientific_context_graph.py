@@ -66,6 +66,7 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("parent_id", sa.Uuid(), nullable=True),
         sa.Column("metadata_json", sa.JSON(), nullable=False),
+        sa.CheckConstraint("parent_id IS NULL OR parent_id != id", name="ck_scientific_objects_not_own_parent"),
         sa.ForeignKeyConstraint(["parent_id"], ["scientific_objects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

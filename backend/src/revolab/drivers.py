@@ -60,13 +60,21 @@ class DriverRegistry:
             yield self.register(driver)
 
     def start_all(self, context: DriverContext) -> None:
-        for handle in self._drivers.values():
-            handle.driver.start(context)
-            handle.state = DriverState.READY
+        started: list[DriverHandle] = []
+        try:
+            for handle in self._drivers.values():
+                handle.driver.start(context)
+                handle.state = DriverState.READY
+                started.append(handle)
+        except Exception:
+            for handle in reversed(started):
+                handle.driver.stop()
+                handle.state = DriverState.STOPPED
+            raise
 
     def stop_all(self) -> None:
         for handle in reversed(tuple(self._drivers.values())):
-            if handle.state == DriverState.READY:
+            if handle.state in {DriverState.STARTED, DriverState.READY}:
                 handle.driver.stop()
                 handle.state = DriverState.STOPPED
         self._resources.close()

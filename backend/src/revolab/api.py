@@ -88,9 +88,14 @@ def create_object(project_id: UUID, payload: ObjectCreate, session: Session = De
 
 
 @router.get("/projects/{project_id}/objects", response_model=list[ObjectRead])
-def list_objects(project_id: UUID, session: Session = Depends(get_session)) -> list[models.ScientificObject]:
+def list_objects(project_id: UUID, session: Session = Depends(get_session)) -> list[ObjectRead]:
     get_project_or_404(session, project_id)
-    return list(session.scalars(select(models.ScientificObject).where(models.ScientificObject.project_id == project_id)))
+    objects = session.scalars(
+        select(models.ScientificObject)
+        .where(models.ScientificObject.project_id == project_id)
+        .order_by(models.ScientificObject.parent_id, models.ScientificObject.name)
+    )
+    return [ObjectRead.from_model(item) for item in objects]
 
 
 @router.post("/projects/{project_id}/relations", response_model=RelationRead, status_code=201)

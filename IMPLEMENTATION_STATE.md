@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-08-27
+Last verified: 2026-09-07
 
 ## Exists
 
@@ -9,8 +9,8 @@ Last verified: 2026-08-27
 - Pydantic request/response models with object-tree parent references, provider/external-ID pairing validation, and relation self-reference validation.
 - FastAPI health endpoint and project/object/relation/evidence/decision creation/list/graph endpoints.
 - Application-scoped driver protocol, lifecycle states, collision handling, entry-point discovery, and explicit stop behavior.
-- Focused backend API tests for the project graph and negative relation/reference cases: 6 tests pass.
-- Backend Ruff, mypy, Alembic drift check, and SQLite migration apply pass in the local `.venv`.
+- Focused backend API and driver lifecycle tests for the project graph, hierarchy boundaries, negative relation/reference cases, and startup rollback: 10 tests pass.
+- Backend Ruff, mypy, Alembic drift check, SQLite migration apply, and Python wheel build pass in the local `.venv`.
 - React/Vite frontend prototype with a hierarchical object tree, scientific workspace, relation/evidence trail, decision inspector, responsive layout, and one component test; frontend typecheck, test, and production build pass.
 - PostgreSQL Docker Compose service, Alembic environment configuration, GitHub Actions CI configuration, architecture documentation, ADR directory, agent conventions, and Apache-2.0 licensing files.
 
