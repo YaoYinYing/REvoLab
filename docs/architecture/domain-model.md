@@ -1,11 +1,8 @@
-# Domain Model
+# Domain Model (superseded)
 
-The initial Core model is intentionally small:
-
-- **Project** is the durable workspace boundary.
-- **ScientificObject** is a typed node in the project hierarchy. Its metadata is extensible JSON validated at the API boundary; it is not an unvalidated ontology dump.
-- **Relation** is a typed cross-object edge such as `variant_of`, `derived_from`, `supports`, or `contradicts`. Both endpoints must belong to the same project and self-relations are rejected.
-- **Evidence** records a scientific basis such as a run, artifact, literature source, experiment, or note. Provider and external ID are paired when a provider reference exists.
-- **Decision** records a project conclusion and next actions. Evidence links are persisted through a join table.
-
-Project membership and actor identity are separate concerns. Authentication providers must not become durable object ownership identifiers.
+> **Superseded by the accepted design.** This bootstrap-era summary is replaced by
+> `docs/architecture/DOMAIN_BOUNDARIES.md` (the eight domains and their ownership)
+> and `docs/architecture/SCIENTIFIC_OBJECT_MODEL.md` (typed object model, ADR-0009).
+> The "Project owns a hierarchy" framing here is **overturned** by ADR-0008 (global
+> resource identity + project-scoped membership). Where this file conflicts with the
+> current documents or ADRs, the current documents win.

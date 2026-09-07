@@ -1,11 +1,10 @@
-# Drivers
+# Drivers (superseded)
 
-Drivers own provider-specific vocabulary and external capabilities. Core knows only typed protocols and stable references.
-
-The initial registry is application-scoped, uses explicit registration handles, rejects collisions, and can discover optional implementations through `importlib.metadata` entry points. Lifecycle is deliberately small:
-
-```text
-DISCOVERED → VALIDATED → STARTED → READY → STOPPED
-```
-
-Driver failures are explicit. There are no silent provider fallbacks. The registry does not own a database table and does not duplicate provider execution state. REvoComputeDriver, REvoDesignDriver, and OpenBioDriver remain future integrations until supported contracts are available.
+> **Superseded by the accepted design.** This bootstrap-era driver description
+> (including the 5-state lifecycle `DISCOVERED → VALIDATED → STARTED → READY →
+> STOPPED`) is replaced by `docs/architecture/PROVIDER_CAPABILITIES.md` and
+> **ADR-0012**, which collapses lifecycle to 2 domain-visible states
+> (REGISTERED/READY), splits Driver into lifecycle + per-kind Capability realization,
+> and adds the credential model. The no-silent-fallback and no-duplicated-state rules
+> here remain in force. Where this file conflicts with the current documents or ADRs,
+> the current documents win.

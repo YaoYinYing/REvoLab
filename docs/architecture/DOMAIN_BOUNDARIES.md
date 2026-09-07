@@ -1,0 +1,227 @@
+# Domain Boundaries
+
+> **Status:** Accepted. Defines each architectural domain — purpose, owned
+> concepts, owned mutable state, invariants, public contracts, dependencies, and
+> explicit non-responsibilities — plus the Project boundary decision.
+
+The governing question for every decision in this document:
+
+> **Who owns this knowledge, and what is the smallest durable boundary that keeps
+> that ownership true?**
+
+---
+
+## Product boundary (recap)
+
+```text
+REvoLab       → scientific context / project knowledge layer
+REvoCompute   → scientific execution layer
+REvoDesign    → interactive molecular design / analysis layer
+External providers → biological databases, literature, models, instruments, services
+```
+
+**Canonical invariant:** REvoLab owns scientific context and relationships.
+External systems own their capabilities and execution truth.
+
+---
+
+## The eight domains
+
+### 1. Project Domain
+
+- **Purpose:** the durable workspace boundary that scopes context, membership, and
+  access.
+- **Owned concepts:** Project record, ProjectMembership links, project-level
+  annotation, project visibility (private / shared-with-members).
+- **Owned mutable state:** project name/description, membership rows, visibility.
+- **Owned invariants:**
+  - A Project is a namespace *and* a security/permission boundary, but **not** the
+    scientific-identity boundary.
+  - Project deletion removes **links and membership**, never the underlying global
+    scientific objects or their provenance.
+  - Organization (folders) is not scientific semantics.
+- **Public contracts:** project CRUD, membership management, project-scoped read
+  and write entry points.
+- **Dependencies:** Identity/Collaboration (membership, roles). Depends on nothing
+  in Core.
+- **Non-responsibilities:** owning object lifecycle; owning execution; owning
+  provider credentials; being the provenance authority.
+
+### 2. Scientific Object Domain
+
+- **Purpose:** represent typed scientific entities (Protein, Sequence, Structure,
+  Variant, …) and their per-type metadata.
+- **Owned concepts:** ScientificObject (universal spine), per-type extension
+  records, ExternalId registry, Alias registry, the type registry, object
+  versioning.
+- **Owned mutable state:** object labels/descriptions (governance spine), aliases,
+  organization placement, per-type content (versioned, immutable once referenced).
+- **Owned invariants:**
+  - Universal fields are a small fixed spine; scientific payload lives in typed
+    extension records, not an unvalidated JSON blob.
+  - A referenced object's scientific content is immutable; change is a new
+    version or a new object, never in-place.
+  - Organization (parent/tree/membership) is separate from scientific relations.
+  - Durable identity is the stable UUID, never a path or a username.
+- **Public contracts:** object create/read/version operations via the domain service.
+- **Dependencies:** Project (scoping).
+- **Non-responsibilities:** expressing scientific relationships (that is the
+  graph domain's job); owning external execution state.
+
+### 3. Evidence / Provenance Domain
+
+- **Purpose:** record what external work and internal observation underpin the
+  project, and reconstruct *why things exist*.
+- **Owned concepts:** RunReference, SessionReference, ArtifactReference,
+  LiteratureReference, ExternalReference, Evidence (interpreted claim), provenance
+  edges (`consumed_as_input_by`, `produced`, `imported_as`, `derived_from`,
+  `generated_by`, `evaluates`, `selects`, `supports`, `contradicts`, `cites`,
+  `supersedes`).
+- **Owned mutable state:** evidence interpretive fields (summary, confidence,
+  scope); reference *status* (refreshable, resolved via the provider — never copied).
+- **Owned invariants:**
+  - Reference nodes are durable, immutable identity cards; a reference is a
+    **fact**, Evidence is an **interpreted claim**.
+  - Contradiction coexists; a Decision settles it.
+  - Provenance must remain traversable after external systems change.
+- **Public contracts:** evidence/reference CRUD plus provenance traversal queries.
+- **Dependencies:** Scientific Object, Project.
+- **Non-responsibilities:** storing external execution truth; versioning external
+  artifacts; being a graph database.
+
+### 4. Knowledge / Decision Domain
+
+- **Purpose:** the knowledge layer — decisions and the promotion of proposals into
+  accepted project truth.
+- **Owned concepts:** Decision (with status and supersession), DecisionEvidence
+  citations, "current conclusion" (derived by following supersession).
+- **Owned mutable state:** decision status and next actions while open; after a
+  decision influences later work it is immutable.
+- **Owned invariants:**
+  - Agent output is conversation until explicitly promoted into project knowledge.
+  - A committed decision is never edited; it is superseded.
+  - "Current scientific conclusion" is a derived query, not a mutable field.
+- **Public contracts:** decision propose → commit → supersede; cite evidence.
+- **Dependencies:** Evidence/Provenance, Project.
+- **Non-responsibilities:** building a premature ELN ontology; owning the chat log.
+
+### 5. Provider / Capability Domain
+
+- **Purpose:** the boundary between Core and external execution/lookup/design.
+- **Owned concepts:** Provider, Driver, Capability, Tool (agent bridge), Credential,
+  credential presence, capability discovery, typed CapabilityError.
+- **Owned mutable state:** in-process driver lifecycle (startup only), availability
+  projections.
+- **Owned invariants:**
+  - Core knows a fixed vocabulary of capability *kinds*; credentials are owned by
+    the credential store; a provider is callable iff its driver is READY and every
+    required credential kind is present — both are queries, never stored truth.
+  - Provider-specific vocabulary lives in the driver, never in Core.
+- **Public contracts:** capability Protocols, Provider Catalog, schema-as-data
+  discovery (JSON Schema).
+- **Dependencies:** Identity/Collaboration (credential presence). Depends on
+  nothing else in Core.
+- **Non-responsibilities:** owning project graph; storing external state.
+
+### 6. Agent Context Domain
+
+- **Purpose:** give the Agent a bounded, reference-based view of project truth and
+  typed ways to act, without making it an owner.
+- **Owned concepts:** ProjectContext (value object), ContextSelection,
+  ContextBuilder (read-only), AgentSession (ephemeral), ToolCatalog, SkillCatalog.
+- **Owned mutable state:** none in the durable graph (sessions are ephemeral).
+- **Owned invariants:** chat history is not project truth; context references large
+  artifacts instead of embedding them; the agent never raw-writes.
+- **Public contracts:** context assembly, typed tool calls, skill loading.
+- **Dependencies:** Project, Knowledge, Provider (for tools).
+- **Non-responsibilities:** owning the database; being the persistence layer; RAG.
+
+### 7. Identity / Collaboration Domain
+
+- **Purpose:** ownership, membership, and sharing boundaries (built for, but not
+  executing, real authentication).
+- **Owned concepts:** AuthenticationIdentity, Actor (opaque UUID), Role
+  (owner/member/viewer), ProjectMembership, ResourceOwnership, ExternalProviderCredential.
+- **Owned mutable state:** memberships, roles, credential bindings.
+- **Owned invariants:** durable identity is an opaque UUID, not a path or auth
+  username; sharing never copies data into another project; access is inherited
+  from project membership.
+- **Public contracts:** membership/role operations; the ownership boundary for the
+  domain and agent authority model.
+- **Dependencies:** Project.
+- **Non-responsibilities:** a big RBAC engine; real authentication (deferred).
+
+### 8. Presentation / Workspace Domain
+
+- **Purpose:** the product surface and the API/frontend contract.
+- **Owned concepts:** the resource/command API surface, object-detail aggregate,
+  provider capability surface, workspace information architecture.
+- **Owned mutable state:** the generated TypeScript client (build artifact).
+- **Owned invariants:** the frontend consumes generated contracts; no manually
+  duplicated enums.
+- **Public contracts:** the HTTP API and its generated client.
+- **Dependencies:** every Core/Presentation-facing domain surface.
+- **Non-responsibilities:** business logic; scientific semantics.
+
+---
+
+## Dependency diagram (no circular ownership)
+
+```mermaid
+flowchart TB
+    PW["Presentation / Workspace"]
+    AC["Agent Context"]
+    PC["Provider / Capability"]
+    IC["Identity / Collaboration"]
+    KD["Knowledge / Decision"]
+    EP["Evidence / Provenance"]
+    SO["Scientific Object"]
+    PJ["Project"]
+
+    PW --> AC
+    PW --> PC
+    PW --> IC
+
+    AC --> KD
+    AC --> EP
+    AC --> PC
+    AC --> IC
+
+    KD --> EP
+    KD --> PJ
+    EP --> SO
+    EP --> PJ
+    SO --> PJ
+
+    PC --> IC
+    IC --> PJ
+```
+
+No domain depends on a downstream sibling in a cycle; Core domains never depend on
+the Agent Context domain.
+
+---
+
+## Project boundary decision
+
+**Decision:** use **global/stable resource identity + project-scoped
+reference/membership/annotation** — *not* "Project owns every object directly."
+
+Rationale:
+- Cross-user sharing is a stated requirement; a project-owns-everything model
+  forces object duplication to share, which the brief forbids.
+- Identity must be decoupled from filesystem paths and auth usernames.
+- Project is simultaneously a namespace, a security boundary, and (weakly) a
+  provenance scope — but each concern is reified separately so they can evolve
+  independently.
+
+Consequences:
+- An object can belong to multiple projects via multiple membership/link rows, not
+  duplication.
+- A project can reference an object owned elsewhere (that *is* the sharing
+  mechanism).
+- Project does **not** own object lifecycle; deleting a Project removes links, not
+  the underlying objects or their provenance.
+- Provenance must remain traversable across projects and survive Project deletion.
+
+This decision is recorded in **ADR-0008**.

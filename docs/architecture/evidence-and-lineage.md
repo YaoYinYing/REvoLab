@@ -1,7 +1,9 @@
-# Evidence And Lineage
+# Evidence And Lineage (superseded)
 
-REvoLab stores context around external work, not a second execution system. A run or artifact identity is namespaced by provider and external ID. Filesystem paths are locations, not durable global identities.
-
-Artifact references should carry provider, immutable external identity, scientific/content type, checksum and size when available, version identity when available, originating run reference, and a human label. A driver may resolve current provider state on demand; Core does not copy mutable task status or result tables.
-
-The model is relational: objects, relations, evidence, runs, artifacts, and decisions. OpenLineage events are a future interoperability option, not a persistence layer or server requirement for the first slice.
+> **Superseded by the accepted design.** This bootstrap-era summary is replaced by
+> `docs/architecture/EVIDENCE_PROVENANCE.md` and `SCIENTIFIC_GRAPH.md` and the ADRs
+> **0010/0011**. The design now distinguishes RunReference / ArtifactReference /
+> LiteratureReference (immutable identity cards) from Evidence (an interpreted
+> claim) and introduces the Decision promotion boundary. The durable-identity and
+> path-are-not-identity rules here remain in force. Where this file conflicts with
+> the current documents or ADRs, the current documents win.

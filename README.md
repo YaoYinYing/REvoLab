@@ -54,9 +54,17 @@ alembic check
 
 ## Architecture
 
-The logical evidence graph is relational in PostgreSQL. Projects form a hierarchical tree of scientific objects; typed relations, evidence references, and decisions provide cross-tree context. Drivers are provider-neutral Python protocols discovered through entry points and managed by an explicit application-scoped registry.
+REvoLab owns scientific context and relationships; REvoCompute, REvoDesign, and
+external providers own their capabilities and execution truth. The design is a
+relational scientific graph over typed scientific objects, evidence/provenance,
+and decisions, accessed through domain services and capability-neutral providers.
 
-See `docs/architecture/` for the architectural overview, domain model, reference study, and ADRs. `IMPLEMENTATION_STATE.md` records verified implementation state only.
+The accepted architecture lives in `docs/architecture/` — start with
+`SYSTEM_ARCHITECTURE.md` (domains + diagrams) and `DOMAIN_BOUNDARIES.md`; see
+`IMPLEMENTATION_ROADMAP.md` for the staged implementation plan and the ADRs under
+`docs/architecture/adr/`. `IMPLEMENTATION_STATE.md` records verified implementation
+state only. Note: the current backend/frontend remain the prototype the accepted
+design overturns (see the roadmap's bootstrap classification).
 
 ## License
 

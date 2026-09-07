@@ -25,3 +25,40 @@ Last verified: 2026-09-07
 - Authentication, project membership, artifact storage, provider drivers, and production deployment.
 
 This file records actual repository state, not future architecture plans.
+
+## 2026-09-07 — Architecture design phase COMPLETE
+
+Delivered a reconciled top-level architecture (see `docs/architecture/` and ADRs
+0008–0014). This is the approved target design; the current backend/frontend remain
+the prototype the design overturns.
+
+Produced:
+- 10 documents in `docs/architecture/`: SYSTEM_ARCHITECTURE, DOMAIN_BOUNDARIES,
+  SCIENTIFIC_OBJECT_MODEL, SCIENTIFIC_GRAPH, EVIDENCE_PROVENANCE,
+  PROVIDER_CAPABILITIES, AGENT_CONTEXT, COLLABORATION_IDENTITY,
+  WORKSPACE_INFORMATION_ARCHITECTURE, IMPLEMENTATION_ROADMAP.
+- 7 new ADRs (0008–0014): project-membership ownership; typed object model;
+  provenance graph; decision promotion; provider/capability; agent-as-consumer +
+  authority; generated contract.
+- `CLAUDE.md` gained the 10 load-bearing architecture invariants (§ REvoLab
+  architecture invariants).
+- Eight parallel read-only subagent analyses (A–H) fed the reconciliation; an
+  independent reviewer then audited the final documents for complexity failure modes
+  and cross-document consistency. The review found 16 failure modes (15 RESOLVED,
+  1 PARTIAL at the time) and 6 internal-consistency contradictions; the integrator
+  resolved all six (decision promotion verb → `commit`; canonical `RelationType`
+  closed enum incl. `generated_by`/`evaluates`/`selects`; generic-Relation polymorphic
+  target; added `hypothesis` evidence role; OpenBio cache defined as identity +
+  validated metadata with no snapshot copy; SessionReference/ExternalReference added
+  to the canonical node set and import unified on the `imported_as` edge with no
+  separate ImportRecord node) and made DoD-18 explicit in IMPLEMENTATION_ROADMAP.
+- The superseded bootstrap docs (`overview.md`, `domain-model.md`, `drivers.md`,
+  `evidence-and-lineage.md`, `agent-and-skills.md`) were reduced to thin pointers to
+  the accepted documents to avoid dual sources of truth; `reference-study.md` remains
+  the external-reference analysis.
+
+Deliberately NOT implemented (deferred by the design: Phases 1–6 in
+IMPLEMENTATION_ROADMAP): real auth/identity tables, real REvoCompute/REvoDesign/
+OpenBio drivers, agent chat UI, typed-object migration of the backend, generated
+TypeScript client. Backend tests (pytest) and frontend typecheck/test/build still
+pass on the prototype (unchanged this phase).

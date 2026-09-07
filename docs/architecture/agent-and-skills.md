@@ -1,7 +1,9 @@
-# Agent And Skills
+# Agent And Skills (superseded)
 
-Agent context is project-scoped: a selected project, object subtree, relations, evidence, decisions, and external references are assembled into context. The agent is not the database and chat history is not project truth.
-
-A **Driver** is an executable external capability. A **Tool** is a typed callable operation. A **Skill** is agent knowledge that describes when, why, and how to use tools. Skills may guide interpretation and quality checks, but they do not own business logic, authorization, or provider execution.
-
-Canonical schemas live in backend code and OpenAPI. Skill manifests and generated references should derive from that source. Any generated artifact must be checked for drift; manually duplicated enum/object lists are prohibited.
+> **Superseded by the accepted design.** This bootstrap-era summary is replaced by
+> `docs/architecture/AGENT_CONTEXT.md` (context selection, the promotion loop, the
+> safety/authority matrix) and ADRs **0007/0011/0013**. The core rules here — the
+> agent is not the database, chat history is not project truth, skills teach judgment
+> while typed APIs own executable truth, generated artifacts are drift-checked —
+> remain in force and are expanded there. Where this file conflicts with the current
+> documents or ADRs, the current documents win.

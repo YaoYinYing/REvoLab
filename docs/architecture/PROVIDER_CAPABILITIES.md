@@ -1,0 +1,254 @@
+# Provider & Capability Architecture
+
+> **Status:** Accepted. Defines Provider / Driver / Capability / Tool / Credential,
+> capability discovery, schema-as-data, failure handling, and the REvoCompute /
+> REvoDesign / OpenBio integration contracts. Reconciles Subagents B and G.
+
+## Ruling principle
+
+> **REvoLab owns scientific context and relationships. External systems own their
+> capabilities and execution truth.**
+
+Core must never grow a branch named `revocompute` / `revodesign` / `openbio`.
+Instead Core owns (a) typed capability Protocols, (b) neutral durable references
+(Run/Artifact/Literature references), and (c) the import/promotion boundary that
+turns external data into project truth. Each integration is a Driver that implements
+one or more capability Protocols and keeps provider vocabulary inside itself.
+
+## The five concepts (keep) and one that is integrated elsewhere
+
+| Concept | Owned by | Why keep |
+|---|---|---|
+| **Provider** | Provider domain | the uniquely-identified external system you point at and bind to |
+| **Driver** | Provider domain | the concrete code realizing capabilities; ≥3 real targets |
+| **Capability** | Provider domain | the protocol boundary that hides provider vocabulary from Core |
+| **Tool** | Agent domain | the typed, agent-facing presentation of a capability |
+| **Credential** | Credential store | how a project learns a provider is callable |
+
+- **`CredentialBinding` is NOT introduced** — it is the textbook one-use-case fake
+  abstraction. A presence lookup (`has_credential(provider, kind)`) suffices. Add a
+  real binding entity only when a second cross-project sharing use case forces it.
+- **`ExternalReference` is a stored data shape in the Evidence domain**, not a
+  driver concept. The driver side only needs a stable `(provider, external_id)` and
+  a resolution interface.
+
+## Identity & discovery without learning vocabulary
+
+- **Provider identity:** a stable lowercase slug (`revocompute`, `openbio`), never
+  a path/hostname/username. Alongside: display name, description, version, and
+  `required_credential_kinds`.
+- **Capability identity:** `(provider_key, capability_kind)` where `capability_kind`
+  is a **Core-owned closed enum**. This lets Core *categorize* without ever
+  *parsing* provider language. Core never matches on anything provider-written.
+- **Discovery:** Core asks "give me all capabilities of kind X" and the registry
+  filters realized capability instances by the Core enum. Provider-specific terms
+  (e.g. "slurm") live behind the Protocol.
+
+## The capability protocols
+
+A provider may expose many capabilities. Concretely:
+
+```python
+class Capability(Protocol):            # base
+    provider_key: str
+    kind: CapabilityKind               # COMPUTE | SEARCH | ARTIFACT_RESOLUTION | DESIGN | INTERACTIVE_HANDOFF
+
+class ComputeCapability(Capability, Protocol):            # REvoCompute (batch)
+    def list_task_kinds(self, credential) -> list[TaskKindRef]: ...
+    def task_kind_schema(self, kind_id) -> JsonSchema: ...   # schema-as-data
+    def submit(self, kind_id, params: dict, credential) -> RunHandle: ...
+    def get_run(self, run_id, credential) -> RunView: ...
+    def cancel(self, run_id, credential) -> None: ...
+
+class ArtifactResolutionCapability(Capability, Protocol):  # pure read
+    def resolve(self, ext_ref, rev=None, credential) -> ArtifactHandle: ...
+
+class SearchCapability(Capability, Protocol):              # OpenBio / knowledge lookup
+    def search(self, query, filters=None, credential) -> list[ExternalHit]: ...
+    def hit_schema(self) -> JsonSchema: ...
+
+class DesignCapability(Capability, Protocol):              # durable export half
+    def open_design(self, object_ref, credential) -> DesignSession: ...
+    def export(self, session_id, credential) -> list[ArtifactHandle]: ...
+    def list_sessions(self, credential) -> list[DesignSession]: ...
+
+class InteractiveHandoffCapability(Capability, Protocol):  # deep-link / interactive half
+    def create_handoff(self, object_ref, return_callback, credential) -> HandoffRef: ...
+    def on_return(self, handoff_id) -> HandoffResult: ...
+```
+
+**Naming decisions (from the review):**
+- `ComputeCapability`, `ArtifactResolutionCapability` — keep.
+- `LiteratureSearchCapability` → **renamed `SearchCapability`** (one reader protocol
+  covers literature *and* biological-database lookup; avoid 5 near-identical search
+  protocols).
+- `DesignCapability` — **split into `DesignCapability` (export) + the interactive
+  `InteractiveHandoffCapability`**, because REvoDesign is stateful and interactive;
+  forcing it into the stateless compute/submit shape is a fake generic abstraction.
+
+## Schema-as-data discovery
+
+- **Per-capability JSON Schema as data, returned verbatim.** Every capability
+  method accepting structured params declares its own input/output JSON Schema
+  (Draft 2020-12, versioned).
+- Core validates provider params **only against the provider's own returned schema**;
+  Core assigns zero meaning to the fields.
+- The same schemas feed the **frontend** (generated forms), the **Agent**
+  (tool-call arg schemas), and **drift detection** — one source, no duplicated
+  contracts.
+
+**Invariant:** Core never contains a field name or value specific to a provider.
+
+## Credentials & availability
+
+- The **Credential store owns** `(provider_key, credential_kind) → secret-ref`. It
+  is opaque to Core; Core cannot read secret values.
+- Every capability method takes a `credential` handle acquired from the store; no
+  secret transits Core services or persists in the project graph.
+- **Project availability is a derived query:**
+  `available(provider) = (driver loaded & READY) AND all(required credential kinds present)`.
+  It is a probe, evaluated on demand — **never stored** — so credential
+  revocation/rotation needs no migration.
+
+## How frontend and Agent discover
+
+Both read the **same read-only Provider Catalog**:
+
+```
+GET /api/providers            -> [{key, name, capabilities:[{kind, describe() schema}], credential_status}]
+GET /api/providers/{key}/schema/{capability_kind} -> JSON Schema
+```
+
+- **Frontend** renders a schema-driven Provider Capability Surface (generic JSON
+  Schema forms; no capability knowledge in the frontend).
+- **Agent** materializes the catalog into **Tools**: for each currently-available
+  capability method, a typed tool call whose arg schema = the provider JSON Schema
+  and whose target = `(provider_key, kind, method)`. An unavailable provider
+  produces no tools, so the Agent never proposes an unexecutable call.
+
+## Failure & provider disappearance
+
+- **Typed `CapabilityError`** with a stable kind enum
+  (`AUTH | NOT_FOUND | INVALID_PARAM | PROVIDER_UNAVAILABLE | NETWORK | UNKNOWN`),
+  mapped to a stable HTTP error envelope. **No silent fallbacks.**
+- Registry tracks per-provider `state: ready | credential_missing | degraded |
+  unreachable` (lazily probed).
+- When a provider goes **unreachable**: calls fail with `PROVIDER_UNAVAILABLE`; the
+  catalog marks it unavailable (Agent tools disappear, frontend shows it); **stored
+  references/evidence are unaffected** — they become "unverifiable", never deleted,
+  never re-invalidated. Only *live resolution* is suspended.
+- **No hot-unloading** (ADR-0005). An unreachable driver stays loaded and rejects
+  calls.
+
+## Critique of ADR-0004 / current `drivers.py`
+
+- **KEEP:** Python `Protocol`; application-scoped registry; `importlib.metadata`
+  entry points; explicit sequenced start with rollback; rejection of pluggy/custom
+  framework before a real 1:N need.
+- **REVISE:** split the single `Driver` Protocol into a thin registration/lifecycle
+  `Driver` + per-kind `Capability` Protocols (a Driver *realizes* capabilities);
+  replace `capabilities() -> set[str]` with a typed `kind → instance` map; collapse
+  the 5 lifecycle states into **2 domain-visible states** (`REGISTERED`, `READY`),
+  keeping the rest as internal startup transients that never leak into the API.
+  **Add the credential concept** (`required_credential_kinds`, presence probe,
+  `credential` arg) — the single most important gap before any real driver is written.
+- **REMOVE:** lifecycle-as-domain-knowledge (no driver DB table, no STARTED/STOPPED
+  in the API); no hot-unload/reactive machinery.
+
+**Key separation:** *in-process lifecycle* (startup resource ownership, transient)
+vs *Provider/Capability/Credential/Tool* (durable domain model the API/frontend/
+Agent talk about). The bridge is thin: after `start_all`, the registry projects
+realized capabilities + credential presence into the read-only Provider Catalog.
+
+---
+
+# REvoCompute integration contract
+
+REvoLab must **not import REvoCompute internals**. The minimum external contract
+REvoLab needs (documented upstream, not implemented here):
+
+```text
+list_task_kinds()                     → discover task types (id, name, required_inputs, version)
+task_kind_schema(kind)                → JSON Schema for parameters
+submit(task_kind, input_refs, params, auth, idempotency_key) → RunReference
+run(run_ref, auth)                    → RunStatus (refreshed on demand, never copied)
+artifacts(run_ref, auth)              → [ArtifactReference]
+resolve_artifact(artifact_ref, auth)  → ArtifactAccess (content, checksum, size, version)
+```
+
+**Separate the two truths:**
+- REvoCompute canonical mutable execution state (Run/task/status/job) is
+  authoritative **only** there.
+- REvoLab stores a **RunReference** / **ArtifactReference** — immutable identity
+  records, not snapshots. REvoLab never stores REvoCompute task tables or status as
+  truth; it keeps only the immutable pin and resolves fresh state through the driver.
+
+**Cross-user/project sharing without the old REvoCompute Project model:** REvoCompute
+exposes a **narrow scope/reference API** (grant/deny access to a run/artifact by
+immutable ref under an auth context); it does **not** know REvoLab's project
+hierarchy. REvoLab Project membership decides who may *reference* a run/artifact; the
+authorization to read the underlying bytes stays in REvoCompute. Sharing = sharing a
+neutral reference, never a copy.
+
+---
+
+# REvoDesign integration contract
+
+REvoDesign is **interactive and stateful** and is fundamentally different from
+REvoCompute. Do NOT force it into `ComputeCapability`.
+
+**Flows:**
+
+```text
+REvoLab Structure --open_design--> REvoDesign session
+  (user interacts in REvoDesign; REvoLab is NOT polling every frame)
+REvoDesign --export--> Structure/Variant/DesignSet
+  → REvoLab creates a NEW object + provenance
+```
+
+- REvoDesign shares the base `Driver` lifecycle and the durable-reference
+  discipline, and implements `DesignCapability` (open/export) + the
+  `InteractiveHandoffCapability` (deep-link/open-in-UI).
+- **Provenance is captured only at the export/import boundary**: input object →
+  session (SessionReference) → ArtifactReference (checksum) → output object, linked
+  by `derived_from`/`represents`. The ephemeral interactive timeline is never stored.
+- **A durable result** = a content-addressed ArtifactReference, optionally imported
+  into a new REvoLab ScientificObject + provenance edges — never the session timeline.
+
+---
+
+# OpenBio / biological knowledge integration
+
+OpenBio is primarily an **external biological knowledge capability**
+(PDB/UniProt/PubMed/ChEMBL/…), **not** REvoLab's database.
+
+**Four entry modes — one boundary** (e.g. UniProt P12345):
+
+```text
+1. Live external lookup    → transient result, never persisted as project truth
+2. Cached external reference → REvoLab stores an ExternalReference: the stable
+     (provider, external_id) identity + bounded, validated metadata (label, kind,
+     a content checksum when known). This is a durable identity handle with
+     lightweight validated metadata — NOT a copy of the provider's data. It honors
+     invariant #2 (no-mutable-external-copy): provider records stay authoritative
+     in the provider; no snapshot/full payload is mirrored into REvoLab.
+3. Imported scientific object → user/agent promotes an ExternalReference into a
+     REvoLab Protein object (typed import; reference becomes provenance origin
+     via an imported_as edge). Explicit import is the ONLY way an external entity
+     becomes a first-class REvoLab object.
+4. Project evidence        → the reference/import is linked as Evidence supporting a Decision
+```
+
+**Boundary rule:** an entity becomes a REvoLab object **only via explicit import**
+(mode 3). Lookup/cache (1, 2) are non-committal; evidence (4) is a relation, not an
+object.
+
+**Core records needed (all provider-neutral, each a canonical graph node — see
+`SCIENTIFIC_GRAPH.md` node categories):** `ExternalReference`, `RunReference`,
+`SessionReference` (REvoDesign interactive session identity card), `ArtifactReference`,
+`LiteratureReference`, `Evidence`. **Import provenance is a single mechanism — the
+`imported_as` edge** whose payload records the source reference and content
+fingerprint; there is **no separate `ImportRecord` node** (a second mechanism would
+duplicate import modeling). No OpenBio vocabulary leaks into Core.
+
+Recorded in **ADR-0012**.
