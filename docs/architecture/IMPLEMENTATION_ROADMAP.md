@@ -87,7 +87,7 @@ real frontend/API slice, then integrations, then collaboration and agent.
 
 ### Phase 1 — Scientific context core
 
-- **Goal:** replace the bootstrap's accidental architecture with the accepted domain
+- **Goal:** replace the bootstrap's accidental architecture with the proposed domain
   model: typed object spine + extension tables, organization/relation split,
   distinct reference nodes, decision promotion, soft-archive lifecycle, explicit
   Project-membership ownership.

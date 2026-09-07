@@ -1,6 +1,6 @@
 # Drivers (superseded)
 
-> **Superseded by the accepted design.** This bootstrap-era driver description
+> **Superseded by the proposed design.** This bootstrap-era driver description
 > (including the 5-state lifecycle `DISCOVERED → VALIDATED → STARTED → READY →
 > STOPPED`) is replaced by `docs/architecture/PROVIDER_CAPABILITIES.md` and
 > **ADR-0012**, which collapses lifecycle to 2 domain-visible states

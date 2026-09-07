@@ -59,12 +59,14 @@ external providers own their capabilities and execution truth. The design is a
 relational scientific graph over typed scientific objects, evidence/provenance,
 and decisions, accessed through domain services and capability-neutral providers.
 
-The accepted architecture lives in `docs/architecture/` — start with
+The proposed top-level architecture lives in `docs/architecture/` — start with
 `SYSTEM_ARCHITECTURE.md` (domains + diagrams) and `DOMAIN_BOUNDARIES.md`; see
 `IMPLEMENTATION_ROADMAP.md` for the staged implementation plan and the ADRs under
 `docs/architecture/adr/`. `IMPLEMENTATION_STATE.md` records verified implementation
-state only. Note: the current backend/frontend remain the prototype the accepted
-design overturns (see the roadmap's bootstrap classification).
+state only. Per the Harness authority model, this architecture is **Proposed — pending
+human review** (PR #1); it becomes `Accepted` only after a human approves/merges.
+Note: the current backend/frontend remain the prototype the proposed design overturns
+(see the roadmap's bootstrap classification).
 
 ## License
 

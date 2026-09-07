@@ -1,6 +1,6 @@
 # Agent And Skills (superseded)
 
-> **Superseded by the accepted design.** This bootstrap-era summary is replaced by
+> **Superseded by the proposed design.** This bootstrap-era summary is replaced by
 > `docs/architecture/AGENT_CONTEXT.md` (context selection, the promotion loop, the
 > safety/authority matrix) and ADRs **0007/0011/0013**. The core rules here — the
 > agent is not the database, chat history is not project truth, skills teach judgment
