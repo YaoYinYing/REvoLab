@@ -44,8 +44,8 @@ External systems own their capabilities and execution truth.
     scientific objects or their provenance.
   - Organization (folders) is not scientific semantics.
 - **Public contracts:** project CRUD, project-scoped read and write entry points.
-- **Dependencies:** Identity/Collaboration (membership, roles). Depends on nothing
-  else in Core.
+- **Dependencies:** Identity/Collaboration (membership, roles), Scientific Object
+  (links global resources into a Project context). Depends on nothing else in Core.
 - **Non-responsibilities:** owning object lifecycle; owning execution; owning
   provider credentials; being the provenance authority.
 
@@ -66,7 +66,9 @@ External systems own their capabilities and execution truth.
   - Organization (parent/tree/membership) is separate from scientific relations.
   - Durable identity is the stable UUID, never a path or a username.
 - **Public contracts:** object create/read/version operations via the domain service.
-- **Dependencies:** Project (scoping).
+- **Dependencies:** none in Core — Scientific Object is a **global leaf**; it is
+  bound into Project contexts through `ProjectResourceLink` (owned by the consuming
+  Project/Identity side), not by depending on Project.
 - **Non-responsibilities:** expressing scientific relationships (that is the
   graph domain's job); owning external execution state.
 
@@ -135,7 +137,8 @@ External systems own their capabilities and execution truth.
 - **Owned invariants:** chat history is not project truth; context references large
   artifacts instead of embedding them; the agent never raw-writes.
 - **Public contracts:** context assembly, typed tool calls, skill loading.
-- **Dependencies:** Project, Knowledge, Provider (for tools).
+- **Dependencies:** Project, Evidence/Provenance, Knowledge/Decision, Provider
+  (for tools), Identity/Collaboration (authority). The Agent is a consumer of these.
 - **Non-responsibilities:** owning the database; being the persistence layer; RAG.
 
 ### 7. Identity / Collaboration Domain
@@ -171,7 +174,11 @@ External systems own their capabilities and execution truth.
 
 ---
 
-## Dependency diagram (no circular ownership)
+## Dependency diagram (single canonical acyclic DAG)
+
+**Arrow meaning (single convention):** `A --> B` means **A imports/consumes B's
+public contract** (a code/build dependency direction, not data flow). This is the
+**same** DAG as `SYSTEM_ARCHITECTURE.md`; no other document draws a competing one.
 
 ```mermaid
 flowchart TB
@@ -184,31 +191,37 @@ flowchart TB
     SO["Scientific Object"]
     PJ["Project"]
 
-    PW --> AC
+    PW --> PJ
+    PW --> SO
+    PW --> EP
+    PW --> KD
     PW --> PC
+    PW --> AC
     PW --> IC
 
-    AC --> KD
+    AC --> PJ
     AC --> EP
+    AC --> KD
     AC --> PC
     AC --> IC
 
-    KD --> EP
-    KD --> PJ
+    PJ --> IC
+    PJ --> SO
+
     EP --> SO
     EP --> PJ
-    SO --> IC
+
+    KD --> EP
+    KD --> PJ
 
     PC --> IC
-
-    PJ --> IC
 ```
 
-`PJ --> IC` (Project consumes the Identity membership contract) is acyclic; Identity
-owns ProjectMembership and depends on nothing in Core, so there is no longer a cycle.
-
-No domain depends on a downstream sibling in a cycle; Core domains never depend on
-the Agent Context domain.
+`Scientific Object` and `Identity / Collaboration` are **global leaves** with no
+outgoing edges (they depend on nothing in Core). The graph is acyclic: Core domains
+never depend on the Agent, and no domain depends on a downstream sibling in a cycle.
+`PJ --> IC` (Project consumes the Identity membership contract) is one direction only —
+Identity owns membership and depends on nothing in Core, so there is no cycle.
 
 ---
 

@@ -69,7 +69,7 @@ reason and the phase that resolves it:
 | Agent context + authority | **Decided** (ADR-0013) | Phase 5 |
 | Generated API/frontend contract | **Decided** (ADR-0014) | Phase 2 |
 | **RelationType closed enum** | **Decided** — canonical list in `SCIENTIFIC_GRAPH.md` | Phase 1 |
-| **Generic Relation target type** (poly-target for Evidence/Decision edges) | **Decided** — nullable node-type discriminator + per-kind FKs | Phase 1 |
+| **Relation physical schema** (one polymorphic table vs edge-family tables; uniqueness/supersession key) | **Deferred to the Phase-1 executable spike** — see `SCIENTIFIC_GRAPH.md` (the single source for the logical graph contract; do NOT freeze the physical shape in PR1) | Phase 1 |
 | **Evidence kind/role enums** (incl. `hypothesis` role) | **Decided** — in `EVIDENCE_PROVENANCE.md` | Phase 1 |
 | **Actor / identity persistence** | **Shape decided** (opaque UUID Actor; auth identity/membership/role/credential separation in `COLLABORATION_IDENTITY.md`); tables built in Phase 4, not reopened | Phase 4 |
 | **OpenBio cache semantics** | **Decided** — ExternalReference = identity + bounded validated metadata, never a snapshot copy | Phase 6 |

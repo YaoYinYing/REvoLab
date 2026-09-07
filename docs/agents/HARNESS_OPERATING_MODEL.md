@@ -226,8 +226,32 @@ more dangerous mode and is never the default.
 ```text
 /repo/REvoLab/**                   read/write
 package install, tests, build, lint
-local postgres, localhost API
+localhost API                      (read/test the running app)
 ```
+
+### Container-engine operations are a privileged external capability (reviewer finding #8)
+
+The Docker/Podman **daemon is outside the filesystem sandbox**. A process with daemon
+access can create containers with host bind-mounts, `--privileged`, or host PID/IPC
+flags and thereby **bypass `workspace-write` file restrictions**. Therefore:
+
+- Container-engine access is **NOT an ordinary workspace write** — it is a privileged
+  external capability that requires approval to invoke.
+- The only sanctioned container use is the **known `docker-compose.yml` at the repo
+  root** for `local postgres`, and even that must obey:
+
+```text
+known project docker-compose file        (not an arbitrary image/container)
+no --privileged
+no host PID / IPC namespace sharing
+no docker.sock mount into a container
+no bind-mount outside the approved workspace/data root
+approval required when invoking host Docker/Podman
+```
+
+- **Never treat a subagent or a sandbox as a safe proxy for Docker**: delegating a
+  container command to a subagent does not isolate the daemon. See "Subagents are not
+  a security boundary" below.
 
 ### What the agent must NOT do without explicit human authorization
 
@@ -267,8 +291,16 @@ uncertain permission → stop / ask        (never assume yes)
 5. EXECUTE            write; tests; migrations; contracts; browser smoke
 6. VERIFY             machine gates; update IMPLEMENTATION_STATE
                        └─ material defect? yes → next Goal round; no → 7
-7. RALPH AUDIT        fresh reviewer → clean? no → fix + retry; yes → COMPLETE
+7. INDEPENDENT REVIEW fresh reviewer audits the patch
+   ├─ normal fresh reviewer by default
+   └─ Ralph ONLY on explicit human request (fresh-agent convergence loop;
+      never a fixed mandatory step)
+   → clean? no → fix + retry; yes → COMPLETE
 ```
+
+This aligns the top-level control plane with the `engineering-workflow` skill:
+**Ralph runs only when explicitly requested** and is never a mandatory fixed phase.
+A plain fresh-subagent review is the default independent review.
 
 The fixed orchestration algorithm — **ODDRIVC**:
 

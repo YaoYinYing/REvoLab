@@ -78,31 +78,37 @@ simultaneously be "the eternal identity of this scientific thing" and "the immut
 identity of a specific snapshot of it". A provenance edge must be able to point at the
 **exact immutable revision** that was consumed/produced.
 
-- **Conceptual / series identity** (`series_uuid`) — the eternal identity of "this
+**Frozen physical nomenclature (reviewer finding #9):** the two tables are
+`ScientificObjectSeries` (identity column **`series_id`**) and `ScientificObjectRevision`
+(identity column **`revision_id`**), both UUID values. The vague `ScientificObject.id`
+is **never** used to mean both; a reference always says which one it means (external
+IDs/aliases bind `series_id`; provenance edges reference `revision_id`).
+
+- **Conceptual / series identity** (`series_id`) — the eternal identity of "this
   scientific thing" (e.g. the protein, the variant series). It never changes. This is
   what aliases, external IDs, and cross-Project membership bind to.
-- **Revision identity** (`revision_uuid`) — a unique immutable UUID for **one content
-  version**. Each content change creates a *new* `revision_uuid` with its own internal
+- **Revision identity** (`revision_id`) — a unique immutable UUID for **one content
+  version**. Each content change creates a *new* `revision_id` with its own internal
   UUID; the old revision UUID stays permanently addressable so provenance edges cite
   exactly which revision was used.
 
 **Mapping to the model:**
-- The core `scientific_objects` spine row carries the stable `series_uuid` (the
+- The core `scientific_objects` spine row carries the stable `series_id` (the
   conceptual identity) and the *current* revision marker.
 - Each content revision is an independent immutable record with its own
-  `revision_uuid`, immutable content, and content fingerprint (checksum). Revisions
+  `revision_id`, immutable content, and content fingerprint (checksum). Revisions
   are ordered by a monotonic `revision_seq` within the series.
-- **Provenance edges reference `revision_uuid`, never `series_uuid`.** "Which Structure
+- **Provenance edges reference `revision_id`, never `series_id`.** "Which Structure
   revision did this Run consume?" resolves unambiguously.
-- **`series_uuid` is the durable identity** cited by aliases/external IDs and used in
-  the UI; `revision_uuid` is what scientific relations and provenance point at.
+- **`series_id` is the durable identity** cited by aliases/external IDs and used in
+  the UI; `revision_id` is what scientific relations and provenance point at.
 
 **Principle:** an object's *provenance-relevant content* is immutable once referenced
 or once it reflects a real state of the world. Mutable fields are only the
 governance/labeling spine (held on the series row, not revisions).
 
 - **Content mutation** → never in-place: create a **new revision** (same conceptual
-  identity, new `revision_uuid`).
+  identity, new `revision_id`).
 - **Governance/label mutation** (rename, fix typo, re-parent, add alias) → in-place on
   the series spine; not scientific content, not versioned.
 
@@ -126,17 +132,17 @@ sourcing or audit-snapshot system.
 Three distinct concepts — never conflated:
 
 ```text
-canonical identity   → the stable series_uuid (used for internal citation/linking)
-revision identity    → revision_uuid (what provenance edges point at)
+canonical identity   → the stable series_id (used for internal citation/linking)
+revision identity    → revision_id (what provenance edges point at)
 external identities  → (authority/namespace, native_id) pairs, one may be is_canonical
 aliases              → search synonyms used to find, never to cite
 ```
 
-- **Canonical internal identity:** `series_uuid` only; `name` is a mutable label.
+- **Canonical internal identity:** `series_id` only; `name` is a mutable label.
 - **External identifiers:** a first-class `ExternalId` registry whose durable key is
   the **identity authority/namespace** (see `PROVIDER_CAPABILITIES.md` — this is
   *not* the access provider):
-  `(object_series_uuid, authority, native_id, is_canonical, provenance_ref)`,
+  `(object_series_id, authority, native_id, is_canonical, provenance_ref)`,
   `UNIQUE(authority, native_id)`. `authority ∈ {uniprot, pdb, doi, pubmed, ...}`.
   An authority ID maps to exactly one REvoLab series where we assert it. (This
   normalizes the bootstrap's ad-hoc plain `provider + external_id` into an

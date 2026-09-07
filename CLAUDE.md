@@ -8,6 +8,7 @@
 - Load project skills from `.agents/skills/`; skills point to canonical schemas instead of duplicating them.
 - Completion requires executable acceptance, not model self-assessment.
 - Default to workspace-write + approval; never broaden permissions to bypass a failing task.
+- Container-engine access is a privileged external capability, NOT a workspace write; only the known repo `docker-compose.yml` for local postgres, with no privileged/host-PID/docker.sock/bind-outside the approved root, and approval when invoking host Docker/Podman.
 - Conversation is working memory; repository docs/tests/ADRs/IMPLEMENTATION_STATE are durable project truth.
 
 ## REvoLab architecture invariants

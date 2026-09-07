@@ -88,36 +88,52 @@ flowchart TB
         PW["Presentation / Workspace Domain"]
     end
 
-    P --> SO
-    P --> EP
-    P --> KD
-    P --> AC
-    P --> IC
-
-    SO --> EP
-    EP --> KD
-
-    AC --> PC
-    AC --> KD
-    AC --> IC
-
+    PW --> P
+    PW --> SO
+    PW --> EP
+    PW --> KD
+    PW --> PC
     PW --> AC
     PW --> IC
-    PW --> PC
+
+    AC --> P
+    AC --> EP
+    AC --> KD
+    AC --> PC
+    AC --> IC
+
+    P --> IC
+    P --> SO
+
+    EP --> SO
+    EP --> P
+
+    KD --> EP
+    KD --> P
+
+    PC --> IC
 ```
+
+**Arrow meaning (single convention):** `A --> B` means **A imports/consumes B's public
+contract**. It is a code/build dependency direction, not a data-flow direction.
+Global leaves `ScientificObject` and `Identity/Collaboration` have **no outgoing
+edges** (they depend on nothing in Core); `Agent` and `Presentation` consume the
+application-facing contracts of the domains below them. This graph is the **single**
+authoritative dependency DAG — it is repeated verbatim in `DOMAIN_BOUNDARIES.md` and no
+other document draws a competing one.
 
 The eight domains and their one-line purpose (detailed in
 `DOMAIN_BOUNDARIES.md`):
 
 | Domain | Owns |
 |---|---|
-| Project | the workspace boundary: project record, membership links, scoping |
-| Scientific Object | typed scientific entities and their per-type metadata |
+| Project | the workspace boundary: project record, membership participation (via the Identity contract), resource links into a Project context, scoping |
+| Scientific Object | typed scientific entities and their per-type metadata (a global resource) |
 | Evidence / Provenance | references, evidence claims, and lineage edges |
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
-| Provider / Capability | providers, drivers, capabilities, credentials, tools |
+| Provider / Capability | providers, drivers, capabilities, capability schemas |
 | Agent Context | project-scoped context, tools, skills, and the agent loop |
-| Identity / Collaboration | actors, authentication identities, membership, roles, credentials |
+| Identity / Collaboration | actors, authentication identities, membership, roles, credentials, resource links |
 | Presentation / Workspace | API surface and the user workspace information architecture |
 
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
@@ -129,27 +145,33 @@ not an owner, of project truth. Provider-vocabulary never leaks into Core.
 ## Internal dependency architecture
 
 ```text
-Presentation / Workspace  (React, generated TS client)
-        │
-        ▼
-Identity / Collaboration  (actor, membership, roles)
-        │
-        ▼
-Agent Context  (ProjectContext, Tool/SkillCatalog) ──► Provider / Capability
-        │                                                (credential-aware)
-        ▼
-Knowledge / Decision  ──► Evidence / Provenance ──► Scientific Object
-        │                        │
-        ▼                        ▼
-    Project ─────────────────────┘   (project scopes all reads/writes)
-        │
-        ▼
-    Relational persistence (PostgreSQL)
+Arrow meaning: A --> B  =  A imports/consumes B's public contract.
+
+Relational persistence (PostgreSQL)
+
+S Scientific Object          (global leaf; depends on nothing in Core)
+I Identity / Collaboration   (global leaf; owns membership + credentials + resource links)
+
+Project ------------------------------> Scientific Object   (links global resources)
+Project ------------------------------> Identity            (membership contract)
+
+Evidence / Provenance ----------------> Scientific Object   (references global objects)
+Evidence / Provenance ----------------> Project             (project-scoped framing)
+
+Knowledge / Decision -----------------> Evidence / Provenance
+Knowledge / Decision -----------------> Project             (project-scoped decisions)
+
+Provider / Capability -----------------> Identity           (credential contract)
+
+Agent Context ----> Project | Evidence | Knowledge | Provider | Identity   (consumer)
+Presentation ----> Project | Scientific Object | Evidence | Knowledge |
+                   Provider | Agent | Identity                              (all app-facing)
 ```
 
-The dependency direction is strictly downward/leftward; there is **no circular
-domain ownership**. Core domains are independent of the Agent and of any
-particular provider.
+This is the **same single DAG** as the mermaid diagram above; `A --> B` always means
+"imports/consumes B's public contract". The direction is acyclic: only `Scientific
+Object` and `Identity / Collaboration` are global leaves, Core never depends on the
+Agent, and no domain depends on a downstream sibling in a cycle.
 
 ---
 
@@ -172,7 +194,7 @@ flowchart LR
     Proj -- scopes --> Dec
     Proj -- scopes --> Ev
     RunR -- produced --> ArtR
-    RunR -- consumed_input_by (from Obj) --> Obj
+    Obj -- consumed_as_input_by --> RunR
     ArtR -- imported_as --> Obj
     Obj -- generated_by --> RunR
     LitR -- source of --> Ev

@@ -26,6 +26,12 @@ is available.
   handle for the calling actor; **availability is a derived, Actor-contextual probe** —
   `available(actor, provider) = driver READY AND required credential kinds present for
   the actor AND project policy permits` — never stored.
+- **Runtime health and availability are separate coeffects (reviewer finding #6):**
+  `ProviderRuntimeHealth` (`READY | DEGRADED | UNREACHABLE`) is per-provider and
+  actor-independent and is the **only** per-provider registry state; `Capability
+  Availability(actor, project)` (`AVAILABLE | CREDENTIAL_MISSING | NOT_AUTHORIZED |
+  PROVIDER_UNAVAILABLE`) is a **derived projection**, never stored. `credential_missing`
+  is never a provider property — it is always per-Actor.
 - **Authority is not transport (reviewer finding #8):** durable external identity is
   an identity `authority/namespace` (uniprot, pdb, doi, pubmed; `revocompute` is both
   authority and provider for its own IDs), kept separate from the resolver/provider

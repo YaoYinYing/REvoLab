@@ -165,17 +165,50 @@ GET /api/providers/{key}/schema/{capability_kind} -> JSON Schema
   provider produces no tool for that actor, so the Agent never proposes an
   unexecutable call.
 
-## Failure & provider disappearance
+## Failure, runtime health, and actor availability (three distinct coeffects)
 
+The review flagged that **runtime health** and **caller availability are different
+things and must not share one state**. Split them:
+
+**ProviderRuntimeHealth** — per-provider, driver-level, **actor-independent**:
+
+```text
+READY | DEGRADED | UNREACHABLE
+```
+
+This is the only thing the registry may track per provider (lazily probed). `DEGRADED`
+means the driver is loaded but some dependency is unhealthy; `UNREACHABLE` means live
+calls fail. There is **no `credential_missing` here** — that is never a provider
+property.
+
+**CapabilityAvailability(actor, project)** — a **derived projection, never stored**:
+
+```text
+AVAILABLE | CREDENTIAL_MISSING | NOT_AUTHORIZED | PROVIDER_UNAVAILABLE
+```
+
+Derived per call/query as:
+
+```text
+available(actor, provider, project)
+  = (driver RuntimeHealth == READY)
+    AND required credential kinds present for this Actor
+    AND project policy permits the requested operation for this actor
+```
+
+One provider can be `AVAILABLE` for Alice (who holds the credential) and
+`CREDENTIAL_MISSING` for Bob (who does not) in the same Project — exactly the case the
+single per-provider state could not express. Availability is recomputed on demand, so
+credential rotation and role changes take effect with no migration.
+
+**Failure behavior:**
 - **Typed `CapabilityError`** with a stable kind enum
   (`AUTH | NOT_FOUND | INVALID_PARAM | PROVIDER_UNAVAILABLE | NETWORK | UNKNOWN`),
   mapped to a stable HTTP error envelope. **No silent fallbacks.**
-- Registry tracks per-provider `state: ready | credential_missing | degraded |
-  unreachable` (lazily probed).
-- When a provider goes **unreachable**: calls fail with `PROVIDER_UNAVAILABLE`; the
-  catalog marks it unavailable (Agent tools disappear, frontend shows it); **stored
-  references/evidence are unaffected** — they become "unverifiable", never deleted,
-  never re-invalidated. Only *live resolution* is suspended.
+- When a provider's runtime health becomes **`UNREACHABLE`**: live calls fail with
+  `PROVIDER_UNAVAILABLE`; the catalog denotes the provider unavailable to every actor;
+  **stored references/evidence are unaffected** — they become "unverifiable", never
+  deleted, never re-invalidated. Only *live resolution* is suspended.
 - **No hot-unloading** (ADR-0005). An unreachable driver stays loaded and rejects
   calls.
 
