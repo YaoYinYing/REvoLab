@@ -39,9 +39,11 @@ Do not jump from ORIENT straight to IMPLEMENT.
 6. **Verify** — run the executable gates (pytest, Alembic drift, typecheck,
    frontend build/test). Completion requires machine acceptance, not
    self-assessment. Update `IMPLEMENTATION_STATE.md` to record actual state.
-7. **Review** — if required, run an independent (Ralph / fresh) audit, then
-   decide: CONTINUE (next Goal round), BLOCK (genuine external dependency), or
-   COMPLETE (Acceptance Gates == PASS).
+7. **Review** — only **if required**: an independent audit (a plain fresh subagent
+   unless the user explicitly requested a Ralph fresh-agent loop — Ralph runs only on
+   explicit request, never as a mandatory fixed step), then decide: CONTINUE (next
+   Goal round), BLOCK (genuine external dependency), or COMPLETE (Acceptance Gates ==
+   PASS).
 
 ---
 

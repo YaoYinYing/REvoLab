@@ -26,11 +26,13 @@ Last verified: 2026-09-07
 
 This file records actual repository state, not future architecture plans.
 
-## 2026-09-07 — Architecture design phase COMPLETE
+## 2026-09-07 — Architecture design proposal (pending human review)
 
-Delivered a reconciled top-level architecture (see `docs/architecture/` and ADRs
-0008–0014). This is the approved target design; the current backend/frontend remain
-the prototype the design overturns.
+Delivered a reconciled top-level architecture **proposal** (see `docs/architecture/`
+and ADRs 0008–0014). **Status: PROPOSED, not approved** — per the Harness authority
+model only the human (via PR review/merge) can accept or reject the top-level
+architecture. The current backend/frontend remain the prototype the proposal
+overturns.
 
 Produced:
 - 10 documents in `docs/architecture/`: SYSTEM_ARCHITECTURE, DOMAIN_BOUNDARIES,
@@ -54,8 +56,25 @@ Produced:
   separate ImportRecord node) and made DoD-18 explicit in IMPLEMENTATION_ROADMAP.
 - The superseded bootstrap docs (`overview.md`, `domain-model.md`, `drivers.md`,
   `evidence-and-lineage.md`, `agent-and-skills.md`) were reduced to thin pointers to
-  the accepted documents to avoid dual sources of truth; `reference-study.md` remains
+  the proposed documents to avoid dual sources of truth; `reference-study.md` remains
   the external-reference analysis.
+
+### 2026-09-07 — Human review REQUEST CHANGES (PR #1), being addressed
+
+A human reviewer returned **REQUEST CHANGES** on the proposal (not merge). The review
+confirmed ~80% of the top-level direction but required converging the remaining
+"two-truths" before Phase 1 writes a migration. Its findings (architecture
+authority/status language; global-resource vs project-scope persistence mapping;
+object conceptual-identity vs revision-identity; a single canonical edge endpoint
+matrix incl. the `produced`/`imported_as` direction contradiction; Evidence as
+source+target with one polarity truth; freezing only the logical graph contract and
+deferring physical Relation persistence to a Phase-1 spike; Relation uniqueness vs
+append-only correction; authority/namespace vs resolver/provider split;
+Actor-contextual provider availability; narrowing promotion to the Decision
+draft→commit gate; unifying lifecycle/API command model; checksum-vs-origin
+semantics; restoring short Engineering principles to CLAUDE.md; making Ralph
+conditional) are being folded into the documents on this branch. Status remains
+PROPOSED until the human accepts.
 
 Deliberately NOT implemented (deferred by the design: Phases 1–6 in
 IMPLEMENTATION_ROADMAP): real auth/identity tables, real REvoCompute/REvoDesign/

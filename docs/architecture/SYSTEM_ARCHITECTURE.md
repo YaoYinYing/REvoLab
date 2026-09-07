@@ -1,6 +1,9 @@
 # REvoLab System Architecture
 
-> **Status:** Accepted architecture (reconciled from eight parallel design analyses).
+> **Status: Proposed — pending human architecture review.** Reconciled from eight
+> parallel design analyses. Per the Harness authority model only a human (you) may
+> accept or reject the top-level architecture; the `Accepted` status is set only
+> after this PR is merged / you approve.
 > This document is the top-level architecture of REvoLab. It answers *what are the
 > stable architectural domains, what knowledge does each own, how they communicate,
 > and where the extension boundaries are*. Lower-level questions each have their own
@@ -166,25 +169,29 @@ flowchart LR
     Ev["Evidence"]
     Dec["Decision"]
 
-    Proj -- scopes --> Obj
-    Obj -- derived_from / variant_of / represents --> Obj
-    Obj -- consumed_as_input_by --> RunR
+    Proj -- scopes --> Dec
+    Proj -- scopes --> Ev
     RunR -- produced --> ArtR
+    RunR -- consumed_input_by (from Obj) --> Obj
     ArtR -- imported_as --> Obj
-    Obj -- has_evidence --> Ev
-    LitR -- cited_by --> Ev
-    ExtR -- cached lookup --> Ev
-    Ev -- supports / contradicts --> Obj
+    Obj -- generated_by --> RunR
+    LitR -- source of --> Ev
+    ExtR -- source of --> Ev
+    Ev -- target --> Obj
     Dec -- cites (DecisionEvidence) --> Ev
     Dec -- supersedes --> Dec
 ```
 
-- **ScientificObject** is project-owned context for one concrete scientific thing.
+Directions derive from the single canonical edge matrix in `SCIENTIFIC_GRAPH.md`.
+`supports`/`contradicts` are **fields** on Evidence (and `cited_as` on a Decision
+`cites` join), not graph edges.
+
+- **ScientificObject** is global context for one concrete scientific thing.
 - **RunReference / SessionReference / ArtifactReference / LiteratureReference /
   ExternalReference** are *immutable identity cards* pointing at external work. They
   are **facts**, not claims.
-- **Evidence** is the durable, interpreted *claim* that a reference (or an
-  experiment/note) supports or relates to a target in the project.
+- **Evidence** is the durable, interpreted *claim*: a source (a reference/experiment/
+  note) + a target (an object/Decision) + polarity/scope. See `SCIENTIFIC_GRAPH.md`.
 - **Decision** is the durable project conclusion that *cites* Evidence and can be
   superseded — never rewritten.
 

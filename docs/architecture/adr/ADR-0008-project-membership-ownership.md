@@ -21,6 +21,11 @@ Use **global/stable resource identity + project-scoped reference/membership** â€
 - Deleting a Project removes links and membership, never the underlying objects or
   their provenance.
 - Organization (parent/folder tree) is separated from scientific relation.
+- **Definitive scope split** (reviewer finding #2): ScientificObject, all reference
+  nodes, and provenance Relations are **global** (no `project_id` owner, held across
+  many Projects); Evidence and Decision are **project-scoped** (authored in and owned
+  by one Project, soft-archived on Project deletion); Project, membership, and
+  annotation are project-local. Nothing is owned by a Project through a cascade.
 
 ## Consequences
 - Sharing lands without a destructive migration.

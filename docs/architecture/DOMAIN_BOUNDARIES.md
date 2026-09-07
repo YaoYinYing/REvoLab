@@ -1,6 +1,7 @@
 # Domain Boundaries
 
-> **Status:** Accepted. Defines each architectural domain — purpose, owned
+> **Status: Proposed — pending human architecture review.** Defines each
+> architectural domain — purpose, owned
 > concepts, owned mutable state, invariants, public contracts, dependencies, and
 > explicit non-responsibilities — plus the Project boundary decision.
 
@@ -31,19 +32,20 @@ External systems own their capabilities and execution truth.
 
 - **Purpose:** the durable workspace boundary that scopes context, membership, and
   access.
-- **Owned concepts:** Project record, ProjectMembership links, project-level
-  annotation, project visibility (private / shared-with-members).
-- **Owned mutable state:** project name/description, membership rows, visibility.
+- **Owned concepts:** Project record, project-level annotation, project visibility
+  (private / shared-with-members). Project **participation is expressed through the
+  Identity/Collaboration membership contract** (see below) — Project does **not** own
+  `ProjectMembership`.
+- **Owned mutable state:** project name/description, visibility.
 - **Owned invariants:**
   - A Project is a namespace *and* a security/permission boundary, but **not** the
     scientific-identity boundary.
   - Project deletion removes **links and membership**, never the underlying global
     scientific objects or their provenance.
   - Organization (folders) is not scientific semantics.
-- **Public contracts:** project CRUD, membership management, project-scoped read
-  and write entry points.
+- **Public contracts:** project CRUD, project-scoped read and write entry points.
 - **Dependencies:** Identity/Collaboration (membership, roles). Depends on nothing
-  in Core.
+  else in Core.
 - **Non-responsibilities:** owning object lifecycle; owning execution; owning
   provider credentials; being the provenance authority.
 
@@ -101,7 +103,7 @@ External systems own their capabilities and execution truth.
   - Agent output is conversation until explicitly promoted into project knowledge.
   - A committed decision is never edited; it is superseded.
   - "Current scientific conclusion" is a derived query, not a mutable field.
-- **Public contracts:** decision propose → commit → supersede; cite evidence.
+- **Public contracts:** decision draft → commit → supersede; cite evidence.
 - **Dependencies:** Evidence/Provenance, Project.
 - **Non-responsibilities:** building a premature ELN ontology; owning the chat log.
 
@@ -141,14 +143,18 @@ External systems own their capabilities and execution truth.
 - **Purpose:** ownership, membership, and sharing boundaries (built for, but not
   executing, real authentication).
 - **Owned concepts:** AuthenticationIdentity, Actor (opaque UUID), Role
-  (owner/member/viewer), ProjectMembership, ResourceOwnership, ExternalProviderCredential.
+  (owner/member/viewer), **ProjectMembership** (single owning domain), ResourceOwnership,
+  ExternalProviderCredential.
 - **Owned mutable state:** memberships, roles, credential bindings.
 - **Owned invariants:** durable identity is an opaque UUID, not a path or auth
   username; sharing never copies data into another project; access is inherited
   from project membership.
-- **Public contracts:** membership/role operations; the ownership boundary for the
-  domain and agent authority model.
-- **Dependencies:** Project.
+- **Public contracts:** membership/role operations (Project consumes this contract);
+  the ownership boundary for the domain and agent authority model.
+- **Dependencies:** none in Core — this domain **owns ProjectMembership** and treats
+  the Project only as an opaque UUID in the membership row, so it does **not** depend on
+  the Project domain. (This breaks the former circular ownership: Project → Identity,
+  never Identity → Project.)
 - **Non-responsibilities:** a big RBAC engine; real authentication (deferred).
 
 ### 8. Presentation / Workspace Domain
@@ -191,11 +197,15 @@ flowchart TB
     KD --> PJ
     EP --> SO
     EP --> PJ
-    SO --> PJ
+    SO --> IC
 
     PC --> IC
-    IC --> PJ
+
+    PJ --> IC
 ```
+
+`PJ --> IC` (Project consumes the Identity membership contract) is acyclic; Identity
+owns ProjectMembership and depends on nothing in Core, so there is no longer a cycle.
 
 No domain depends on a downstream sibling in a cycle; Core domains never depend on
 the Agent Context domain.

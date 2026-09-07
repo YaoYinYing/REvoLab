@@ -1,6 +1,7 @@
 # Evidence & Provenance
 
-> **Status:** Accepted. Defines the distinct durable record types, provenance
+> **Status: Proposed — pending human architecture review.** Defines the distinct
+> durable record types, provenance
 > semantics, and the Decision/knowledge promotion boundary. Inspired by
 > LaminDB / AiiDA / OpenLineage, adapted to REvoLab. Relational, no event sourcing,
 > no graph DB.
@@ -70,25 +71,36 @@ The **RunReference does the stitching**: it carries explicit `input_objects` and
 `output_artifacts` links so you can walk from any object forward through runs to
 artifacts and back into derived objects.
 
-**Prove origin WITHOUT copying REvoCompute state:** pin the immutable identity and
-a content fingerprint (checksum/digest). A RunReference stores:
-`provider, run_id (stable provider-native id), task_type, input_parameter_digest,
-submitted_at, immutable input artifact ids`. An ArtifactReference stores:
-`provider, artifact_id, content_type, size, checksum, version_id, originating
-run`. The digest/checksum is the **cryptographic proof of origin**: refetch,
-recompute, verify. This is LaminDB's hash-and-link philosophy and AiiDA's
-immutable-nodes-with-links, without a graph DB.
+**Record origin AND content without copying REvoCompute state:** pin the immutable
+identity and a content fingerprint (checksum/digest). A RunReference stores:
+`authority(=revocompute for its own runs), run_id (stable identity), task_type,
+input_parameter_digest, submitted_at, immutable input artifact ids`. An
+ArtifactReference stores: `authority, artifact_id, content_type, size, checksum,
+version_id, originating run`.
+
+**Checksum is NOT "proof of origin"** (reviewer finding #12). A checksum proves
+**content integrity / byte identity** — that a fetched artifact is byte-for-byte what
+was recorded. **Origin** is established separately by the **provenance assertion**:
+the RunReference's identity, the `produced` edge, and the provider's own identity/
+receipt. They are two distinct semantics and are kept apart:
+- content integrity = `checksum/digest` (recompute-and-verify);
+- origin = provenance assertion + provider identity (who did the work), *not* the checksum.
+This is LaminDB's hash-and-link philosophy (integrity) plus AiiDA's immutable
+nodes-with-edges (origin) — without a graph DB.
 
 ## Durable identity: immutable vs refreshable
 
-**Durable external identity (immutable):** `provider` (a stable type/driver name,
-never a mutable user account), provider-native stable `run_id`/`artifact_id`/
-accession, `checksum`/`digest`, `size`, an immutable `version_ref`, content type.
+**Durable external identity (immutable):** `authority` (the identity namespace —
+`uniprot`, `pdb`, `doi`, `pubmed`, or `revocompute` for its own IDs; see
+`PROVIDER_CAPABILITIES.md` "Authority vs provider"), authority-native stable
+`run_id`/`artifact_id`/accession, `checksum`/`digest`, `size`, an immutable
+`version_ref`, content type.
 
 **Never identity:** a filesystem path, a mutable container tag (`:latest`), a bare
-bucket name, a mutable username. Paths are a *refreshable location hint*.
+bucket name, a mutable username, or a *resolver provider* (OpenBio vs a direct API).
+Paths and resolver names are access/location hints, not identity.
 
-**Immutable on the REvoLab side:** reference ID, provider, provider-native ID,
+**Immutable on the REvoLab side:** reference ID, authority, authority-native ID,
 checksum/size, input digest, timestamps. Write-once provenance nodes.
 
 **Refreshable from the provider (via a capability, e.g. ArtifactResolution):** live
@@ -122,11 +134,15 @@ the old one.
 ## Minimal provenance graph (the four questions)
 
 ```text
-Why does this object exist?          → derived_from / imported_as / consumed_as_input_by + citing Decisions
-Where did this structure come from?  → Structure -imported_as-> ArtifactReference -produced-> RunReference -consumed_as_input_by-> inputs
-Which run created this artifact?     → ArtifactReference -produced-> RunReference (single owning edge)
-Which evidence caused which decision?→ Decision -cites-> Evidence -supports/contradicts-> target
+Why does this object exist?          → derived_from / imported_as chains + generated_by back to producing runs + citing Decisions
+Where did this structure come from?  → RunReference --produced--> ArtifactReference --imported_as--> Structure
+Which run produced this artifact?    → RunReference --produced--> ArtifactReference (single owning edge; direction run→artifact)
+Which evidence caused which decision?→ Decision --cites--> Evidence, then Evidence.target (polarity is an Evidence field / cited_as)
 ```
+
+Edge directions follow the single canonical matrix in `SCIENTIFIC_GRAPH.md`.
+`supports`/`contradicts` are **fields** of Evidence (and `cited_as` on a Decision
+`cites` join), not separate graph edges.
 
 ---
 
@@ -174,16 +190,18 @@ polarity). It is **project truth**, not chat.
 
 > **Agent output is conversation until explicitly promoted into project knowledge.**
 
-- A Decision first has status `proposed`/`draft`, authored by an Agent, with its
-  cited Evidence. A proposed Decision is *in the project but not project truth*.
-- **Commit** is a distinct, auditable domain operation (`propose → commit`) by an
+- A Decision first has status `draft`, authored by an Agent, with its
+  cited Evidence. A draft is *in the project but not project truth*. (Status is
+  exactly `draft | committed` + derived `superseded` — no separate `proposed`/`open`
+  stored state.)
+- **Commit** is a distinct, auditable domain operation (`draft → commit`) by an
   **authorized human actor** (or a policy-governed actor with commit authority).
   It is *not* the same as "create."
 - Only committed decisions — only after an authorized commit — are accepted project
   truth. Everything un-promoted is conversation/proposal.
 
 **Correction to the bootstrap:** the current API lets any `POST /decisions`
-immediately create a durable truth record. Add explicit `proposed → committed`
+immediately create a durable truth record. Add explicit `draft → committed`
 promotion.
 
 Recorded in **ADR-0010** (graph) and **ADR-0011** (promotion).

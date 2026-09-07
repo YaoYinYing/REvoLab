@@ -1,6 +1,7 @@
 # Implementation Roadmap
 
-> **Status:** Accepted. Staged, dependency-ordered vertical slices each with a goal,
+> **Status: Proposed — pending human architecture review.** Staged,
+> dependency-ordered vertical slices each with a goal,
 > owned domains, acceptance evidence, and explicit non-goals. Also classifies the
 > current bootstrap into keep / revise / remove / defer.
 
@@ -31,8 +32,9 @@ preserve. No backward compatibility is required. Classify every current piece:
 - **Single `ScientificObject` table + `metadata_json`** → base record + typed
   extension tables; no unvalidated JSON payload.
 - **`Evidence.provider`+`external_id` + `evidence_type=RUN|ARTIFACT`** → split into
-  distinct `RunReference`/`ArtifactReference`/`LiteratureReference` + Evidence claim.
-- **`POST /decisions` creating truth immediately** → explicit `proposed → committed`
+  distinct `RunReference`/`ArtifactReference`/`LiteratureReference` + Evidence claim,
+  keyed by an identity `authority` (not a resolver/provider).
+- **`POST /decisions` creating truth immediately** → explicit `draft → committed`
   promotion.
 - **`GET /projects/{id}` returning the whole graph** → project metadata + paginated
   collections + bounded graph query.
@@ -95,7 +97,7 @@ real frontend/API slice, then integrations, then collaboration and agent.
   objects/relations/evidence/decisions/promotion, with the object-detail aggregate and
   bounded graph query.
 - **Acceptance evidence:** Alembic drift on SQLite + PG; tests for: no blanket CASCADE
-  (deleting a Project preserves objects), object versioning, decision proposed→commit,
+  (deleting a Project preserves objects), object revisioning, decision draft→commit,
   relationship immutability, typed object extension.
 - **Non-goals:** auth, providers, agent.
 
@@ -144,7 +146,8 @@ real frontend/API slice, then integrations, then collaboration and agent.
 - **Owned domains:** Agent Context.
 - **Vertical slice:** `/context` assembly (ContextSelection/ContextBuilder); typed
   ToolCatalog from provider + domain schemas; skills populate; the
-  propose→promote loop with the authority matrix.
+  propose → commit loop (a Decision draft becomes truth only via the promotion gate)
+  with the authority matrix.
 - **Acceptance evidence:** an agent can read bounded context, propose a Decision, and
   have it remain non-truth until committed; a test proves no agent path performs a raw
   write; chat history never appears in the graph.

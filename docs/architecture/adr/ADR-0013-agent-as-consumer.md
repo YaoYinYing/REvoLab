@@ -12,11 +12,18 @@ approval infrastructure should be built now.
   ContextSelection`, `ContextBuilder` (read-only assembler), `AgentSession`
   (ephemeral), thin `ToolCatalog`/`SkillCatalog`. Rejected: RAG, DB-backed agent
   memory, always-on skill encyclopedia.
-- **Promotion is the single gate** for turning agent output into project truth
-  (ADR-0011).
+- **Two distinct gates (reviewer finding #10):**
+  - **Typed domain-operation gate — all persistence.** An Agent can never raw-write;
+    every durable change is a typed domain command through domain validation.
+  - **Promotion gate — only committing a knowledge assertion.** Promotion is
+    specifically the `Decision draft → committed` transition (ADR-0011); it does NOT
+    apply to ordinary object/evidence creation, which are typed domain operations.
 - **Authority matrix (model only, no infra):**
   - Agent proposal → automatic.
-  - Domain mutation → automatic or project-policy.
+  - Domain mutation (create object/evidence, record a Decision **as a draft**) →
+    automatic or project-policy.
+  - Knowledge commitment (Decision draft → committed) → approval (authorized actor) —
+    the promotion gate.
   - External compute submission → explicit tool/policy, fails closed.
   - External data write → highly restricted.
   - Project sharing change → human approval.

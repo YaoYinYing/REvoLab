@@ -1,6 +1,7 @@
 # Scientific Object Model
 
-> **Status:** Accepted. Reconciles the Scientific Object domain from first
+> **Status: Proposed — pending human architecture review.** Reconciles the
+> Scientific Object domain from first
 > principles. Replaces the bootstrap's single-table "enum + JSON" model.
 
 ## What is a ScientificObject?
@@ -70,30 +71,53 @@ scientific_objects (core spine — universal fields only)
 
 ---
 
-## Versions and mutation
+## Versions and mutation — conceptual identity vs revision identity
 
-**Principle:** an object's *provenance-relevant content* is immutable once it has
-been referenced/linked or once it reflects a real state of the world. Mutable
-fields are only the governance/labeling spine.
+**Two distinct identities must not share one UUID** (reviewer finding): a UUID cannot
+simultaneously be "the eternal identity of this scientific thing" and "the immutable
+identity of a specific snapshot of it". A provenance edge must be able to point at the
+**exact immutable revision** that was consumed/produced.
 
-- **Content mutation** (coordinates, sequence, variant set change) → **never
-  in-place**: produce a **new version** (same canonical identity) or a **new
-  object** (different identity).
-- **Governance/label mutation** (rename, fix typo, re-parent in the org tree, add
-  alias) → in-place update of the spine is allowed; not scientific content.
+- **Conceptual / series identity** (`series_uuid`) — the eternal identity of "this
+  scientific thing" (e.g. the protein, the variant series). It never changes. This is
+  what aliases, external IDs, and cross-Project membership bind to.
+- **Revision identity** (`revision_uuid`) — a unique immutable UUID for **one content
+  version**. Each content change creates a *new* `revision_uuid` with its own internal
+  UUID; the old revision UUID stays permanently addressable so provenance edges cite
+  exactly which revision was used.
 
-**New version vs new object:**
-- **New version** when the change keeps the same canonical scientific identity
-  (re-folded Protein, re-refined Structure → a new `Structure` version).
-- **New object** when the change alters the scientific identity (a Sequence
-  promoted to Protein, a new design) → a fresh object linked by a `derived_from`
-  / `variant_of` Relation.
+**Mapping to the model:**
+- The core `scientific_objects` spine row carries the stable `series_uuid` (the
+  conceptual identity) and the *current* revision marker.
+- Each content revision is an independent immutable record with its own
+  `revision_uuid`, immutable content, and content fingerprint (checksum). Revisions
+  are ordered by a monotonic `revision_seq` within the series.
+- **Provenance edges reference `revision_uuid`, never `series_uuid`.** "Which Structure
+  revision did this Run consume?" resolves unambiguously.
+- **`series_uuid` is the durable identity** cited by aliases/external IDs and used in
+  the UI; `revision_uuid` is what scientific relations and provenance point at.
+
+**Principle:** an object's *provenance-relevant content* is immutable once referenced
+or once it reflects a real state of the world. Mutable fields are only the
+governance/labeling spine (held on the series row, not revisions).
+
+- **Content mutation** → never in-place: create a **new revision** (same conceptual
+  identity, new `revision_uuid`).
+- **Governance/label mutation** (rename, fix typo, re-parent, add alias) → in-place on
+  the series spine; not scientific content, not versioned.
+
+**New revision vs new object:**
+- **New revision** when the change keeps the same conceptual identity (re-folded
+  Protein, re-refined Structure → new revision of the same Structure series).
+- **New object** when the change alters the conceptual identity (a Sequence promoted
+  to Protein, a genuinely different design) → a fresh series + objects linked by a
+  `derived_from` / `variant_of` relation.
 
 **Enforcement:** a content update to a referenced object is **rejected by a domain
-service** unless it produces a new version/object. Versioning is **opt-in per
-type** (a Dataset may version; a Project never does). This is lightweight — a
-`version` integer + immutability rule at the domain-service layer, **not** event
-sourcing or an audit-snapshot system.
+service** unless it produces a new revision. Versioning is **opt-in per type**.
+Revisions are immutable INSERT-only rows; a `revision_seq` orders them; the "current"
+revision is a derived pointer on the series row. This is lightweight — no event
+sourcing or audit-snapshot system.
 
 ---
 
@@ -102,18 +126,28 @@ sourcing or an audit-snapshot system.
 Three distinct concepts — never conflated:
 
 ```text
-canonical id   → the stable UUID (used for all internal citation/linking)
-external ids   → (namespace/provider, value) pairs, possibly one is_canonical per provider
-aliases        → search synonyms used to find, never to cite
+canonical identity   → the stable series_uuid (used for internal citation/linking)
+revision identity    → revision_uuid (what provenance edges point at)
+external identities  → (authority/namespace, native_id) pairs, one may be is_canonical
+aliases              → search synonyms used to find, never to cite
 ```
 
-- **Canonical internal identifier:** the UUID `id` only. `name` is a mutable label.
-- **External identifiers:** a first-class `ExternalId` registry
-  (`object_id, provider, external_id, is_canonical, provenance_ref`,
-  `UNIQUE(provider, external_id)`). A provider ID maps to exactly one object where
-  we assert it. (This normalizes the bootstrap's ad-hoc
-  `Evidence.provider + external_id` into a reusable, integrity-checked concept.)
-- **Aliases:** a separate, search-oriented, mutable, non-unique list.
+- **Canonical internal identity:** `series_uuid` only; `name` is a mutable label.
+- **External identifiers:** a first-class `ExternalId` registry whose durable key is
+  the **identity authority/namespace** (see `PROVIDER_CAPABILITIES.md` — this is
+  *not* the access provider):
+  `(object_series_uuid, authority, native_id, is_canonical, provenance_ref)`,
+  `UNIQUE(authority, native_id)`. `authority ∈ {uniprot, pdb, doi, pubmed, ...}`.
+  An authority ID maps to exactly one REvoLab series where we assert it. (This
+  normalizes the bootstrap's ad-hoc plain `provider + external_id` into an
+  authority-keyed, integrity-checked registry.)
+- **Aliases:** a separate, search-oriented, mutable, non-unique list (bound to the
+  series).
+
+Distinct from external *identity* is the **access/resolver provider** (OpenBio, a
+direct UniProt API, REvoCompute) used to *reach* the authority — changing the resolver
+must never change the durable identity. See `PROVIDER_CAPABILITIES.md` (#Authority vs
+provider).
 
 ---
 

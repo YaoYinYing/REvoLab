@@ -1,6 +1,7 @@
 # Provider & Capability Architecture
 
-> **Status:** Accepted. Defines Provider / Driver / Capability / Tool / Credential,
+> **Status: Proposed — pending human architecture review.** Defines Provider /
+> Driver / Capability / Tool / Credential,
 > capability discovery, schema-as-data, failure handling, and the REvoCompute /
 > REvoDesign / OpenBio integration contracts. Reconciles Subagents B and G.
 
@@ -29,8 +30,32 @@ one or more capability Protocols and keeps provider vocabulary inside itself.
   abstraction. A presence lookup (`has_credential(provider, kind)`) suffices. Add a
   real binding entity only when a second cross-project sharing use case forces it.
 - **`ExternalReference` is a stored data shape in the Evidence domain**, not a
-  driver concept. The driver side only needs a stable `(provider, external_id)` and
-  a resolution interface.
+  driver concept. The driver side only needs a stable `(authority, native_id)` and
+  a resolution interface (see "Authority vs provider" below).
+
+## Authority / namespace vs resolver / provider (identity is not transport)
+
+The reviewer flagged that the general provider architecture fuses *identity authority*
+with *access provider*. They are different and must not share one string.
+
+```text
+authority / namespace   → who defines the identity: uniprot, pdb, doi, pubmed, ...
+resolver / provider     → who you reach it through: openbio, direct-uniprot, revocompute, ...
+```
+
+- **Durable external identity is `(authority, native_id)`.** `UniProt:P12345` must
+  keep the same durable identity whether it is resolved today through OpenBio or
+  tomorrow through a direct UniProt API. Changing the resolver must **never** change
+  the identity or invalidate stored references.
+- **`ExternalId` and `ExternalReference` carry the `authority`, not the provider.**
+  The provider/resolver is the *access* detail (which Driver/Capability can fetch it),
+  recorded separately from the durable identity.
+- **REvoCompute**: its own run/artifact IDs are special: REvoCompute is *both* the
+  authority (it defines those IDs) *and* the provider (it executes them). That is the
+  normal case for a compute engine and is fine.
+- Public biological sources (UniProt/PDB/DOI/PubMed) are the authority; OpenBio is a
+  *resolver/aggregator*, never the authority. This holds even when OpenBio is the only
+  resolver currently configured.
 
 ## Identity & discovery without learning vocabulary
 
@@ -99,32 +124,46 @@ class InteractiveHandoffCapability(Capability, Protocol):  # deep-link / interac
 
 **Invariant:** Core never contains a field name or value specific to a provider.
 
-## Credentials & availability
+## Credentials & availability (Actor-contextual)
 
-- The **Credential store owns** `(provider_key, credential_kind) → secret-ref`. It
-  is opaque to Core; Core cannot read secret values.
-- Every capability method takes a `credential` handle acquired from the store; no
-  secret transits Core services or persists in the project graph.
-- **Project availability is a derived query:**
-  `available(provider) = (driver loaded & READY) AND all(required credential kinds present)`.
-  It is a probe, evaluated on demand — **never stored** — so credential
-  revocation/rotation needs no migration.
+- The **Credential store owns** `(actor_id, provider_key, credential_kind) →
+  secret-ref`. It is opaque to Core; Core cannot read secret values. Credentials are
+  **Actor-scoped** (per `COLLABORATION_IDENTITY.md`), not Project-owned.
+- Every capability method takes a `credential` handle acquired from the store for the
+  **calling actor**; no secret transits Core services or persists in the project
+  graph.
+- **Availability is Actor-contextual** — not a single Project-wide boolean. Members
+  of one Project may have different permissions for the same provider (e.g. only one
+  member has an OpenBio commercial key or a REvoCompute privileged-runner grant). It
+  is always a **derived query**, never stored:
+
+```text
+available(actor, provider) = (driver loaded & READY)
+                        AND all(required credential kinds present for this actor)
+                        AND project policy permits the requested operation for this actor
+```
+
+Because it is derived on demand, a credential revocation or a role change flips
+availability with **no migration**.
 
 ## How frontend and Agent discover
 
-Both read the **same read-only Provider Catalog**:
+Both read the **same read-only Provider Catalog, evaluated for the current Actor**:
 
 ```
-GET /api/providers            -> [{key, name, capabilities:[{kind, describe() schema}], credential_status}]
+GET /api/providers            -> [{key, name, capabilities:[{kind, describe() schema}],
+                                   credential_status(mine) }]      (actor-scoped)
 GET /api/providers/{key}/schema/{capability_kind} -> JSON Schema
 ```
 
-- **Frontend** renders a schema-driven Provider Capability Surface (generic JSON
-  Schema forms; no capability knowledge in the frontend).
-- **Agent** materializes the catalog into **Tools**: for each currently-available
-  capability method, a typed tool call whose arg schema = the provider JSON Schema
-  and whose target = `(provider_key, kind, method)`. An unavailable provider
-  produces no tools, so the Agent never proposes an unexecutable call.
+- **Frontend** renders the catalog through the current Actor's lens (shows only what
+  the signed-in user can call); generic JSON Schema forms; no capability knowledge in
+  the frontend.
+- **Agent** materializes the catalog into **Tools** for the current session's Actor:
+  for each capability the actor may call, a typed tool whose arg schema = the provider
+  JSON Schema and target = `(provider_key, kind, method)`. An unavailable/unpermitted
+  provider produces no tool for that actor, so the Agent never proposes an
+  unexecutable call.
 
 ## Failure & provider disappearance
 
@@ -227,12 +266,12 @@ OpenBio is primarily an **external biological knowledge capability**
 ```text
 1. Live external lookup    → transient result, never persisted as project truth
 2. Cached external reference → REvoLab stores an ExternalReference: the stable
-     (provider, external_id) identity + bounded, validated metadata (label, kind,
-     a content checksum when known). This is a durable identity handle with
-     lightweight validated metadata — NOT a copy of the provider's data. It honors
-     invariant #2 (no-mutable-external-copy): provider records stay authoritative
+     identity `(authority, native_id)` (e.g. UniProt/P12345) + bounded, validated
+     metadata (label, kind, a content checksum when known). This is a durable identity
+     handle with lightweight validated metadata — NOT a copy of the provider's data. It
+     honors invariant #2 (no-mutable-external-copy): provider records stay authoritative
      in the provider; no snapshot/full payload is mirrored into REvoLab.
-3. Imported scientific object → user/agent promotes an ExternalReference into a
+3. Imported scientific object → user/agent imports an ExternalReference into a
      REvoLab Protein object (typed import; reference becomes provenance origin
      via an imported_as edge). Explicit import is the ONLY way an external entity
      becomes a first-class REvoLab object.

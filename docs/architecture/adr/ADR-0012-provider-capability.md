@@ -21,9 +21,15 @@ is available.
   closed enum; Core discovers by kind, never by provider vocabulary.
 - **Schema-as-data:** capability methods declare input/output JSON Schema; Core
   validates against the provider's own schema and assigns no meaning to its fields.
-- **Credentials:** owned by the credential store; every capability call takes a
-  `credential` handle; **availability is a derived probe** (driver READY AND all
-  required credential kinds present), never stored.
+- **Credentials:** owned by the credential store, **scoped per Actor**
+  (`(actor_id, provider_key, kind)`); every capability call takes a `credential`
+  handle for the calling actor; **availability is a derived, Actor-contextual probe** —
+  `available(actor, provider) = driver READY AND required credential kinds present for
+  the actor AND project policy permits` — never stored.
+- **Authority is not transport (reviewer finding #8):** durable external identity is
+  an identity `authority/namespace` (uniprot, pdb, doi, pubmed; `revocompute` is both
+  authority and provider for its own IDs), kept separate from the resolver/provider
+  (openbio, direct APIs). Changing the resolver never changes the identity.
 - **Failure:** typed `CapabilityError` with a stable kind enum; no silent fallbacks;
   an unreachable provider degrades to "unverifiable" references, never corruption; no
   hot-unloading.
