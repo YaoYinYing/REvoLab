@@ -93,7 +93,7 @@ read context               (ContextBuilder executes ContextSelection → immutab
 **Hard rule:** an Agent can **never** emit an UPDATE/SQL/raw-object-write. Every
 durable change is a typed domain command that passes through domain validation.
 Unvalidated prose is never persisted as truth. **Promotion is required only to move a
-Decision (or other knowledge assertion) from draft to committed** — not for creating
+Decision from draft to committed** — not for creating
 an object or attaching evidence, which are typed domain operations (automatic or
 policy-gated per the authority matrix).
 

@@ -79,7 +79,7 @@ External systems own their capabilities and execution truth.
 - **Public contracts:** object create/read/version operations via the domain service.
 - **Dependencies:** none in Core — Scientific Object is a **global leaf**; it is
   bound into Project contexts through `ProjectResourceLink` (owned by the consuming
-  Project/Identity side), not by depending on Project.
+  Project domain), not by depending on Project.
 - **Non-responsibilities:** expressing scientific relationships (that is the
   graph domain's job); owning external execution state.
 
@@ -103,9 +103,10 @@ External systems own their capabilities and execution truth.
     **fact**, Evidence is an **interpreted claim**.
   - Contradiction coexists; a Decision settles it.
   - Provenance must remain traversable after external systems change.
-  - **Project-context write invariant:** a project-scoped Evidence (or its
+  - **Project-context write-time invariant:** a project-scoped Evidence (or its
     source/target) may only reference global endpoints already visible through that
-    Project's `ProjectResourceLink` set — never ghost knowledge.
+    Project's `ProjectResourceLink` set — never ghost knowledge (same write-time rule
+    as the Knowledge domain's `ProjectKnowledgeEdge`).
 - **Public contracts:** evidence/reference CRUD plus provenance traversal queries.
 - **Dependencies:** Scientific Object, Project.
 - **Non-responsibilities:** storing external execution truth; versioning external
@@ -126,9 +127,10 @@ External systems own their capabilities and execution truth.
   - A committed decision is never edited; it is superseded.
   - Project knowledge edges are immutable and are archived **with** their
     Decision/Evidence on Project tombstone — never kept as dangling global edges.
-  - **Project-context write invariant:** `Decision.selects` may only target a
-    Series/Revision already visible through that Project's `ProjectResourceLink` set
-    (same rule as Evidence source/target).
+  - **Project-context write-time invariant:** `Decision.selects` may only target a
+    Series/Revision already visible through that Project's `ProjectResourceLink` set,
+    and every `ProjectKnowledgeEdge` endpoint must be similarly visible (same rule as
+    Evidence source/target).
   - "Current scientific conclusion" is a derived query, not a mutable field.
 - **Public contracts:** decision draft → commit → supersede; cite evidence.
 - **Dependencies:** Evidence/Provenance, Project.
@@ -146,8 +148,9 @@ External systems own their capabilities and execution truth.
   projections.
 - **Owned invariants:**
   - Core knows a fixed vocabulary of capability *kinds*; credentials are owned by
-    the credential store; a provider is callable iff its driver is READY and every
-    required credential kind is present — both are queries, never stored truth.
+    the credential store; a provider is callable iff its driver is READY, every
+    required credential kind is present **for the calling Actor**, and project policy
+    permits — all derived queries, never stored truth.
   - Provider-specific vocabulary lives in the driver, never in Core.
 - **Public contracts:** capability Protocols, Provider Catalog, schema-as-data
   discovery (JSON Schema).

@@ -190,7 +190,7 @@ collaboration/sharing and the agent.
   special-case Core logic.
 - **Owned domains:** Provider/Capability, Evidence/Provenance.
 - **Vertical slice:** `DesignCapability`/`InteractiveHandoffCapability`;
-  `SearchCapability` over OpenBio; import-promotion boundary (ExternalReference →
+  `SearchCapability` over OpenBio; import boundary (ExternalReference →
   ScientificObject only via explicit import).
 - **Acceptance evidence:** a design export produces an object + provenance chain
   without Core branching; an OpenBio lookup can be cached, imported, or used as
@@ -209,12 +209,17 @@ These are derived from the whole design; they are the concisely load-bearing rul
 > 3. **Provider vocabulary cannot leak into Core.** Core knows a fixed vocabulary of
 >    capability kinds and consumes provider schemas as data.
 > 4. **Agent output becomes project truth only through typed, domain-validated
->    operations.** Chat is conversation until explicitly promoted.
+>    operations.** Two gates, never conflated: (a) ALL persistence is a typed domain
+>    command (no raw writes); (b) the promotion gate applies ONLY to committing a
+>    knowledge assertion (`Decision draft → committed`) — not to ordinary
+>    object/evidence creation.
 > 5. **Scientific provenance must remain traversable after external systems change.**
 >    References are never deleted, only revoked; a provider disappearing never corrupts
 >    stored context.
 > 6. **Durable identity is an opaque UUID — never a filesystem path or a mutable
->    username.**
+>    username; external identity is `(authority, native_id)`, never a resolver/provider.
+>    A ScientificObject's conceptual identity (`series_id`) is distinct from its
+>    immutable revision identity (`revision_id`); provenance addresses revisions.**
 > 7. **Scientific content is immutable once referenced; change is a new version or a
 >    superseding record, never in-place.**
 > 8. **A Project is a namespace and membership boundary, not the owner of objects;**
@@ -223,5 +228,5 @@ These are derived from the whole design; they are the concisely load-bearing rul
 > 9. **The Agent is a consumer, not an owner — read context → reason → propose →
 >    typed tool → domain validation → persisted truth.**
 > 10. **Credentials are owned by the credential store; a provider is callable iff its
->     driver is READY and every required credential kind is present — both are
->     queries, not stored truth.**
+>     driver is READY and every required credential kind is present for the calling
+>     Actor and project policy permits — all queries, never stored truth.**

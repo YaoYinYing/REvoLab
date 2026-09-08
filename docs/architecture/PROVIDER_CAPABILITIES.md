@@ -12,7 +12,7 @@
 
 Core must never grow a branch named `revocompute` / `revodesign` / `openbio`.
 Instead Core owns (a) typed capability Protocols, (b) neutral durable references
-(Run/Artifact/Literature references), and (c) the import/promotion boundary that
+(Run/Artifact/Literature references), and (c) the import boundary that
 turns external data into project truth. Each integration is a Driver that implements
 one or more capability Protocols and keeps provider vocabulary inside itself.
 
@@ -169,7 +169,7 @@ class InteractiveHandoffCapability(Capability, Protocol):  # deep-link / interac
   is always a **derived query**, never stored:
 
 ```text
-available(actor, provider) = (driver loaded & READY)
+available(actor, provider, project) = (driver RuntimeHealth == READY)
                         AND all(required credential kinds present for this actor)
                         AND project policy permits the requested operation for this actor
 ```

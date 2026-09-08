@@ -29,7 +29,8 @@ external mutable execution truth. **Identity is durable; state is refreshable.**
 | **Evidence** | a durable, interpreted **claim** that some reference/experiment/note supports or relates to a project target | `evidence` |
 | **Decision** | durable project conclusion + next actions citing Evidence | `decisions` |
 
-These eight are the canonical graph node categories (see `SCIENTIFIC_GRAPH.md`).
+These eight durable record types — together with the `Project` container/scope node —
+are the canonical graph node categories (see `SCIENTIFIC_GRAPH.md`).
 **ExperimentalEvidence is NOT a separate table.** It is an Evidence whose `kind` is
 `experimental` whose payload references an Artifact/Literature/ScientificObject.
 A ninth table is premature ELN ontology.

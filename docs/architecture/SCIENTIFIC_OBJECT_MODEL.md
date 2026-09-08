@@ -115,8 +115,10 @@ IDs/aliases bind `series_id`; provenance edges reference `revision_id`).
   are ordered by a monotonic `revision_seq` within the series.
 - **Provenance edges reference `revision_id`, never `series_id`.** "Which Structure
   revision did this Run consume?" resolves unambiguously.
-- **`series_id` is the durable identity** cited by aliases/external IDs and used in
-  the UI; `revision_id` is what scientific relations and provenance point at.
+- **`series_id` is the durable identity** cited by aliases/external IDs, used in the
+  UI, and addressed by conceptual semantic relations (`variant_of`, `represents`);
+  `revision_id` is what content/provenance relations point at (a Decision targets a
+  Series or a Revision explicitly typed).
 
 **Principle:** an object's *provenance-relevant content* is immutable once referenced
 or once it reflects a real state of the world. Mutable fields are only the
@@ -258,7 +260,7 @@ semantics.*
   soft-suspended**, never CASCADEd — the destructive `delete-orphan` is removed
   from scientific objects.
 - Provider state stays in the provider; only `ExternalIdentity` references live here.
-- `series_id` (Series identity) is the only durable identity, never a path or username;
-  `revision_id` (Revision identity) is what provenance edges address.
+- `series_id` (Series identity) is the durable conceptual identity, never a path or
+  username; `revision_id` (Revision identity) is what content/provenance edges address.
 
 Recorded in **ADR-0009**.

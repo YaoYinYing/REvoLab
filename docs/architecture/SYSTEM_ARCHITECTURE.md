@@ -127,7 +127,7 @@ The eight domains and their one-line purpose (detailed in
 
 | Domain | Owns |
 |---|---|
-| Project | the workspace boundary: project record, membership participation (via the Identity contract), **owns `ProjectResourceLink`** (binds global resources into a Project context), scoping |
+| Project | the workspace boundary: project record, project visibility/annotation, **owns `ProjectResourceLink`** (binds global resources into a Project context), scoping |
 | Scientific Object | typed scientific entities and their per-type metadata (a global resource) |
 | Evidence / Provenance | references, evidence claims, and lineage edges |
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
@@ -200,6 +200,8 @@ flowchart LR
     Rev -- evaluates --> Rev
     Rev -- consumed_as_input_by --> RunR
     Rev -- consumed_as_input_by --> SesR
+    ArtR -- consumed_as_input_by --> RunR
+    ArtR -- consumed_as_input_by --> SesR
     RunR -- produced --> ArtR
     SesR -- produced --> ArtR
     ArtR -- imported_as --> Rev
@@ -215,8 +217,10 @@ flowchart LR
     Dec -- supersedes --> Dec
 ```
 
-Directions and endpoints derive from the single canonical edge matrix in
-`SCIENTIFIC_GRAPH.md`. **Conceptual semantic edges address Series; content/provenance
+`RelationType` directions and endpoints derive from the single canonical edge matrix
+in `SCIENTIFIC_GRAPH.md`; the diagram additionally shows the Project `scopes`
+relationship and Evidence's own `source`/`target` associations, which are **not**
+`RelationType` edges. **Conceptual semantic edges address Series; content/provenance
 edges address Revision; a Decision targets a Series or a Revision explicitly.**
 `supports`/`contradicts` are **fields** on Evidence (and `cited_as` on a Decision
 `cites` join), not graph edges.
@@ -259,9 +263,9 @@ flowchart LR
 
 Core knows only a fixed vocabulary of **capability kinds** (a Core-owned closed
 enum) and consumes provider-specific schemas **as data**. Credentials are owned by
-the Credential store; a provider is callable in a project iff its driver is **READY**
-and every required credential kind is present — and both facts are **queries, never
-stored truth**.
+the Credential store; a provider is callable in a project iff its driver is **READY**,
+every required credential kind is present **for the calling Actor**, and project policy
+permits — all derived **queries, never stored truth**.
 
 ---
 
@@ -292,7 +296,8 @@ read context → reason → propose action → typed tool call
 
 An Agent can **never** emit a raw write. Agent output is conversation until
 explicitly promoted into project knowledge through a typed, domain-validated
-operation.
+operation — where "promotion" means the `Decision draft → committed` transition
+(ADR-0011), not ordinary object/evidence creation.
 
 ---
 

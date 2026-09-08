@@ -9,7 +9,7 @@ A review (PR #1) also demanded a single canonical edge direction/endpoint contra
 that the physical Relation schema not be frozen before an implementation fork.
 
 ## Decision
-- **Distinct durable record types (the canonical node set):** ScientificObject
+- **Distinct durable record types (the durable-record node types):** ScientificObject
   (series + revisions), RunReference, SessionReference, ArtifactReference,
   LiteratureReference, ExternalReference, Evidence (interpreted claim), Decision.
   ExperimentalEvidence is a `kind` of Evidence, not a separate table.

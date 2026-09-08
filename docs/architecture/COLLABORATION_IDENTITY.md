@@ -15,7 +15,7 @@ Role                     small enumerated set at Project level: owner · member 
 ProjectMembership        an Actor(role) within a Project; the security unit
 ProjectResourceLink      the set of global resources (objects/references) a Project's context includes + the visibility lens (see ADR-0008)
 ResourceOwnership        the creating Actor recorded as audit/provenance (no full ACL)
-ExternalProviderCredentialBinding  a per-(Actor, provider) non-secret binding row authorizing a Driver; the secret material lives in the Secret store
+ExternalProviderCredentialBinding  a per-(Actor, provider, credential kind) non-secret binding row authorizing a Driver; the secret material lives in the Secret store
 ```
 
 **Decisions:**
@@ -28,8 +28,9 @@ ExternalProviderCredentialBinding  a per-(Actor, provider) non-secret binding ro
   slice.
 - **Visibility:** `private` (default) | `shared-with-members`. `public` is deferred.
 - **Avoid embedding REvoCompute's user model:** REvoLab's Actor is an opaque UUID
-  known to Core; bindings are `(authority, native_id, Actor-scoped credential)`.
-  Core never imports or duplicates REvoCompute's Actor/Project model.
+  known to Core; external identity is `(authority, native_id)`, and credentials are
+  Actor-scoped (`ExternalProviderCredentialBinding`). Core never imports or duplicates
+  REvoCompute's Actor/Project model.
 
 **Deferred:** real authentication, RBAC engine, per-object ACL, public sharing.
 
@@ -79,7 +80,7 @@ everywhere).
 |---|---|---|---|---|
 | **Global resource** | ScientificObject (series + revision), RunReference, SessionReference, ArtifactReference, LiteratureReference, ExternalReference, and **global provenance edges** (`GlobalProvenanceEdge`, #1–8) | global UUID, project-independent | no single Project owns these; they may be referenced by many Projects | NOT deleted; a Project merely stops referencing them |
 | **Project-local context** | Project record, ProjectResourceLink (incl. its folder/container placement), Project annotation/visibility | project-scoped | the Project | **Project record → tombstone** (`deleted_at`); ProjectResourceLink/annotation → hard-delete (they are links/perms) |
-| **Project-scoped scientific records** | Evidence, Decision, DecisionEvidence, **project knowledge edges** (`ProjectKnowledgeEdge`, #9–11) | project-scoped | authored in, and scoped to, one Project | **soft-archive** the Project's Evidence/Decisions/DecisionEvidence/ProjectKnowledgeEdge |
+| **Project-scoped scientific records** | Evidence, Decision, DecisionEvidence, **project knowledge edges** (`ProjectKnowledgeEdge`, #9–11) | project-scoped | Evidence → Evidence/Provenance domain; Decision/DecisionEvidence/`ProjectKnowledgeEdge` → Knowledge/Decision domain (all project-scoped) | **soft-archive** the Project's Evidence/Decisions/DecisionEvidence/ProjectKnowledgeEdge |
 
 **Concrete relational mapping:**
 
@@ -243,8 +244,10 @@ Revoking a `ProjectResourceLink` removes visibility immediately with no migratio
 links/memberships; immutable records never hard-deleted. Use a `deleted_at`/null
 timestamp + partial unique index to keep uniqueness valid across soft-deletes.
 
-**Versioning:** version scientific objects and decisions; a `supersedes_id` self-FK
-for decisions. Not a full audit table per entity.
+**Versioning:** scientific objects are versioned via revisions
+(`SCIENTIFIC_OBJECT_MODEL.md`); a committed Decision is never edited or deleted — it is
+superseded by a newer Decision through the `supersedes` `ProjectKnowledgeEdge` (#10),
+with `superseded` a derived status. Not a full audit table per entity.
 
 **Audit timestamps:** `created_at`, `updated_at` (timestamptz), plus `created_by`
 (actor UUID, never a username).
@@ -271,7 +274,8 @@ project-scoped scientific record):
 | Run/Artifact/Session/Lit/ExternalReference | **global** | once | **never** (identity immutable) | n/a | revoke (mark `revoked_at`/broken) | never — provenance stays traversable |
 | Evidence | project-scoped | yes | only interpretive fields (not identity/source/target) | n/a | soft | only if no citing Decision; else archive |
 | Decision | project-scoped | yes (draft) | status while draft | n/a | soft | **never** once committed — supersede |
-| Membership / credentials | project-local | yes | yes | n/a | n/a | hard-delete allowed |
+| Membership | project-local | yes | yes | n/a | n/a | hard-delete allowed |
+| Credential binding (`ExternalProviderCredentialBinding`) | Actor-scoped (no `project_id`; global binding) | yes | yes (rotate `secret_ref`) | n/a | n/a | hard-delete allowed on revocation |
 
 **Unique global resource rule:** Global resources (ScientificObject series/revision,
 all reference nodes, `GlobalProvenanceEdge` rows) have **no `project_id` owner**; they
@@ -309,7 +313,8 @@ event-source.**
 - The listed events (ObjectCreated, RelationCreated, EvidenceAttached,
   DecisionRecorded, ExternalRunLinked, ArtifactImported) are **all derivable** from
   the entity rows themselves: `created_at`/`created_by` on each table, the
-  `decision_evidence` join, and the status/supersession fields.
+  `decision_evidence` join, the Decision `status` field (`draft | committed`), and the
+  `supersedes` edge (`superseded` derived).
 - **Keep now:** `created_at`/`updated_at`/`created_by` on every science table (the
   durable audit substrate); immutable provenance rows; the `DecisionEvidence` join
   (records EvidenceAttached); Decision status (records transitions).

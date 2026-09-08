@@ -146,8 +146,9 @@ RunReference | SessionReference | ArtifactReference | LiteratureReference
   `Evidence --supports/contradicts-->` edge in the matrix. This removes the
   double-expression the review flagged.
 - **Decision → Evidence** is expressed by the `cites` join edge (#11) with a
-  per-citation `cited_as` polarity (supports/contradicts/context), because a Decision
-  may cite evidence that *contradicts* it.
+  per-citation `cited_as` ∈ {`supports`, `contradicts`, `context`} (distinct from the
+  Evidence `polarity` field, whose values are `supports | contradicts | neutral`),
+  because a Decision may cite evidence that *contradicts* it.
 - **Evidence → Decision**: if an evidence claim is specifically about a Decision
   (supporting or undercutting it), that is a `cites`/`cited_as` relation from the
   Decision's side plus the Evidence `target` pointing at the Decision. The polarity
@@ -185,9 +186,10 @@ Evidence.target  (exactly one, required) — what the claim is about
 - **Immutability:** `source` and `target` are immutable once the Evidence is written.
   Only interpretive fields (`kind`/`role`/`polarity`/`confidence`/`scope`/
   `interpretation`) may change, and only while no Decision cites the Evidence.
-- **`experiment` and `note` are not canonical node types.** An experiment/observation
-  that is the claim source is modeled as an Evidence with `kind=experimental`
-  (a `hypothesis` is an Evidence with a `hypothesis` role); matching the frozen
+- **`experiment` and `note` are not canonical node types.** An experiment that is the
+  claim source is modeled as an Evidence with `kind=experimental`; a direct human
+  observation is `kind=observation` (a `hypothesis` is an Evidence with a `hypothesis`
+  role); matching the frozen
   `kind` enum in `EVIDENCE_PROVENANCE.md` (`experimental | literature | computation |
   observation | note`). A free-form note is a
   project-side scoped record; it is not a graph node. The source list above is the

@@ -117,7 +117,7 @@ soft-delete (tombstone) the Project row      -> project.deleted_at != NULL
 +
 hard-delete active sharing links/membership rows
 +
-archive Evidence / Decision / DecisionEvidence (deleted_at on the project-scoped rows)
+archive Evidence / Decision / DecisionEvidence / `ProjectKnowledgeEdge` (deleted_at on the project-scoped rows)
 +
 leave all global resources and their provenance untouched
 ```
