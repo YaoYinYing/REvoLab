@@ -16,7 +16,7 @@ Last verified: 2026-09-08
 - PostgreSQL Docker Compose service, Alembic environment configuration, GitHub Actions CI configuration, architecture documentation, ADR directory, agent conventions, and Apache-2.0 licensing files.
 - Harness operating model control plane: `docs/agents/HARNESS_OPERATING_MODEL.md` defines the four loops (agent/goal/subagent-workflow/Ralph), the Primary Integrator role, the skill taxonomy, the safety/permission plane (default `workspace-write` + approval), and the 7-phase ODDRIVC workflow. `CLAUDE.md` carries only the short invariants derived from it.
 - Project skills relocated from the top-level `skills/` tree into `.agents/skills/` (the canonical DSH skill root) and verified to load: `project-architecture`, `scientific-object-model`, `provenance-lineage`, `decision-record`, `project-context`, `artifact-inspection`, `driver-development`, `project-plugin-development`, plus the new constitutional `engineering-workflow` skill. The `engineering-workflow` skill (v0.2.0) carries both the ODDRIVC procedure and the long-running refactor protocol (three sources of truth, persistent checklist, migration-first deletion, vertical-slice migration, executable acceptance, DESIGN/EXECUTION/MACHINE definition of done); a draft root-level `LONG_TASK_HANDLING.md` was composed into that skill and removed to avoid a second source of truth.
-- GitHub Actions CI is green on the architecture PR (head `81367e7`, the round-4 final commit; CI runs #23–#24 all green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
+- GitHub Actions CI is green on the architecture PR (head `0116c0c`, the Ralph round-1 consistency commit; CI runs #27–#28 all green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
 
 ## Not yet verified
 
@@ -157,3 +157,34 @@ IMPLEMENTATION_ROADMAP): real auth/identity tables, real REvoCompute/REvoDesign/
 OpenBio drivers, agent chat UI, typed-object migration of the backend, generated
 TypeScript client. Backend tests (pytest) and frontend typecheck/test/build still
 pass on the prototype (unchanged this phase).
+
+### 2026-09-08 — Ralph consistency loop round 1 (PR #1): zero P0/P1 remain; PROPOSED pending human review
+
+A fresh-agent (Ralph) consistency loop audited the proposed architecture against its
+canonical documents with four independent read-only auditors (object/graph/provenance;
+Project/registry/visibility; Provider/Identity/Agent/credentials; harness safety +
+roadmap). No new subsystem or concept was added — the round only removed contradictions
+so each concept has one canonical answer. Zero P0 and eight P1 findings were closed,
+plus the cheap P2s:
+
+- `supersedes` is an edge (`ProjectKnowledgeEdge` #10), not a stored `supersedes_id`
+  self-FK; `superseded` is a derived status (COLLABORATION_IDENTITY).
+- Series vs Revision endpoint wording: conceptual semantic relations address
+  `series_id`, content/provenance relations address `revision_id`; an observation maps
+  to `kind=observation` (SCIENTIFIC_OBJECT_MODEL, SCIENTIFIC_GRAPH).
+- Ownership wording: Project owns `ProjectResourceLink`, not membership
+  (SYSTEM_ARCHITECTURE, DOMAIN_BOUNDARIES); the credential binding is
+  `(actor_id, provider_key, kind, secret_ref)` and Actor-scoped, not project-local
+  (COLLABORATION_IDENTITY).
+- Provider callability formula now includes "for the calling Actor" and "project policy
+  permits" in every document that states it (SYSTEM_ARCHITECTURE, DOMAIN_BOUNDARIES,
+  IMPLEMENTATION_ROADMAP), matching CLAUDE.md invariant #10.
+- Cheap P2s: `ArtifactReference --consumed_as_input_by--> Run/Session` added to the
+  SYSTEM_ARCHITECTURE diagram; Evidence `cited_as` vs `polarity` value sets pinned;
+  ADR-0008 Project-deletion step now archives `ProjectKnowledgeEdge`;
+  "import/promotion boundary" renamed "import boundary"; IMPLEMENTATION_ROADMAP final
+  invariants re-synced to CLAUDE.md; the durable-record/node-category wording aligned
+  with SCIENTIFIC_GRAPH's nine-node list.
+
+CI green on the pushed consistency head (`0116c0c`, runs #27–#28). Status remains
+**PROPOSED — pending human review**.
