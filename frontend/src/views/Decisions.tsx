@@ -6,6 +6,7 @@ import { useDecisions } from '../api/hooks'
 import type { DecisionRead } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Loading } from '../components/ui'
+import { DECISION_STATUS_COMMITTED, DECISION_STATUS_DRAFT } from '../contracts/enums'
 
 export function DecisionsView({ actorId, projectId }: { actorId: string; projectId: string }) {
   const { data, loading, error, reload } = useDecisions(actorId, projectId)
@@ -40,7 +41,7 @@ export function DecisionsView({ actorId, projectId }: { actorId: string; project
               <div className="list-row-head">
                 <FileText size={15} />
                 <strong>{item.title}</strong>
-                <Badge tone={item.status === 'committed' ? 'good' : 'warn'}>
+                <Badge tone={item.status === DECISION_STATUS_COMMITTED ? 'good' : 'warn'}>
                   {item.status}
                   {item.superseded ? ' · superseded' : ''}
                 </Badge>
@@ -57,7 +58,7 @@ export function DecisionsView({ actorId, projectId }: { actorId: string; project
                 cites {item.cites.length} · selects {item.selects.length}
                 {item.superseded_by ? ` · superseded by ${item.superseded_by.slice(0, 8)}…` : ''}
               </small>
-              {item.status === 'draft' ? (
+              {item.status === DECISION_STATUS_DRAFT ? (
                 <div className="form-actions">
                   <Button onClick={() => commit(item)} disabled={busyId === item.id}>
                     {busyId === item.id ? 'Committing…' : 'Commit'}

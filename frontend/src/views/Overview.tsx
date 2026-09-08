@@ -2,6 +2,11 @@ import { Boxes, FileText, FlaskConical, ShieldCheck } from 'lucide-react'
 
 import { useDecisions, useEvidence, useObjects } from '../api/hooks'
 import { Badge, Empty, ErrorBox, Loading } from '../components/ui'
+import {
+  DECISION_STATUS_COMMITTED,
+  DECISION_STATUS_DRAFT,
+  POLARITY_CONTRADICTS,
+} from '../contracts/enums'
 
 export function OverviewView({ actorId, projectId }: { actorId: string; projectId: string }) {
   const objects = useObjects(actorId, projectId)
@@ -10,8 +15,8 @@ export function OverviewView({ actorId, projectId }: { actorId: string; projectI
 
   const loading = objects.loading || evidence.loading || decisions.loading
   const error = objects.error ?? evidence.error ?? decisions.error
-  const drafts = (decisions.data ?? []).filter((item) => item.status === 'draft')
-  const committed = (decisions.data ?? []).filter((item) => item.status === 'committed')
+  const drafts = (decisions.data ?? []).filter((item) => item.status === DECISION_STATUS_DRAFT)
+  const committed = (decisions.data ?? []).filter((item) => item.status === DECISION_STATUS_COMMITTED)
   const recentEvidence = (evidence.data ?? []).slice(0, 5)
 
   return (
@@ -74,7 +79,7 @@ export function OverviewView({ actorId, projectId }: { actorId: string; projectI
               <div className="list-row-head">
                 <strong>{item.label ?? item.interpretation ?? 'evidence'}</strong>
                 <Badge>{item.kind}</Badge>
-                <Badge tone={item.polarity === 'contradicts' ? 'warn' : 'neutral'}>{item.polarity}</Badge>
+                <Badge tone={item.polarity === POLARITY_CONTRADICTS ? 'warn' : 'neutral'}>{item.polarity}</Badge>
               </div>
             </div>
           ))

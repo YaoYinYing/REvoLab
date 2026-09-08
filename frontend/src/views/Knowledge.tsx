@@ -2,10 +2,11 @@ import { BookOpen } from 'lucide-react'
 
 import { useDecisions } from '../api/hooks'
 import { Badge, Empty, ErrorBox, Loading } from '../components/ui'
+import { DECISION_STATUS_COMMITTED } from '../contracts/enums'
 
 export function KnowledgeView({ actorId, projectId }: { actorId: string; projectId: string }) {
   const { data, loading, error } = useDecisions(actorId, projectId)
-  const committed = (data ?? []).filter((decision) => decision.status === 'committed')
+  const committed = (data ?? []).filter((decision) => decision.status === DECISION_STATUS_COMMITTED)
 
   return (
     <div className="view">

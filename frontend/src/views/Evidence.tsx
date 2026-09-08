@@ -2,6 +2,7 @@ import { Boxes } from 'lucide-react'
 
 import { useEvidence } from '../api/hooks'
 import { Badge, Empty, ErrorBox, Loading } from '../components/ui'
+import { POLARITY_CONTRADICTS } from '../contracts/enums'
 
 export function EvidenceView({ actorId, projectId }: { actorId: string; projectId: string }) {
   const { data, loading, error } = useEvidence(actorId, projectId)
@@ -23,7 +24,7 @@ export function EvidenceView({ actorId, projectId }: { actorId: string; projectI
                 <Boxes size={15} />
                 <strong>{item.label ?? item.interpretation ?? 'evidence'}</strong>
                 <Badge>{item.kind}</Badge>
-                <Badge tone={item.polarity === 'contradicts' ? 'warn' : 'neutral'}>{item.polarity}</Badge>
+                <Badge tone={item.polarity === POLARITY_CONTRADICTS ? 'warn' : 'neutral'}>{item.polarity}</Badge>
                 {item.frozen ? <Badge tone="warn">frozen</Badge> : null}
               </div>
               {item.interpretation ? <p>{item.interpretation}</p> : null}

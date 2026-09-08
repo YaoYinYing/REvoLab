@@ -1,4 +1,9 @@
 import type { ObjectDetailRead } from '../api/types'
+import {
+  DECISION_STATUS_COMMITTED,
+  POLARITY_CONTRADICTS,
+  POLARITY_SUPPORTS,
+} from '../contracts/enums'
 import { Empty } from './ui'
 
 export function ContextInspector({ detail }: { detail: ObjectDetailRead | null }) {
@@ -11,9 +16,9 @@ export function ContextInspector({ detail }: { detail: ObjectDetailRead | null }
     )
   }
 
-  const governing = detail.decisions.find((item) => item.status === 'committed')
-  const supporting = detail.evidence.filter((item) => item.polarity === 'supports')
-  const contradicting = detail.evidence.filter((item) => item.polarity === 'contradicts')
+  const governing = detail.decisions.find((item) => item.status === DECISION_STATUS_COMMITTED)
+  const supporting = detail.evidence.filter((item) => item.polarity === POLARITY_SUPPORTS)
+  const contradicting = detail.evidence.filter((item) => item.polarity === POLARITY_CONTRADICTS)
 
   return (
     <aside className="inspector" aria-label="Context inspector">

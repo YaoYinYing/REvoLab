@@ -6,6 +6,7 @@ export * from './enums.generated'
 
 import {
   CITED_AS,
+  DECISION_STATUSES,
   EVIDENCE_KINDS,
   EVIDENCE_ROLES,
   EVIDENCE_TARGET_KINDS,
@@ -25,3 +26,11 @@ export const DEFAULT_EVIDENCE_TARGET_KIND = pick(EVIDENCE_TARGET_KINDS, 'scienti
 export const DEFAULT_POLARITY = pick(POLARITIES, 'neutral')
 export const DEFAULT_CITED_AS = pick(CITED_AS, 'supports')
 export const DEFAULT_SELECT_TARGET_KIND = pick(RESOURCE_KINDS, 'scientific_object_series')
+
+// Status/polarity values used for display filtering and tone selection. They
+// are validated against the generated lists, so no backend-owned enum value is
+// re-declared as a bare literal anywhere in the view layer.
+export const POLARITY_SUPPORTS = pick(POLARITIES, 'supports')
+export const POLARITY_CONTRADICTS = pick(POLARITIES, 'contradicts')
+export const DECISION_STATUS_DRAFT = pick(DECISION_STATUSES, 'draft')
+export const DECISION_STATUS_COMMITTED = pick(DECISION_STATUSES, 'committed')

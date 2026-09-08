@@ -12,6 +12,8 @@ import type {
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, EnumSelect, Field, Loading, Section } from '../components/ui'
 import {
+  DECISION_STATUS_COMMITTED,
+  DECISION_STATUS_DRAFT,
   DEFAULT_CITED_AS,
   DEFAULT_EVIDENCE_KIND,
   DEFAULT_EVIDENCE_ROLE,
@@ -213,13 +215,13 @@ function DecisionRow({
     <div className="decision-row">
       <div className="decision-head">
         <strong>{decision.title}</strong>
-        <Badge tone={decision.status === 'committed' ? 'good' : 'warn'}>
+        <Badge tone={decision.status === DECISION_STATUS_COMMITTED ? 'good' : 'warn'}>
           {decision.status}
           {decision.superseded ? ' · superseded' : ''}
         </Badge>
       </div>
       <p>{decision.statement}</p>
-      {decision.status === 'draft' ? (
+      {decision.status === DECISION_STATUS_DRAFT ? (
         <div className="form-actions">
           <Button kind="primary" onClick={commit} disabled={busy}>
             {busy ? 'Committing…' : 'Commit decision'}
