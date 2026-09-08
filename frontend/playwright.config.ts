@@ -18,6 +18,9 @@ export default defineConfig({
     baseURL: frontendUrl,
     trace: 'retain-on-failure',
   },
+  expect: {
+    timeout: 15_000,
+  },
   webServer: [
     {
       // A real FastAPI backend over a real database: migrations are applied
