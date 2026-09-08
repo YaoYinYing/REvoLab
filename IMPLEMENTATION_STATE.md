@@ -16,7 +16,7 @@ Last verified: 2026-09-08
 - PostgreSQL Docker Compose service, Alembic environment configuration, GitHub Actions CI configuration, architecture documentation, ADR directory, agent conventions, and Apache-2.0 licensing files.
 - Harness operating model control plane: `docs/agents/HARNESS_OPERATING_MODEL.md` defines the four loops (agent/goal/subagent-workflow/Ralph), the Primary Integrator role, the skill taxonomy, the safety/permission plane (default `workspace-write` + approval), and the 7-phase ODDRIVC workflow. `CLAUDE.md` carries only the short invariants derived from it.
 - Project skills relocated from the top-level `skills/` tree into `.agents/skills/` (the canonical DSH skill root) and verified to load: `project-architecture`, `scientific-object-model`, `provenance-lineage`, `decision-record`, `project-context`, `artifact-inspection`, `driver-development`, `project-plugin-development`, plus the new constitutional `engineering-workflow` skill. The `engineering-workflow` skill (v0.2.0) carries both the ODDRIVC procedure and the long-running refactor protocol (three sources of truth, persistent checklist, migration-first deletion, vertical-slice migration, executable acceptance, DESIGN/EXECUTION/MACHINE definition of done); a draft root-level `LONG_TASK_HANDLING.md` was composed into that skill and removed to avoid a second source of truth.
-- GitHub Actions CI is green on the architecture PR (head `eeeedc4`, the round-4 convergence commit; current CI run #18 green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
+- GitHub Actions CI is green on the architecture PR (head `18d1bc9`, the round-4 final commit; CI runs #19–#20 all green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
 
 ## Not yet verified
 
@@ -97,8 +97,9 @@ Also cleared: stale Provider-owned Tool/Credential text in DOMAIN_BOUNDARIES; th
 container guardrail now requires `docker compose config` inspection (policy inspects the
 effective config, not the filename); the package-install boundary is now
 "trusted-manifest-baseline unchanged vs changed" (not "existing dep vs new dep");
-`SPIKE_PR1_BRIEF.md` deleted. CI evidence refreshed to head `eeeedc4` (run #18 green).
-Status remains **PROPOSED — pending human review**.
+`SPIKE_PR1_BRIEF.md` deleted. CI evidence refreshed to head `18d1bc9` (runs #19–#20
+green). A fresh independent architecture review found the four P1 blockers CLOSED with
+no new P1. Status remains **PROPOSED — pending human review**.
 
 ---
 
