@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from revolab.content_store import ContentStore
 from revolab.domain import knowledge, persistence, provenance, scientific_object
-from revolab.domain.errors import ConflictError, NotFoundError
+from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundError
 from revolab.domain.identity import (
     can_mutate,
     mutation_capable_membership,
@@ -189,13 +189,13 @@ def append_revision(
     project_id: UUID,
     series_id: UUID,
     payload: dict[str, Any],
-    *,
-    object_type: str | None = None,
 ) -> Any:
-    can_mutate(session, actor_id, project_id, series_id, purpose="append revision")
-    revision = scientific_object.append_revision(
-        session, actor_id, series_id, payload, object_type=object_type
-    )
+    grant = can_mutate(session, actor_id, project_id, series_id, purpose="append revision")
+    # Revision visibility closure: a revision may only be visible where its
+    # owning Series is; the steward Project must already hold the series link.
+    if not persistence.is_visible(session, project_id, series_id):
+        raise AuthorizationError("series must be visible in the project before appending a revision")
+    revision = scientific_object.append_revision(session, grant, series_id, payload)
     persistence.link(session, project_id, revision.revision_id)
     session.commit()
     session.refresh(revision)
@@ -211,15 +211,17 @@ def update_series(
     name: str | None = None,
     description: str | None = None,
 ) -> Any:
-    can_mutate(session, actor_id, project_id, series_id, purpose="rename series")
-    series = scientific_object.update_series(session, series_id, name=name, description=description)
+    grant = can_mutate(session, actor_id, project_id, series_id, purpose="rename series")
+    series = scientific_object.update_series(
+        session, grant, series_id, name=name, description=description
+    )
     session.commit()
     session.refresh(series)
     return series
 
 
 def archive_series(session: Session, actor_id: UUID, project_id: UUID, series_id: UUID) -> None:
-    can_mutate(session, actor_id, project_id, series_id, purpose="archive series")
+    grant = can_mutate(session, actor_id, project_id, series_id, purpose="archive series")
     revision_ids = set(
         session.scalars(
             select(ScientificObjectRevision.revision_id).where(
@@ -249,7 +251,7 @@ def archive_series(session: Session, actor_id: UUID, project_id: UUID, series_id
         select(DecisionTarget.id).where(DecisionTarget.target_id.in_(member_ids)).limit(1)
     ):
         raise ConflictError("series is referenced by a decision; it cannot be archived")
-    scientific_object.mark_archived(session, series_id)
+    scientific_object.mark_archived(session, grant, series_id)
     session.commit()
 
 
@@ -273,6 +275,13 @@ def _finalize_reference(session: Session, project_id: UUID, resource_id: UUID, r
     return row
 
 
+def _link_existing_reference(session: Session, project_id: UUID, resource_id: UUID, row: Any) -> Any:
+    persistence.link(session, project_id, resource_id)
+    session.commit()
+    session.refresh(row)
+    return row
+
+
 def create_run_reference(
     session: Session,
     actor_id: UUID,
@@ -285,6 +294,9 @@ def create_run_reference(
     submitted_at: datetime | None = None,
 ) -> Any:
     mutation_capable_membership(session, actor_id, project_id)
+    existing = provenance.find_run_reference(session, authority, native_id)
+    if existing is not None:
+        return _link_existing_reference(session, project_id, existing.run_id, existing)
     row = provenance.create_run_reference_row(
         session,
         authority,
@@ -300,6 +312,9 @@ def create_session_reference(
     session: Session, actor_id: UUID, project_id: UUID, authority: str, native_id: str
 ) -> Any:
     mutation_capable_membership(session, actor_id, project_id)
+    existing = provenance.find_session_reference(session, authority, native_id)
+    if existing is not None:
+        return _link_existing_reference(session, project_id, existing.session_id, existing)
     row = provenance.create_session_reference_row(session, authority, native_id)
     return _finalize_reference(session, project_id, row.session_id, row)
 
@@ -317,6 +332,10 @@ def create_artifact_reference(
     version_id: str | None = None,
 ) -> Any:
     mutation_capable_membership(session, actor_id, project_id)
+    version_id = version_id or ""
+    existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
+    if existing is not None:
+        return _link_existing_reference(session, project_id, existing.artifact_id, existing)
     row = provenance.create_artifact_reference_row(
         session,
         authority,
@@ -339,6 +358,9 @@ def create_literature_reference(
     title: str | None = None,
 ) -> Any:
     mutation_capable_membership(session, actor_id, project_id)
+    existing = provenance.find_literature_reference(session, authority, native_id)
+    if existing is not None:
+        return _link_existing_reference(session, project_id, existing.literature_id, existing)
     row = provenance.create_literature_reference_row(session, authority, native_id, title=title)
     return _finalize_reference(session, project_id, row.literature_id, row)
 
@@ -347,18 +369,22 @@ def create_external_reference(
     session: Session,
     actor_id: UUID,
     project_id: UUID,
-    external_identity_id: UUID,
+    authority: str,
+    native_id: str,
     *,
+    kind: str | None = None,
     checksum: str | None = None,
-    as_of: datetime | None = None,
     cache_metadata: dict[str, Any] | None = None,
 ) -> Any:
     mutation_capable_membership(session, actor_id, project_id)
+    identity = scientific_object.get_or_create_external_identity(
+        session, authority, native_id, kind=kind
+    )
     row = provenance.create_external_reference_row(
         session,
-        external_identity_id,
+        identity.external_identity_id,
         checksum=checksum,
-        as_of=as_of,
+        as_of=None,
         cache_metadata=cache_metadata,
     )
     return _finalize_reference(session, project_id, row.external_reference_id, row)
@@ -372,7 +398,7 @@ def create_external_reference(
 def get_or_create_external_identity(
     session: Session, authority: str, native_id: str, *, kind: str | None = None
 ) -> Any:
-    return provenance.get_or_create_external_identity(session, authority, native_id, kind=kind)
+    return scientific_object.get_or_create_external_identity(session, authority, native_id, kind=kind)
 
 
 def attach_external_identity(
@@ -387,26 +413,19 @@ def attach_external_identity(
     kind: str | None = None,
     is_canonical: bool = False,
 ) -> Any:
-    can_mutate(session, actor_id, project_id, series_id, purpose="attach external identity")
-    from revolab.models import ScientificObjectExternalIdentity
-
-    identity = provenance.get_or_create_external_identity(session, authority, native_id, kind=kind)
-    mapping = session.get(
-        ScientificObjectExternalIdentity, (identity.external_identity_id, qualifier)
+    grant = can_mutate(session, actor_id, project_id, series_id, purpose="attach external identity")
+    mapping = scientific_object.attach_external_identity(
+        session,
+        grant,
+        series_id,
+        authority,
+        native_id,
+        qualifier=qualifier,
+        kind=kind,
+        is_canonical=is_canonical,
     )
-    if mapping is not None:
-        if mapping.series_id != series_id:
-            raise ConflictError("external identity already maps to another series for this qualifier")
-        mapping.is_canonical = is_canonical
-    else:
-        mapping = ScientificObjectExternalIdentity(
-            external_identity_id=identity.external_identity_id,
-            qualifier=qualifier,
-            series_id=series_id,
-            is_canonical=is_canonical,
-        )
-        session.add(mapping)
     session.commit()
+    session.refresh(mapping)
     return mapping
 
 
@@ -418,27 +437,27 @@ def attach_external_identity(
 def add_variant_of(
     session: Session, actor_id: UUID, project_id: UUID, source_series_id: UUID, target_series_id: UUID
 ) -> GlobalProvenanceEdge:
-    can_mutate(session, actor_id, project_id, source_series_id, purpose="variant_of")
+    grant = can_mutate(session, actor_id, project_id, source_series_id, purpose="variant_of")
     persistence.require_visible(session, project_id, target_series_id)
     return provenance.add_conceptual_edge(
-        session, actor_id, RelationType.VARIANT_OF, source_series_id, target_series_id
+        session, grant, RelationType.VARIANT_OF, source_series_id, target_series_id
     )
 
 
 def add_represents(
     session: Session, actor_id: UUID, project_id: UUID, source_series_id: UUID, target_series_id: UUID
 ) -> GlobalProvenanceEdge:
-    can_mutate(session, actor_id, project_id, source_series_id, purpose="represents")
+    grant = can_mutate(session, actor_id, project_id, source_series_id, purpose="represents")
     persistence.require_visible(session, project_id, target_series_id)
     return provenance.add_conceptual_edge(
-        session, actor_id, RelationType.REPRESENTS, source_series_id, target_series_id
+        session, grant, RelationType.REPRESENTS, source_series_id, target_series_id
     )
 
 
 def add_derived_from(
     session: Session, actor_id: UUID, project_id: UUID, source_revision_id: UUID, target_revision_id: UUID
 ) -> GlobalProvenanceEdge:
-    can_mutate(
+    grant = can_mutate(
         session,
         actor_id,
         project_id,
@@ -447,14 +466,14 @@ def add_derived_from(
     )
     persistence.require_visible(session, project_id, target_revision_id)
     return provenance.add_revision_edge(
-        session, actor_id, RelationType.DERIVED_FROM, source_revision_id, target_revision_id
+        session, grant, RelationType.DERIVED_FROM, source_revision_id, target_revision_id
     )
 
 
 def add_evaluates(
     session: Session, actor_id: UUID, project_id: UUID, source_revision_id: UUID, target_revision_id: UUID
 ) -> GlobalProvenanceEdge:
-    can_mutate(
+    grant = can_mutate(
         session,
         actor_id,
         project_id,
@@ -463,44 +482,28 @@ def add_evaluates(
     )
     persistence.require_visible(session, project_id, target_revision_id)
     return provenance.add_revision_edge(
-        session, actor_id, RelationType.EVALUATES, source_revision_id, target_revision_id
+        session, grant, RelationType.EVALUATES, source_revision_id, target_revision_id
     )
-
-
-def _require_stewardship(
-    session: Session,
-    actor_id: UUID,
-    project_id: UUID,
-    resource_id: UUID,
-    kind: ResourceKind,
-    purpose: str,
-) -> None:
-    if kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
-        can_mutate(
-            session,
-            actor_id,
-            project_id,
-            persistence.revision_series_id(session, resource_id),
-            purpose=purpose,
-        )
-    else:
-        can_mutate(session, actor_id, project_id, resource_id, purpose=purpose)
 
 
 def add_consumed_input(
     session: Session, actor_id: UUID, project_id: UUID, source_id: UUID, target_id: UUID
 ) -> GlobalProvenanceEdge:
     source_kind = persistence.resource_kind(session, source_id)
-    _require_stewardship(session, actor_id, project_id, source_id, source_kind, "consumed_as_input_by")
-    return provenance.add_consumed_input(session, actor_id, project_id, source_id, target_id)
+    anchor = (
+        persistence.revision_series_id(session, source_id)
+        if source_kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION
+        else source_id
+    )
+    grant = can_mutate(session, actor_id, project_id, anchor, purpose="consumed_as_input_by")
+    return provenance.add_consumed_input(session, grant, project_id, source_id, target_id)
 
 
 def record_produced(
     session: Session, actor_id: UUID, project_id: UUID, source_id: UUID, artifact_id: UUID
 ) -> GlobalProvenanceEdge:
-    source_kind = persistence.resource_kind(session, source_id)
-    _require_stewardship(session, actor_id, project_id, source_id, source_kind, "produced")
-    return provenance.record_produced(session, actor_id, project_id, source_id, artifact_id)
+    grant = can_mutate(session, actor_id, project_id, source_id, purpose="produced")
+    return provenance.record_produced(session, grant, project_id, source_id, artifact_id)
 
 
 def import_revision(
@@ -512,9 +515,9 @@ def import_revision(
     *,
     payload: dict[str, Any],
 ) -> Any:
-    can_mutate(session, actor_id, project_id, series_id, purpose="import object")
+    grant = can_mutate(session, actor_id, project_id, series_id, purpose="import object")
     return provenance.import_revision(
-        session, actor_id, project_id, series_id, source_id, payload=payload
+        session, grant, project_id, series_id, source_id, payload=payload
     )
 
 

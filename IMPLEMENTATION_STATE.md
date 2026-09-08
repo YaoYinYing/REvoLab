@@ -22,11 +22,24 @@ removed, not shimmed.
   `ProjectResourceLink` + `ResourceStewardship`.
 - **Domain layering (DAG honest).** Authority is derived only in
   `revolab/domain/identity.py` at the command boundary (`revolab/services.py`),
-  which issues `MutationGrant` values (`revolab/domain/grants.py`) and delegates
-  identity-free writes to `revolab/domain/scientific_object.py`,
-  `revolab/domain/provenance.py`, and `revolab/domain/knowledge.py` — none of
-  which import Identity. `revolab/domain/persistence.py` holds the shared,
-  authority-free registry/link/stewardship/edge primitives.
+  which issues `MutationGrant` values (`revolab/domain/grants.py`) and passes them
+  into `revolab/domain/scientific_object.py`, `revolab/domain/provenance.py`, and
+  `revolab/domain/knowledge.py` — none of which import Identity. **MutationGrant
+  is real, not ceremonial:** leaf resource mutations (`append_revision`,
+  `update_series`, `mark_archived`, `attach_external_identity`, the typed global
+  edge commands, `import_revision`) consume the grant and re-validate
+  `resource_id` + current stewardship via `persistence.validate_grant`; the edge
+  sink (`persistence.insert_edge`) additionally cross-checks asserted endpoint
+  kinds against `GlobalResourceRegistry`. Direct leaf calls with a missing,
+  wrong-resource, or stale grant are rejected (regression tests).
+- **Read projection is scoped.** Object-detail decisions and bounded-graph
+  decision edges join through their owning `Decision` and filter
+  `Decision.project_id`; `decision_summary` scopes the supersede pointer by
+  `DecisionSupersedes.project_id`; `bounded_graph` rejects a start resource that
+  is not linked into the Project; `generated_by` filters every hop through the
+  Project's visibility lens; archived Evidence/Decisions are excluded from
+  object-detail. A two-Project shared-resource regression proves Project A cannot
+  see Project B's Evidence/Decision/topology.
 - **Read-side authorization projection.** Reads through a Project require
   `readable_membership` (any role in an active Project); a non-member or a
   tombstoned Project is rejected, so global identity is not global readability.
@@ -43,6 +56,20 @@ removed, not shimmed.
 - **Reference identity cards**: `RunReference`, `SessionReference`,
   `ArtifactReference`, `LiteratureReference`, `ExternalReference`, plus the
   `ExternalIdentity` registry and `ScientificObjectExternalIdentity` mapping.
+  **Canonical durable-uniqueness keys (convergence):** `UNIQUE(authority,
+  native_id)` on Run/Session/Literature reference; `UNIQUE(authority, native_id,
+  version_id)` on Artifact (version identity explicit; `version_id` NOT NULL,
+  default `""`). Reference creation is get-or-create + link: an existing node is
+  returned and linked (the second Project gains visibility, never stewardship),
+  never silently duplicated. `ExternalReference` remains an append-per-cache
+  metadata record keyed to the (already unique) `ExternalIdentity` — it is not the
+  durable identity card.
+- **ScientificObject conceptual type is immutable**: a revision always inherits
+  its Series' `object_type` (the divergent-revision code path and parameter were
+  removed); a conceptual type change requires a new Series + a scientific
+  relation.
+- **Acyclic supersession**: `supersede` preserves 0..1 incoming/outgoing and
+  rejects direct (`A→B→A`) and transitive (`A→B→C→A`) cycles before persistence.
 - **Frozen edge matrix**: `GlobalProvenanceEdge` (#1-7) with registry-FK
   endpoints + kind columns, immutable, corrected via `superseded_by_id`
   (never archived by a Project); `DecisionEvidence` (#10 cites, with `cited_as`),
@@ -57,8 +84,10 @@ removed, not shimmed.
   the statement and materializes the immutable knowledge edges; committed
   Decisions are superseded, never edited.
 - **Project deletion** = tombstone: hard-delete links/memberships, soft-archive
-  Evidence/Decisions/knowledge edges, transfer-or-freeze stewardship; global
-  resources and global provenance edges survive.
+  Evidence and Decision rows (their immutable knowledge edges are retained with
+  them, with no independent archival state; the read projection hides the
+  archived context), transfer-or-freeze stewardship; global resources and global
+  provenance edges survive. Documentation reconciled to this invariant.
 - **`ContentStore`** (`revolab/content_store.py`): immutable, content-addressed
   `put`/`get` over an fsspec local backend; internal artifacts are
   `ArtifactReference(authority=revolab)`.
@@ -78,18 +107,21 @@ knowledge-edge tables). See
 
 ## Verified evidence
 
-- `pytest` (50 tests) passes: authority/roles/stewardship/tombstone/MutationGrant;
-  atomic object creation; series/revision identity + immutability; revision
-  visibility closure; typed-payload validation; ProjectResourceLink read
-  visibility != stewardship; per-edge authority + endpoint matrix + no self-edge +
-  generated_by; Evidence freeze and ghost-knowledge rejection; Decision draft
-  mutability / commit atomicity / committed immutability / supersede (only a
-  committed Decision may supersede); Evidence revision-target kind validation;
-  read-side membership rejection; ContentStore byte identity; project-scoped API
-  vertical slice.
+- `pytest` (69 tests) passes: authority/roles/stewardship/tombstone/MutationGrant
+  (including direct leaf-mutation bypass + stale/wrong-grant rejection + the edge
+  sink's registry-kind cross-check); atomic object creation; series/revision
+  identity + immutability + conceptual-type immutability; revision visibility
+  closure; typed-payload validation; ProjectResourceLink read visibility !=
+  stewardship; per-edge authority + endpoint matrix + no self-edge + negative
+  artifact/run-as-series/revision endpoint tests; generated_by; Evidence freeze,
+  ghost-knowledge rejection, and PATCH null-vs-omission; Decision draft mutability
+  / commit atomicity / committed immutability / supersede (commit-only, 0..1
+  in/out, direct+transitive cycle rejection); read-projection scoping (two-Project
+  shared-resource regression); reference get-or-create + version identity;
+  ContentStore byte identity; project-scoped API vertical slice.
 - `ruff check backend` and `mypy` (strict) pass.
 - Migration: the prototype root migration was squashed into one clean root
-  migration `9f115cb60074` (no backward-compat requirement). `alembic upgrade
+  migration `42bee4363564` (no backward-compat requirement). `alembic upgrade
   head` + `alembic check` report **no drift** on SQLite and on a **clean
   PostgreSQL 16** database; a full object→revision→evidence→decision→commit
   vertical slice was smoke-run against PostgreSQL and committed successfully.

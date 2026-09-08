@@ -159,6 +159,41 @@ def test_evidence_revision_target_must_actually_be_a_revision(session):
         )
 
 
+def test_supersession_rejects_direct_and_transitive_cycles(session):
+    actor, project = _project(session)
+    a = services.create_decision(session, actor, project.id, title="A", statement="a")
+    b = services.create_decision(session, actor, project.id, title="B", statement="b")
+    c = services.create_decision(session, actor, project.id, title="C", statement="c")
+    for decision in (a, b, c):
+        services.commit_decision(session, actor, project.id, decision.id)
+
+    # A -> B (direct cycle: B -> A must then fail)
+    services.supersede_decision(session, actor, project.id, a.id, b.id)
+    with pytest.raises(ConflictError):
+        services.supersede_decision(session, actor, project.id, b.id, a.id)
+
+    # Build A -> B -> C transitive chain, then C -> A must fail.
+    services.supersede_decision(session, actor, project.id, b.id, c.id)
+    with pytest.raises(ConflictError):
+        services.supersede_decision(session, actor, project.id, c.id, a.id)
+
+
+def test_supersession_respects_in_out_uniqueness(session):
+    actor, project = _project(session)
+    a = services.create_decision(session, actor, project.id, title="A", statement="a")
+    b = services.create_decision(session, actor, project.id, title="B", statement="b")
+    c = services.create_decision(session, actor, project.id, title="C", statement="c")
+    for decision in (a, b, c):
+        services.commit_decision(session, actor, project.id, decision.id)
+    services.supersede_decision(session, actor, project.id, a.id, b.id)
+    # A already supersedes B (out-going); A cannot supersede C too.
+    with pytest.raises(ConflictError):
+        services.supersede_decision(session, actor, project.id, a.id, c.id)
+    # B is already superseded by A; C cannot also supersede B.
+    with pytest.raises(ConflictError):
+        services.supersede_decision(session, actor, project.id, c.id, b.id)
+
+
 def test_ghost_knowledge_rejected_on_evidence_write(session):
     actor, project = _project(session)
     series = _object(session, actor, project, "structure", "S", {"method": "X"})

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from revolab.domain.errors import AuthorizationError, NotFoundError, ValidationError
+from revolab.domain.grants import MutationGrant
 from revolab.enums import RelationType, ResourceKind
 from revolab.models import (
     GlobalProvenanceEdge,
@@ -123,11 +124,24 @@ def payload_checksum(payload: dict[str, Any]) -> str:
 def validate_edge_shape(
     relation_type: RelationType, source_kind: ResourceKind, target_kind: ResourceKind
 ) -> None:
+    if relation_type not in _GLOBAL_EDGE_SHAPE:
+        raise ValidationError(f"{relation_type.value} is not a global provenance relation")
     legal_source, legal_target = _GLOBAL_EDGE_SHAPE[relation_type]
     if source_kind not in legal_source or target_kind not in legal_target:
         raise ValidationError(
             f"{relation_type.value} does not accept source={source_kind.value}, target={target_kind.value}"
         )
+
+
+def validate_grant(session: Session, grant: MutationGrant, resource_id: UUID) -> None:
+    """Validate the pre-issued mutation grant at the domain boundary: the grant
+    must name this resource and still be current (the steward Project has not
+    changed/frozen since issuance). Does NOT import Identity."""
+    if grant.resource_id != resource_id:
+        raise AuthorizationError("mutation grant does not cover this resource")
+    stewardship = session.get(ResourceStewardship, resource_id)
+    if stewardship is None or stewardship.steward_project_id != grant.steward_project_id:
+        raise AuthorizationError("mutation grant is stale: resource is not stewarded by the grant project")
 
 
 def insert_edge(
@@ -141,6 +155,13 @@ def insert_edge(
 ) -> GlobalProvenanceEdge:
     if source_id == target_id:
         raise ValidationError("a relation must connect two distinct nodes")
+    # The sink enforces the full frozen matrix: relation_type -> legal endpoint
+    # kinds, and the persisted kind columns must agree with the registry.
+    validate_edge_shape(relation_type, source_kind, target_kind)
+    if resource_kind(session, source_id) is not source_kind:
+        raise ValidationError("source kind disagrees with GlobalResourceRegistry")
+    if resource_kind(session, target_id) is not target_kind:
+        raise ValidationError("target kind disagrees with GlobalResourceRegistry")
     edge = GlobalProvenanceEdge(
         relation_type=relation_type.value,
         source_id=source_id,

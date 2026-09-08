@@ -435,15 +435,13 @@ def create_external_reference(
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
 ) -> dict[str, Any]:
-    identity = services.get_or_create_external_identity(
-        session, payload.authority, payload.native_id, kind=payload.kind
-    )
-    session.flush()
     row = services.create_external_reference(
         session,
         actor_id,
         project_id,
-        identity.external_identity_id,
+        payload.authority,
+        payload.native_id,
+        kind=payload.kind,
         checksum=payload.checksum,
         cache_metadata=payload.cache_metadata,
     )
@@ -518,7 +516,9 @@ def list_evidence(
     from revolab.models import Evidence
 
     rows = session.scalars(
-        select(Evidence).where(Evidence.project_id == project_id).order_by(Evidence.created_at.desc())
+        select(Evidence)
+        .where(Evidence.project_id == project_id, Evidence.archived_at.is_(None))
+        .order_by(Evidence.created_at.desc())
         .offset(offset).limit(limit)
     )
     out = []

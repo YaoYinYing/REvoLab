@@ -144,6 +144,17 @@ def test_archive_blocked_when_referenced_by_evidence_or_decision(session):
         services.archive_series(session, actor, project.id, s1)
 
 
+def test_revisions_cannot_change_conceptual_object_type(session):
+    actor, project = _project(session)
+    series = services.create_object(session, actor, project.id, "protein", "X", payload={"organism": "T"})
+    revision = services.append_revision(session, actor, project.id, series, {"chain": "B"})
+    # The revision inherits the immutable Series conceptual type.
+    assert revision.object_type == "protein"
+    # A payload shaped for a different type is rejected — the type never diverges.
+    with pytest.raises(ValidationError):
+        services.append_revision(session, actor, project.id, series, {"smiles": "CCO"})
+
+
 def test_archive_blocked_when_selected_by_committed_decision(session):
     actor, project = _project(session)
     s1 = services.create_object(session, actor, project.id, "protein", "X", payload={})

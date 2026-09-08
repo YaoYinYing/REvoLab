@@ -1,21 +1,8 @@
-"""REvoLab Core domain machinery (identity authority + type registry + errors)."""
+"""REvoLab Core domain package.
 
-from revolab.domain.errors import (
-    AuthorizationError,
-    ConflictError,
-    DomainError,
-    NotFoundError,
-    ValidationError,
-)
-from revolab.domain.identity import MutationGrant, can_mutate, mutation_capable_membership
-
-__all__ = [
-    "AuthorizationError",
-    "ConflictError",
-    "DomainError",
-    "MutationGrant",
-    "NotFoundError",
-    "ValidationError",
-    "can_mutate",
-    "mutation_capable_membership",
-]
+The leaf domain modules (`scientific_object`, `provenance`, `knowledge`, and the
+shared `persistence` primitives) must not transitively load Identity, so this
+package deliberately imports nothing from the Identity domain. Import concrete
+symbols from their owning submodule (`revolab.domain.identity.can_mutate`,
+`revolab.domain.grants.MutationGrant`, `revolab.domain.errors.*`).
+"""

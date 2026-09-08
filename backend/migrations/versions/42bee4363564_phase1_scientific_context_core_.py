@@ -1,8 +1,8 @@
 """phase1 scientific context core + authority substrate
 
-Revision ID: 9f115cb60074
+Revision ID: 42bee4363564
 Revises: 
-Create Date: 2026-09-08 14:39:07.044994
+Create Date: 2026-09-08 18:30:33.187728
 """
 from collections.abc import Sequence
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = '9f115cb60074'
+revision: str = '42bee4363564'
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -55,11 +55,12 @@ def upgrade() -> None:
     sa.Column('content_type', sa.String(length=200), nullable=True),
     sa.Column('size', sa.Integer(), nullable=True),
     sa.Column('checksum', sa.String(length=64), nullable=True),
-    sa.Column('version_id', sa.String(length=200), nullable=True),
+    sa.Column('version_id', sa.String(length=200), nullable=False),
     sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['artifact_id'], ['global_resource_registry.resource_id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('artifact_id')
+    sa.PrimaryKeyConstraint('artifact_id'),
+    sa.UniqueConstraint('authority', 'native_id', 'version_id', name='uq_artifact_identity')
     )
     op.create_table('decisions',
     sa.Column('id', sa.Uuid(), nullable=False),
@@ -120,7 +121,8 @@ def upgrade() -> None:
     sa.Column('title', sa.String(length=500), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['literature_id'], ['global_resource_registry.resource_id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('literature_id')
+    sa.PrimaryKeyConstraint('literature_id'),
+    sa.UniqueConstraint('authority', 'native_id', name='uq_literature_authority_native')
     )
     op.create_table('project_memberships',
     sa.Column('project_id', sa.Uuid(), nullable=False),
@@ -154,7 +156,8 @@ def upgrade() -> None:
     sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['run_id'], ['global_resource_registry.resource_id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('run_id')
+    sa.PrimaryKeyConstraint('run_id'),
+    sa.UniqueConstraint('authority', 'native_id', name='uq_run_authority_native')
     )
     op.create_table('scientific_object_series',
     sa.Column('series_id', sa.Uuid(), nullable=False),
@@ -176,7 +179,8 @@ def upgrade() -> None:
     sa.Column('revoked_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['session_id'], ['global_resource_registry.resource_id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('session_id')
+    sa.PrimaryKeyConstraint('session_id'),
+    sa.UniqueConstraint('authority', 'native_id', name='uq_session_authority_native')
     )
     op.create_table('decision_supersedes',
     sa.Column('id', sa.Uuid(), nullable=False),

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from revolab.domain import persistence
@@ -143,6 +144,24 @@ def supersede_decision_row(
         raise ConflictError("a decision can only supersede a committed decision")
     if new_decision.status != DecisionStatus.COMMITTED.value:
         raise ConflictError("a superseding decision must itself be committed")
+
+    # Preserve 0..1 incoming/outgoing (also enforced by the unique constraints).
+    if session.scalar(
+        select(DecisionSupersedes.id).where(DecisionSupersedes.decision_id == new_decision.id)
+    ) is not None:
+        raise ConflictError("a decision can supersede at most one other decision")
+    if session.scalar(
+        select(DecisionSupersedes.id).where(
+            DecisionSupersedes.superseded_decision_id == old_decision.id
+        )
+    ) is not None:
+        raise ConflictError("a decision can be superseded by at most one decision")
+
+    # Reject cycles (direct and transitive): adding new→old must not let the
+    # superseded decision already reach the superseding one along existing edges.
+    if _reaches(session, old_decision.id, new_decision.id):
+        raise ConflictError("supersession would create a cycle")
+
     link = DecisionSupersedes(
         project_id=project_id,
         decision_id=new_decision.id,
@@ -153,6 +172,28 @@ def supersede_decision_row(
     session.commit()
     session.refresh(link)
     return link
+
+
+def _reaches(session: Session, start_id: UUID, target_id: UUID) -> bool:
+    """True if `start_id` reaches `target_id` following the supersedes-out
+    direction (decision_id -> superseded_decision_id)."""
+    seen: set[UUID] = set()
+    frontier = {start_id}
+    while frontier:
+        node = frontier.pop()
+        if node == target_id:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        child = session.scalar(
+            select(DecisionSupersedes.superseded_decision_id).where(
+                DecisionSupersedes.decision_id == node
+            )
+        )
+        if child is not None and child not in seen:
+            frontier.add(child)
+    return False
 
 
 def _require_project_decision(session: Session, project_id: UUID, decision_id: UUID) -> Decision:

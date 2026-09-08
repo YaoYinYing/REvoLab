@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from revolab import queries, services
 from revolab.domain.errors import AuthorizationError, ValidationError
-from revolab.models import GlobalProvenanceEdge
+from revolab.models import GlobalProvenanceEdge, ProjectResourceLink, ResourceStewardship
 
 
 def _object(session, actor, project, obj_type, name="X", payload=None):
@@ -109,6 +109,94 @@ def test_self_relations_rejected(session):
     s = _object(session, actor, project, "protein", "X", {})
     with pytest.raises(ValidationError):
         services.add_variant_of(session, actor, project.id, s, s)
+
+
+def test_conceptual_edge_rejects_non_series_endpoint(session):
+    actor = services.create_actor(session)
+    project = services.create_project(session, actor, "P")
+    target = _object(session, actor, project, "protein", "T", {})
+    artifact = services.create_artifact_reference(
+        session, actor, project.id, "revocompute", "art-1", checksum="c", size=1
+    )
+    # An artifact is a visible, stewarded resource but is not a Series.
+    with pytest.raises(ValidationError):
+        services.add_variant_of(session, actor, project.id, artifact.artifact_id, target)
+    with pytest.raises(ValidationError):
+        services.add_variant_of(session, actor, project.id, target, artifact.artifact_id)
+
+
+def test_revision_edge_rejects_non_revision_endpoint(session):
+    actor = services.create_actor(session)
+    project = services.create_project(session, actor, "P")
+    source_series = _object(session, actor, project, "structure", "S", {})
+    source_rev = _revision(session, actor, project, source_series, {"method": "A"})
+    target_series = _object(session, actor, project, "structure", "T2", {})
+    # A series (visible, stewarded) cannot serve as a revision endpoint.
+    with pytest.raises(ValidationError):
+        services.add_derived_from(session, actor, project.id, source_rev.revision_id, target_series)
+
+
+def test_reference_identity_get_or_create_single_global_node(session):
+    actor = services.create_actor(session)
+    first = services.create_project(session, actor, "P1")
+    second = services.create_project(session, actor, "P2")
+
+    r1 = services.create_run_reference(session, actor, first.id, "revocompute", "run-shared")
+    r2 = services.create_run_reference(session, actor, second.id, "revocompute", "run-shared")
+    assert r1.run_id == r2.run_id  # one durable global node, not two
+
+    # The second Project gains the read lens but NOT stewardship over the node.
+    stewardship = session.get(ResourceStewardship, r1.run_id)
+    assert stewardship.steward_project_id == first.id
+    link = session.scalar(
+        select(ProjectResourceLink.id).where(
+            ProjectResourceLink.project_id == second.id,
+            ProjectResourceLink.resource_id == r1.run_id,
+        )
+    )
+    assert link is not None
+
+
+def test_artifact_version_identity_is_explicit(session):
+    actor = services.create_actor(session)
+    project = services.create_project(session, actor, "P")
+    v1 = services.create_artifact_reference(
+        session, actor, project.id, "revocompute", "out-1", version_id="1", checksum="a"
+    )
+    v1_again = services.create_artifact_reference(
+        session, actor, project.id, "revocompute", "out-1", version_id="1", checksum="a"
+    )
+    v2 = services.create_artifact_reference(
+        session, actor, project.id, "revocompute", "out-1", version_id="2", checksum="b"
+    )
+    assert v1.artifact_id == v1_again.artifact_id
+    assert v1.artifact_id != v2.artifact_id
+
+
+def test_produced_rejects_non_run_session_source(session):
+    actor = services.create_actor(session)
+    project = services.create_project(session, actor, "P")
+    source_artifact = services.create_artifact_reference(
+        session, actor, project.id, "revocompute", "src", checksum="s"
+    )
+    target_artifact = services.create_artifact_reference(
+        session, actor, project.id, "revocompute", "tgt", checksum="t"
+    )
+    # produced requires a Run/Session source; an artifact is the wrong kind.
+    with pytest.raises(ValidationError):
+        services.record_produced(
+            session, actor, project.id, source_artifact.artifact_id, target_artifact.artifact_id
+        )
+
+
+def test_imported_as_rejects_non_artifact_external_source(session):
+    actor = services.create_actor(session)
+    project = services.create_project(session, actor, "P")
+    series = _object(session, actor, project, "structure", "S", {})
+    run = services.create_run_reference(session, actor, project.id, "revocompute", "run-1")
+    # imported_as requires an Artifact/External reference source; a run is wrong.
+    with pytest.raises(ValidationError):
+        services.import_revision(session, actor, project.id, series, run.run_id, payload={})
 
 
 def test_import_requires_target_stewardship(session):

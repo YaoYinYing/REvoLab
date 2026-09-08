@@ -210,6 +210,15 @@ class EvidencePatch(BaseModel):
     confidence_source: str | None = None
     scope: str | None = None
 
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> EvidencePatch:
+        # `role` and `polarity` are non-nullable columns; omission is allowed,
+        # an explicit null is illegal and must not reach the domain service.
+        for field in ("role", "polarity"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Decision

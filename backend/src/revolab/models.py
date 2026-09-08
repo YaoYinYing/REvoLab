@@ -282,6 +282,7 @@ class RunReference(Base, TimestampMixin):
     the consumed_as_input_by / produced edges — never as columns here."""
 
     __tablename__ = "run_references"
+    __table_args__ = (UniqueConstraint("authority", "native_id", name="uq_run_authority_native"),)
 
     run_id: Mapped[UUID] = mapped_column(
         ForeignKey("global_resource_registry.resource_id", ondelete="CASCADE"),
@@ -300,6 +301,7 @@ class SessionReference(Base, TimestampMixin):
     """Immutable identity card for an external interactive session."""
 
     __tablename__ = "session_references"
+    __table_args__ = (UniqueConstraint("authority", "native_id", name="uq_session_authority_native"),)
 
     session_id: Mapped[UUID] = mapped_column(
         ForeignKey("global_resource_registry.resource_id", ondelete="CASCADE"),
@@ -317,6 +319,9 @@ class ArtifactReference(Base, TimestampMixin):
     proves byte identity; origin is a provenance assertion, not the checksum."""
 
     __tablename__ = "artifact_references"
+    __table_args__ = (
+        UniqueConstraint("authority", "native_id", "version_id", name="uq_artifact_identity"),
+    )
 
     artifact_id: Mapped[UUID] = mapped_column(
         ForeignKey("global_resource_registry.resource_id", ondelete="CASCADE"),
@@ -328,7 +333,7 @@ class ArtifactReference(Base, TimestampMixin):
     content_type: Mapped[str | None] = mapped_column(String(200))
     size: Mapped[int | None] = mapped_column(Integer)
     checksum: Mapped[str | None] = mapped_column(String(64))
-    version_id: Mapped[str | None] = mapped_column(String(200))
+    version_id: Mapped[str] = mapped_column(String(200), nullable=False, default="")
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -336,6 +341,9 @@ class LiteratureReference(Base, TimestampMixin):
     """Immutable citation to an external publication."""
 
     __tablename__ = "literature_references"
+    __table_args__ = (
+        UniqueConstraint("authority", "native_id", name="uq_literature_authority_native"),
+    )
 
     literature_id: Mapped[UUID] = mapped_column(
         ForeignKey("global_resource_registry.resource_id", ondelete="CASCADE"),

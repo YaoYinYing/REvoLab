@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from revolab.domain import persistence, scientific_object
 from revolab.domain.errors import ConflictError, NotFoundError, ValidationError
+from revolab.domain.grants import MutationGrant
 from revolab.enums import (
     LEGAL_EVIDENCE_SOURCE_KINDS,
     DecisionStatus,
@@ -32,7 +33,6 @@ from revolab.models import (
     Decision,
     DecisionEvidence,
     Evidence,
-    ExternalIdentity,
     ExternalReference,
     GlobalProvenanceEdge,
     LiteratureReference,
@@ -91,7 +91,7 @@ def create_artifact_reference_row(
     content_type: str | None,
     size: int | None,
     checksum: str | None,
-    version_id: str | None,
+    version_id: str = "",
 ) -> ArtifactReference:
     resource_id = persistence.new_id()
     persistence.register(session, resource_id, ResourceKind.ARTIFACT_REFERENCE)
@@ -147,20 +147,42 @@ def create_external_reference_row(
     return row
 
 
-def get_or_create_external_identity(
-    session: Session, authority: str, native_id: str, *, kind: str | None
-) -> ExternalIdentity:
-    identity = session.scalar(
-        select(ExternalIdentity).where(
-            ExternalIdentity.authority == authority, ExternalIdentity.native_id == native_id
+def find_run_reference(session: Session, authority: str, native_id: str) -> RunReference | None:
+    return session.scalar(
+        select(RunReference).where(
+            RunReference.authority == authority, RunReference.native_id == native_id
         )
     )
-    if identity is not None:
-        return identity
-    identity = ExternalIdentity(authority=authority, native_id=native_id, kind=kind)
-    session.add(identity)
-    session.flush()
-    return identity
+
+
+def find_session_reference(session: Session, authority: str, native_id: str) -> SessionReference | None:
+    return session.scalar(
+        select(SessionReference).where(
+            SessionReference.authority == authority, SessionReference.native_id == native_id
+        )
+    )
+
+
+def find_artifact_reference(
+    session: Session, authority: str, native_id: str, version_id: str
+) -> ArtifactReference | None:
+    return session.scalar(
+        select(ArtifactReference).where(
+            ArtifactReference.authority == authority,
+            ArtifactReference.native_id == native_id,
+            ArtifactReference.version_id == version_id,
+        )
+    )
+
+
+def find_literature_reference(
+    session: Session, authority: str, native_id: str
+) -> LiteratureReference | None:
+    return session.scalar(
+        select(LiteratureReference).where(
+            LiteratureReference.authority == authority, LiteratureReference.native_id == native_id
+        )
+    )
 
 
 def link_series(session: Session, project_id: UUID, resource_id: UUID) -> None:
@@ -180,14 +202,25 @@ def link_series(session: Session, project_id: UUID, resource_id: UUID) -> None:
 
 def add_conceptual_edge(
     session: Session,
-    actor_id: UUID,
+    grant: MutationGrant,
     relation_type: RelationType,
     source_series_id: UUID,
     target_series_id: UUID,
 ) -> GlobalProvenanceEdge:
+    persistence.validate_grant(session, grant, source_series_id)
+    if (
+        persistence.resource_kind(session, source_series_id)
+        is not ResourceKind.SCIENTIFIC_OBJECT_SERIES
+    ):
+        raise ValidationError(f"{relation_type.value} source must be a scientific_object_series")
+    if (
+        persistence.resource_kind(session, target_series_id)
+        is not ResourceKind.SCIENTIFIC_OBJECT_SERIES
+    ):
+        raise ValidationError(f"{relation_type.value} target must be a scientific_object_series")
     return persistence.insert_edge(
         session,
-        actor_id,
+        grant.actor_id,
         relation_type,
         source_series_id,
         ResourceKind.SCIENTIFIC_OBJECT_SERIES,
@@ -198,14 +231,26 @@ def add_conceptual_edge(
 
 def add_revision_edge(
     session: Session,
-    actor_id: UUID,
+    grant: MutationGrant,
     relation_type: RelationType,
     source_revision_id: UUID,
     target_revision_id: UUID,
 ) -> GlobalProvenanceEdge:
+    source_series_id = persistence.revision_series_id(session, source_revision_id)
+    persistence.validate_grant(session, grant, source_series_id)
+    if (
+        persistence.resource_kind(session, source_revision_id)
+        is not ResourceKind.SCIENTIFIC_OBJECT_REVISION
+    ):
+        raise ValidationError(f"{relation_type.value} source must be a scientific_object_revision")
+    if (
+        persistence.resource_kind(session, target_revision_id)
+        is not ResourceKind.SCIENTIFIC_OBJECT_REVISION
+    ):
+        raise ValidationError(f"{relation_type.value} target must be a scientific_object_revision")
     return persistence.insert_edge(
         session,
-        actor_id,
+        grant.actor_id,
         relation_type,
         source_revision_id,
         ResourceKind.SCIENTIFIC_OBJECT_REVISION,
@@ -215,15 +260,21 @@ def add_revision_edge(
 
 
 def add_consumed_input(
-    session: Session, actor_id: UUID, project_id: UUID, source_id: UUID, target_id: UUID
+    session: Session, grant: MutationGrant, project_id: UUID, source_id: UUID, target_id: UUID
 ) -> GlobalProvenanceEdge:
     source_kind = persistence.resource_kind(session, source_id)
+    anchor = (
+        persistence.revision_series_id(session, source_id)
+        if source_kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION
+        else source_id
+    )
+    persistence.validate_grant(session, grant, anchor)
     target_kind = persistence.resource_kind(session, target_id)
     persistence.validate_edge_shape(RelationType.CONSUMED_AS_INPUT_BY, source_kind, target_kind)
     persistence.require_visible(session, project_id, target_id)
     return persistence.insert_edge(
         session,
-        actor_id,
+        grant.actor_id,
         RelationType.CONSUMED_AS_INPUT_BY,
         source_id,
         source_kind,
@@ -233,38 +284,46 @@ def add_consumed_input(
 
 
 def record_produced(
-    session: Session, actor_id: UUID, project_id: UUID, source_id: UUID, artifact_id: UUID
+    session: Session, grant: MutationGrant, project_id: UUID, source_id: UUID, artifact_id: UUID
 ) -> GlobalProvenanceEdge:
     source_kind = persistence.resource_kind(session, source_id)
+    persistence.validate_grant(session, grant, source_id)
     target_kind = persistence.resource_kind(session, artifact_id)
     persistence.validate_edge_shape(RelationType.PRODUCED, source_kind, target_kind)
     if target_kind is not ResourceKind.ARTIFACT_REFERENCE:
         raise ValidationError("produced target must be an artifact reference")
     persistence.require_visible(session, project_id, artifact_id)
     return persistence.insert_edge(
-        session, actor_id, RelationType.PRODUCED, source_id, source_kind, artifact_id, target_kind
+        session,
+        grant.actor_id,
+        RelationType.PRODUCED,
+        source_id,
+        source_kind,
+        artifact_id,
+        target_kind,
     )
 
 
 def import_revision(
     session: Session,
-    actor_id: UUID,
+    grant: MutationGrant,
     project_id: UUID,
     series_id: UUID,
     source_id: UUID,
     *,
     payload: dict[str, Any],
 ) -> ScientificObjectRevision:
+    persistence.validate_grant(session, grant, series_id)
     source_kind = persistence.resource_kind(session, source_id)
     persistence.validate_edge_shape(
         RelationType.IMPORTED_AS, source_kind, ResourceKind.SCIENTIFIC_OBJECT_REVISION
     )
     persistence.require_visible(session, project_id, source_id)
-    revision = scientific_object.append_revision(session, actor_id, series_id, payload)
+    revision = scientific_object.append_revision(session, grant, series_id, payload)
     persistence.link(session, project_id, revision.revision_id)
     persistence.insert_edge(
         session,
-        actor_id,
+        grant.actor_id,
         RelationType.IMPORTED_AS,
         source_id,
         source_kind,
@@ -378,6 +437,11 @@ def create_evidence_row(
     return row
 
 
+_MUTABLE_EVIDENCE_FIELDS = frozenset(
+    {"role", "label", "interpretation", "polarity", "confidence", "confidence_source", "scope"}
+)
+
+
 def update_evidence_row(
     session: Session, project_id: UUID, evidence_id: UUID, **fields: Any
 ) -> Evidence:
@@ -386,19 +450,15 @@ def update_evidence_row(
         raise NotFoundError("evidence not found in project")
     if is_frozen(session, evidence_id):
         raise ConflictError("evidence is frozen; create a new evidence row to correct it")
-    fields.pop("kind", None)
+    # Whitelist: only the interpretive fields are mutable; identity, source,
+    # target, kind, and lifecycle columns are immutable (never silently dropped).
     for key in fields:
-        if key in {
-            "source_resource_id",
-            "source_kind",
-            "target_revision_id",
-            "target_decision_id",
-            "target_evidence_id",
-        }:
-            raise ValidationError(f"evidence {key} is immutable after creation")
+        if key not in _MUTABLE_EVIDENCE_FIELDS:
+            raise ValidationError(f"evidence {key} is immutable or unknown")
+    for key in ("role", "polarity"):
+        if key in fields and fields[key] is None:
+            raise ValidationError(f"evidence {key} cannot be null")
     for key, value in fields.items():
-        if not hasattr(Evidence, key):
-            raise ValidationError(f"unknown evidence field {key}")
         setattr(evidence, key, value)
     session.commit()
     session.refresh(evidence)
