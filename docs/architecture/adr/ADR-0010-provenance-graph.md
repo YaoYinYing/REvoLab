@@ -13,9 +13,11 @@ that the physical Relation schema not be frozen before an implementation fork.
   (series + revisions), RunReference, SessionReference, ArtifactReference,
   LiteratureReference, ExternalReference, Evidence (interpreted claim), Decision.
   ExperimentalEvidence is a `kind` of Evidence, not a separate table.
-- **A reference is a fact; Evidence is an interpreted claim.** Reference nodes are
-  immutable identity cards carrying an **identity authority** (not a resolver/provider)
-  + authority-native id + checksum/digest + size + version_ref.
+- **A reference is a fact; Evidence is an interpreted claim.** Reference nodes
+  (Run/Session/Artifact/Literature) are immutable identity cards carrying an **identity
+  authority** (not a resolver/provider) + authority-native id + checksum/digest + size +
+  version_ref; `ExternalReference` instead holds an `external_identity_id` FK + cache
+  metadata (see `SCIENTIFIC_OBJECT_MODEL.md`).
 - **Evidence = source + target + claim**: a source (a reference/experiment/note being
   interpreted), a target (a ScientificObjectRevision, Decision, or another Evidence), and
   interpretation/polarity/scope. **`polarity` is a field on Evidence, not a graph

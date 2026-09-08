@@ -56,7 +56,8 @@ As **typed, addressable references**, not prose dumps:
 ```text
 ObjectRef   {type, id, authority?, native_id?, label}
 EvidenceRef {id, kind, authority, native_id, role/polarity}
-DecisionRef {id, status, superseded_by?, evidence_ids[]}
+DecisionRef {id, status, superseded_by? (derived reverse of the `supersedes` edge),
+            evidence_ids[]}
 ```
 
 (External identity is `(authority, native_id)`, never the access provider — see

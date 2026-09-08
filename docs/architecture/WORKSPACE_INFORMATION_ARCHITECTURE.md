@@ -19,7 +19,7 @@ Overview      → project's current scientific state (active decision, open next
 Objects       → the organization tree (parent/child = pure grouping). Selecting a node opens its OBJECT DETAIL (graph-centric), not a CRUD card
 Evidence      → all Evidence records, grouped by kind, filterable by source (authority / reference type)
 Runs & Artifacts → cross-cutting view of Run/Artifact references (aggregated from evidence)
-Decisions     → the project's decision log (open / committed / superseded)
+Decisions     → the project's decision log (draft / committed / superseded)
 Knowledge     → the promoted project-truth surface (committed decisions + conclusions); the promotion gate lives here
 ```
 

@@ -113,8 +113,9 @@ IDs/aliases bind `series_id`; provenance edges reference `revision_id`).
 - Each content revision is an independent immutable record with its own
   `revision_id`, immutable content, and content fingerprint (checksum). Revisions
   are ordered by a monotonic `revision_seq` within the series.
-- **Provenance edges reference `revision_id`, never `series_id`.** "Which Structure
-  revision did this Run consume?" resolves unambiguously.
+- **Content/provenance edges reference `revision_id`, never `series_id`** (the
+  conceptual semantic edges `variant_of`/`represents` address `series_id`). "Which
+  Structure revision did this Run consume?" resolves unambiguously.
 - **`series_id` is the durable identity** cited by aliases/external IDs, used in the
   UI, and addressed by conceptual semantic relations (`variant_of`, `represents`);
   `revision_id` is what content/provenance relations point at (a Decision targets a
@@ -135,8 +136,10 @@ governance/labeling spine (held on the series row, not revisions).
 - **New revision** when the change keeps the same conceptual identity (re-folded
   Protein, re-refined Structure → new revision of the same Structure series).
 - **New object** when the change alters the conceptual identity (a Sequence promoted
-  to Protein, a genuinely different design) → a fresh series + objects linked by a
-  `derived_from` / `variant_of` relation.
+  to Protein, a genuinely different design) → a fresh series, related at the Series
+  level by `variant_of` / `represents`; any re-expressed content lineage is a
+  `derived_from` edge between the specific **Revisions** only (never a Series
+  endpoint).
 
 **Enforcement:** a content update to a referenced object is **rejected by a domain
 service** unless it produces a new revision. Versioning is **opt-in per type**.

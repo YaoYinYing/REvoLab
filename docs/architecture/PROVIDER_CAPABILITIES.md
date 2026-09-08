@@ -322,7 +322,8 @@ REvoDesign --export--> Structure/Variant/DesignSet
   `InteractiveHandoffCapability` (deep-link/open-in-UI).
 - **Provenance is captured only at the export/import boundary**: input object →
   session (SessionReference) → ArtifactReference (checksum) → output object, linked
-  by `derived_from`/`represents`. The ephemeral interactive timeline is never stored.
+  by `derived_from` (Revision→Revision) and `represents` (Series→Series). The
+  ephemeral interactive timeline is never stored.
 - **A durable result** = a content-addressed ArtifactReference, optionally imported
   into a new REvoLab ScientificObject + provenance edges — never the session timeline.
 

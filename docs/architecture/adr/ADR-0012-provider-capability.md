@@ -26,8 +26,8 @@ is available.
 - **Credentials:** owned by the credential store, **scoped per Actor**
   (`(actor_id, provider_key, kind)`); every capability call takes a `credential`
   handle for the calling actor; **availability is a derived, Actor-contextual probe** —
-  `available(actor, provider) = driver READY AND required credential kinds present for
-  the actor AND project policy permits` — never stored.
+  `available(actor, provider, project) = driver READY AND required credential kinds
+  present for the actor AND project policy permits` — never stored.
 - **Runtime health and availability are separate coeffects (reviewer finding #6):**
   `ProviderRuntimeHealth` (`READY | DEGRADED | UNREACHABLE`) is per-provider and
   actor-independent and is the **only** per-provider registry state; `Capability

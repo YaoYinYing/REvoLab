@@ -134,8 +134,8 @@ collaboration/sharing and the agent.
   material; Core holds only the non-secret binding.
 - **Acceptance evidence:** an Actor can hold a credential binding; `has_credential(actor,
   provider, kind)` is a derived query; no secret material appears in a Core table; the
-  availability formula `driver READY AND credential present AND policy permits` is
-  queryable with a stub driver.
+  availability formula `driver READY AND credential present for the calling Actor AND
+  project policy permits` is queryable with a stub driver.
 - **Non-goals:** OIDC/login, RBAC engine, per-object ACL, public visibility (all still
   deferred).
 
