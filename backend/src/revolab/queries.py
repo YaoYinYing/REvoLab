@@ -13,7 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from revolab.domain.errors import NotFoundError
-from revolab.enums import RelationType, ResourceKind
+from revolab.enums import DecisionStatus, RelationType, ResourceKind
 from revolab.models import (
     ArtifactReference,
     Decision,
@@ -136,7 +136,7 @@ def object_detail(session: Session, project_id: UUID, series_id: UUID) -> dict[s
         or e.source_resource_id == series_id
     ]
 
-    decision_ids = {
+    committed_decision_ids = {
         t.decision_id
         for t in session.scalars(
             select(DecisionTarget)
@@ -148,6 +148,25 @@ def object_detail(session: Session, project_id: UUID, series_id: UUID) -> dict[s
             )
         )
     }
+
+    # Draft decisions have no materialized knowledge edges yet (commit is the
+    # promotion gate); include drafts whose working selects point at this
+    # object's series or visible revisions so the Object Detail shows them before
+    # commit. The read projection stays project-scoped and is never a write.
+    target_ids = {str(series_id)} | {str(revision_id) for revision_id in revision_ids}
+    draft_decision_ids = {
+        decision.id
+        for decision in session.scalars(
+            select(Decision).where(
+                Decision.project_id == project_id,
+                Decision.archived_at.is_(None),
+                Decision.status == DecisionStatus.DRAFT.value,
+            )
+        )
+        if any(item.get("target_id") in target_ids for item in (decision.draft_selects or []))
+    }
+
+    decision_ids = committed_decision_ids | draft_decision_ids
     decisions = [
         decision_summary(session, d)
         for d in session.scalars(select(Decision).where(Decision.id.in_(decision_ids)))
