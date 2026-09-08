@@ -24,6 +24,16 @@ def test_health_and_actor_creation(client):
     assert actor.json()["actor_id"]
 
 
+def test_actor_existence_check(client):
+    actor_id = client.post("/api/actors").json()["actor_id"]
+    found = client.get(f"/api/actors/{actor_id}")
+    assert found.status_code == 200
+    assert found.json()["actor_id"] == actor_id
+
+    missing = client.get("/api/actors/00000000-0000-4000-8000-000000000000")
+    assert missing.status_code == 404
+
+
 def test_full_vertical_slice_through_project_lens(client):
     actor_id = _actor(client)
     project = _project(client, actor_id)

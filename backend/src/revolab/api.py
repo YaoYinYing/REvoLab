@@ -22,7 +22,13 @@ from revolab.content_store import ContentStore
 from revolab.db import get_session
 from revolab.domain.errors import DomainError
 from revolab.enums import ResourceKind
-from revolab.models import ArtifactReference, GlobalProvenanceEdge, GlobalResourceRegistry, Project
+from revolab.models import (
+    Actor,
+    ArtifactReference,
+    GlobalProvenanceEdge,
+    GlobalResourceRegistry,
+    Project,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -68,6 +74,17 @@ def _content_store() -> ContentStore:
 def create_actor(session: Session = Depends(get_session)) -> schemas.ActorRead:
     actor_id = services.create_actor(session)
     return schemas.ActorRead(actor_id=actor_id)
+
+
+@router.get("/actors/{actor_id}", response_model=schemas.ActorRead)
+def get_actor_by_id(actor_id: UUID, session: Session = Depends(get_session)) -> schemas.ActorRead:
+    """Existence check for a durable opaque Actor id. Not a Project resource;
+    used by the frontend to detect and recover from a persisted id that no
+    longer exists in this backend (e.g. after a database reset)."""
+    actor = session.get(Actor, actor_id)
+    if actor is None:
+        raise HTTPException(status_code=404, detail="actor not found")
+    return schemas.ActorRead(actor_id=actor.actor_id)
 
 
 @router.post("/projects", response_model=schemas.ProjectRead, status_code=201)

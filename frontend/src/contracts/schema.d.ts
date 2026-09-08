@@ -21,6 +21,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/actors/{actor_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Actor By Id
+         * @description Existence check for a durable opaque Actor id. Not a Project resource;
+         *     used by the frontend to detect and recover from a persisted id that no
+         *     longer exists in this backend (e.g. after a database reset).
+         */
+        get: operations["get_actor_by_id_api_actors__actor_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects": {
         parameters: {
             query?: never;
@@ -1184,6 +1206,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActorRead"];
+                };
+            };
+        };
+    };
+    get_actor_by_id_api_actors__actor_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                actor_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActorRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
