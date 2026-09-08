@@ -42,7 +42,7 @@ FKs to a thin `GlobalResourceRegistry(resource_id PK, resource_kind)` spine that
 global resource row registers into (the concrete row's own primary key, inserted in the
 same transaction), and every concrete global table's primary key is **both PK and FK**
 to that registry row — so a registry row can never exist without its concrete row. A
-single relational column cannot FK polymorphically to six tables, so the registry
+single relational column cannot FK polymorphically to seven tables, so the registry
 provides one real referential identity target. `ProjectResourceLink` is **not** a
 per-object ACL; it is the statement "this Project's context includes these global
 resources."

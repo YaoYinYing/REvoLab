@@ -158,7 +158,7 @@ the old one.
 ## Minimal provenance graph (the four questions)
 
 ```text
-Why does this object exist?          → derived_from / imported_as chains (Revision → Revision) + generated_by back to producing runs + citing Decisions
+Why does this object exist?          → derived_from chains (Revision → Revision) + imported_as (ArtifactReference | ExternalReference → Revision) + generated_by back to producing runs + citing Decisions
 Where did this structure come from?  → RunReference --produced--> ArtifactReference --imported_as--> StructureRevision
 Which run produced this artifact?    → RunReference --produced--> ArtifactReference (single owning edge; direction run→artifact)
 Which evidence caused which decision?→ Decision --cites--> Evidence, then Evidence.target (polarity is an Evidence field / cited_as)

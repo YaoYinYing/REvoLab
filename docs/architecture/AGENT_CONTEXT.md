@@ -35,7 +35,7 @@ semantic-index pipeline, no generic AgentGateway, no always-on skill encyclopedi
 - **Automatic (small, structural, safe):** project identity/name + membership
   context; the scientific-object *tree skeleton* (IDs + labels + types + parent
   links only, no metadata blobs); the active object subtree (a bounded
-  ContextSelection); **reference headers** for large artifacts (id, type, provider,
+  ContextSelection); **reference headers** for large artifacts (id, type, authority,
   external id, checksum, size, content-type, version, originating run) — **never
   artifact bytes**; the few skills for the task.
 - **Explicit (only when the Agent asks or the user does):** full metadata of a

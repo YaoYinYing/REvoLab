@@ -271,8 +271,9 @@ enum via the generated contract; never duplicated by hand.
 
 ```text
 Why does this scientific object exist?
-    → derived_from / imported_as chains (Revision → Revision) + generated_by back to
-      producing runs + citing Decisions
+    → derived_from chains (Revision → Revision) + imported_as (ArtifactReference |
+      ExternalReference → Revision) + generated_by back to producing runs + citing
+      Decisions
 Where did this structure come from?
     → Run/Session --produced--> ArtifactReference --imported_as--> StructureRevision
 Which run produced this artifact?

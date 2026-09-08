@@ -224,7 +224,9 @@ These are derived from the whole design; they are the concisely load-bearing rul
 >    superseding record, never in-place.**
 > 8. **A Project is a namespace and membership boundary, not the owner of objects;**
 >    deleting a Project removes links, never the underlying objects or their
->    provenance.
+>    provenance. ScientificObjects/references and the global provenance edges (#1–8)
+>    are global; the project knowledge edges (#9–11) and Evidence/Decision are
+>    project-scoped.
 > 9. **The Agent is a consumer, not an owner — read context → reason → propose →
 >    typed tool → domain validation → persisted truth.**
 > 10. **Credentials are owned by the credential store; a provider is callable iff its

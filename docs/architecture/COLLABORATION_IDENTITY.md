@@ -92,7 +92,7 @@ everywhere).
 > *logical ownership* and the *referential identity spine*.
 
 **Referential identity spine (reviewer round 4): `GlobalResourceRegistry`.** A single
-relational column cannot FK polymorphically to six different global tables based on a
+relational column cannot FK polymorphically to seven different global tables based on a
 `resource_kind` discriminator. Global resources therefore register their identity in one
 thin spine table:
 
