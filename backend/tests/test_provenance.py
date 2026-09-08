@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import select
 
 from revolab import queries, services
-from revolab.domain.errors import AuthorizationError, ValidationError
+from revolab.domain.errors import AuthorizationError, ConflictError, ValidationError
 from revolab.models import GlobalProvenanceEdge, ProjectResourceLink, ResourceStewardship
 
 
@@ -155,6 +155,33 @@ def test_reference_identity_get_or_create_single_global_node(session):
         )
     )
     assert link is not None
+
+
+def test_reference_reuse_rejects_conflicting_immutable_metadata(session):
+    actor = services.create_actor(session)
+    first = services.create_project(session, actor, "P1")
+    second = services.create_project(session, actor, "P2")
+
+    services.create_artifact_reference(
+        session, actor, first.id, "revocompute", "out-1", version_id="1", checksum="aaa", size=3
+    )
+    # Same canonical identity, contradictory checksum — must be rejected, not
+    # silently absorbed into the first node.
+    with pytest.raises(ConflictError):
+        services.create_artifact_reference(
+            session, actor, second.id, "revocompute", "out-1", version_id="1", checksum="bbb", size=3
+        )
+
+    services.create_run_reference(
+        session, actor, first.id, "revocompute", "run-shared",
+        task_type="alphafold3", input_parameter_digest="abc",
+    )
+    # Same run identity, contradictory input digest.
+    with pytest.raises(ConflictError):
+        services.create_run_reference(
+            session, actor, second.id, "revocompute", "run-shared",
+            task_type="bioemu", input_parameter_digest="xyz",
+        )
 
 
 def test_artifact_version_identity_is_explicit(session):

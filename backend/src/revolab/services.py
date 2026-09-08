@@ -296,6 +296,12 @@ def create_run_reference(
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_run_reference(session, authority, native_id)
     if existing is not None:
+        provenance.assert_reference_compatible(
+            existing,
+            task_type=task_type,
+            input_parameter_digest=input_parameter_digest,
+            submitted_at=submitted_at,
+        )
         return _link_existing_reference(session, project_id, existing.run_id, existing)
     row = provenance.create_run_reference_row(
         session,
@@ -335,6 +341,9 @@ def create_artifact_reference(
     version_id = version_id or ""
     existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
     if existing is not None:
+        provenance.assert_reference_compatible(
+            existing, checksum=checksum, size=size, content_type=content_type
+        )
         return _link_existing_reference(session, project_id, existing.artifact_id, existing)
     row = provenance.create_artifact_reference_row(
         session,

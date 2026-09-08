@@ -61,9 +61,11 @@ removed, not shimmed.
   version_id)` on Artifact (version identity explicit; `version_id` NOT NULL,
   default `""`). Reference creation is get-or-create + link: an existing node is
   returned and linked (the second Project gains visibility, never stewardship),
-  never silently duplicated. `ExternalReference` remains an append-per-cache
-  metadata record keyed to the (already unique) `ExternalIdentity` — it is not the
-  durable identity card.
+  never silently duplicated; a **contradictory immutable assertion** against the
+  same identity (differing checksum / digest / task_type / size / content_type)
+  is rejected with `ConflictError` rather than absorbed. `ExternalReference`
+  remains an append-per-cache metadata record keyed to the (already unique)
+  `ExternalIdentity` — it is not the durable identity card.
 - **ScientificObject conceptual type is immutable**: a revision always inherits
   its Series' `object_type` (the divergent-revision code path and parameter were
   removed); a conceptual type change requires a new Series + a scientific
@@ -107,7 +109,7 @@ knowledge-edge tables). See
 
 ## Verified evidence
 
-- `pytest` (69 tests) passes: authority/roles/stewardship/tombstone/MutationGrant
+- `pytest` (70 tests) passes: authority/roles/stewardship/tombstone/MutationGrant
   (including direct leaf-mutation bypass + stale/wrong-grant rejection + the edge
   sink's registry-kind cross-check); atomic object creation; series/revision
   identity + immutability + conceptual-type immutability; revision visibility

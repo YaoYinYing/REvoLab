@@ -185,6 +185,20 @@ def find_literature_reference(
     )
 
 
+def assert_reference_compatible(row: Any, **fields: Any) -> None:
+    """Same canonical identity may be reused, but it may not silently absorb a
+    contradictory immutable assertion: a non-null disagreement with the stored
+    immutable record is a conflict, not a merge."""
+    for name, value in fields.items():
+        if value is None:
+            continue
+        current = getattr(row, name, None)
+        if current is not None and current != value:
+            raise ConflictError(
+                f"reference identity conflict: {name} differs from the existing immutable record"
+            )
+
+
 def link_series(session: Session, project_id: UUID, resource_id: UUID) -> None:
     kind = persistence.resource_kind(session, resource_id)
     if kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
