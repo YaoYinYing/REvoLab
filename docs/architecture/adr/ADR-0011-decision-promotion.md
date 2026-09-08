@@ -7,9 +7,13 @@ truth, and preventing chat from becoming project truth.
 
 ## Decision
 - **A Decision starts as `draft`**, authored by whoever (including an Agent), with its
-  cited Evidence. Status is exactly `draft | committed` (+ derived `superseded`) —
-  there is no separate `proposed`/`open`/`concluded` stored state. A draft is *in the
-  project but not project truth*.
+  cited Evidence and selected targets as **mutable draft state** (not persisted graph
+  edges yet). Status is exactly `draft | committed` (+ derived `superseded`) — there is
+  no separate `proposed`/`open`/`concluded` stored state. A draft is *in the project but
+  not project truth*.
+- **`commit` atomically freezes the statement and materializes the immutable
+  `ProjectKnowledgeEdge` rows** (`selects`, `cites`); before commit a draft's
+  statement/cites/selects may be edited freely.
 - **`commit` is a distinct, auditable domain operation** (`draft → committed`) by an
   authorized human actor or a policy-governed actor with commit authority. **This is
   the promotion gate.**

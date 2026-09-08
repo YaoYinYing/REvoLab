@@ -160,9 +160,12 @@ governance/labeling spine (held on the series row, not revisions).
 
 **Enforcement:** a content update to a referenced object is **rejected by a domain
 service** unless it produces a new revision. Versioning is **opt-in per type**.
-Revisions are immutable INSERT-only rows; a `revision_seq` orders them; the "current"
-revision is a derived pointer on the series row. This is lightweight — no event
-sourcing or audit-snapshot system.
+Revisions are immutable INSERT-only rows; a `revision_seq` orders them. The "current"
+revision is a **derived query** — latest = `max(revision_seq)`, per-Project current =
+`max(revision_seq)` over that Project's visible revisions — and an optional preferred
+pin lives on `ProjectResourceLink.preferred_revision_id`, **never** as a pointer
+column on the series row. This is lightweight — no event sourcing or audit-snapshot
+system.
 
 ---
 

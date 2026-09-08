@@ -152,6 +152,28 @@ correct and surfaced one renumber off-by-one (`supersedes` = #9, not #10) plus t
 all fixed. Final clean audit: **no P0, no P1**. Status remains **PROPOSED — pending
 human review**.
 
+### 2026-09-08 — Human review round 6 (PR #1), authority + draft-lifecycle convergence; PROPOSED pending human review
+
+The sixth review (9.6/10, REQUEST CHANGES) narrowed to three questions — who may assert
+a global fact, when does draft knowledge become immutable, where is authorization
+enforced. Landed on this branch: (1) a **per-edge creator-authority contract** is frozen
+(steward(source) + read(target) for conceptual/content edges; task-submission / import /
+provider authority for `consumed_as_input_by`/`imported_as`/`produced`; Decision author
+for #8–10); (2) **create vs mutate** split — a mutation-capable membership
+(`owner`/`member`) atomically creates Series + initial Revision + `ProjectResourceLink` +
+`ResourceStewardship`, so creation no longer circularly requires a pre-existing grant;
+(3) the acting-Actor formula `can_mutate(actor, project, resource)` is frozen; (4) an
+explicit **`MutationGrant`** (Core shared authority primitive, issued by Identity at the
+command boundary) keeps SO/EP as DAG leaves while making the enforcement point explicit;
+(5) **draft ↔ committed boundary** — a draft Decision's statement/cites/selects are
+mutable and only become immutable `ProjectKnowledgeEdge` rows at `commit`; (6) Evidence
+interpretive fields stay mutable until a **committed** Decision cites it (drafts do not
+freeze), then freeze → correction by a new Evidence row; (7) project-scoped
+Evidence/Decision creation + detail surface restored in the API contract; (8)
+SYSTEM_ARCHITECTURE Identity/Sharing diagram rewritten to the new authority model, and
+the stale `current_revision` pointer sentence removed. A fresh independent review is
+pending. Status remains **PROPOSED — pending human review**.
+
 ---
 
 A second human review again returned **REQUEST CHANGES** (still "don't merge yet",

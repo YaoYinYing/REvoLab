@@ -98,10 +98,6 @@ class Capability(Protocol):            # base
     provider_key: str
     kind: CapabilityKind               # COMPUTE | SEARCH | ARTIFACT_RESOLUTION | DESIGN | INTERACTIVE_HANDOFF
 
-class Capability(Protocol):            # base
-    provider_key: str
-    kind: CapabilityKind               # COMPUTE | SEARCH | ARTIFACT_RESOLUTION | DESIGN | INTERACTIVE_HANDOFF
-
 class ComputeCapability(Capability, Protocol):            # REvoCompute (batch)
     def list_task_kinds(self, credentials: CredentialLease) -> list[TaskKindRef]: ...
     def task_kind_schema(self, kind_id) -> JsonSchema: ...   # schema-as-data
@@ -277,7 +273,8 @@ credential rotation and role changes take effect with no migration.
   the 5 lifecycle states into **2 domain-visible states** (`REGISTERED`, `READY`),
   keeping the rest as internal startup transients that never leak into the API.
   **Add the credential concept** (`required_credential_kinds`, presence probe,
-  `credential` arg) — the single most important gap before any real driver is written.
+  `credentials: CredentialLease` arg) — the single most important gap before any real
+  driver is written.
 - **REMOVE:** lifecycle-as-domain-knowledge (no driver DB table, no STARTED/STOPPED
   in the API); no hot-unload/reactive machinery.
 

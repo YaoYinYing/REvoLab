@@ -308,25 +308,32 @@ flowchart LR
     Auth["AuthenticationIdentity<br/>(OIDC / external claim)"]
     Actor["Actor<br/>(opaque stable UUID)"]
     Mem["ProjectMembership<br/>(actor + role)"]
-    Role["Role<br/>(owner · member · viewer)"]
+    Proj["Project"]
+    Link["ProjectResourceLink<br/>(read/context visibility)"]
+    Stew["ResourceStewardship<br/>(mutation authority)"]
     Res["Resource<br/>(scientific object / reference)"]
-    Cred["ExternalProviderCredentialBinding<br/>(non-secret: actor + provider + kind + secret_ref)"]
-    Sec["Secret store<br/>(owns the secret material / API key, token)"]
+    Cred["ExternalProviderCredentialBinding<br/>(non-secret)"]
+    Sec["Secret store<br/>(owns the secret material)"]
 
     Auth -- binds to --> Actor
     Actor -- has --> Mem
-    Mem -- grants --> Role
-    Role -- grants access to project resources --> Res
+    Mem -- is in --> Proj
+    Proj -- holds --> Link
+    Link -- makes visible --> Res
+    Mem -- role + --> Stew
+    Stew -- authorizes mutation --> Res
     Actor -- owns (binding) --> Cred
     Cred -- points (secret_ref) --> Sec
-    Cred -- authorizes calling --> Res
+    Cred -- authorizes provider invocation, not resource access --> Res
 ```
 
-Authentication identity, Actor, membership, role, resource, and the external
-credential **binding** are **separate concepts**; the binding is owned by the
-Identity / Collaboration domain while the **secret material** it references is owned
-by the Secret store. Access is inherited from Project membership; no per-object ACL
-and no RBAC engine in this phase.
+Authentication identity, Actor, membership, role, resource, stewardship, and the
+external credential **binding** are **separate concepts**. The binding is owned by the
+Identity / Collaboration domain while the **secret material** it references is owned by
+the Secret store. **Read access** flows `Actor → ProjectMembership → Project →
+ProjectResourceLink → visible Resource`; **mutation** requires the membership role plus
+`ResourceStewardship`; a credential binding authorizes a **provider invocation**, never
+direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 
 ---
 

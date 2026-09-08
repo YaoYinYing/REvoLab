@@ -73,11 +73,15 @@ drift check); no manually duplicated enums. The current `App.tsx` hardcodes
 ```text
 GET/POST            /api/projects
 GET                 /api/projects/{project_id}                 → project METADATA (not the whole graph)
-GET/POST            /api/projects/{project_id}/objects         → paginated list / create (draft object; create requires stewardship)
+GET/POST            /api/projects/{project_id}/objects         → paginated list / create (mutation-capable membership; atomically creates series + initial revision + link + stewardship)
 GET                 /api/projects/{project_id}/objects/{series_id}               → object-detail aggregate (series + visible revisions + provenance + evidence + decisions)
 GET/PATCH/DELETE    /api/projects/{project_id}/objects/{series_id}               → PATCH series spine / archive — gated by ResourceStewardship
 POST                /api/projects/{project_id}/objects/{series_id}/revisions     → append an immutable revision (stewardship)
 GET                 /api/projects/{project_id}/resources/{resource_id}           → any global resource through this Project's lens
+GET/POST            /api/projects/{project_id}/evidence        → paginated list / create an evidence claim
+GET/PATCH           /api/projects/{project_id}/evidence/{evidence_id}            → PATCH interpretive fields only while uncited by a committed Decision
+GET/POST            /api/projects/{project_id}/decisions       → paginated list / create a Decision DRAFT
+GET/PATCH           /api/projects/{project_id}/decisions/{decision_id}           → PATCH allowed only while draft (statement, cites, selects)
 GET                 /api/projects/{project_id}/providers        → capability discovery (Actor + Project lens)
 GET                 /api/projects/{project_id}/providers/{key}/schema/{capability_kind}
 ```

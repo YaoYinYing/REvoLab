@@ -43,7 +43,9 @@ that the physical Relation schema not be frozen before an implementation fork.
 - **This is a LOGICAL graph contract only.** The physical Relation schema (one
   polymorphic table vs several edge-family tables; uniqueness/supersession key) is
   **deferred to the Phase-1 executable spike** — do not freeze it here.
-- **Contradiction coexists** as separate append-only Evidence; a Decision settles it.
+- **Contradiction coexists** as separate, non-cancelling Evidence rows (interpretive
+  fields mutable only until a committed Decision cites it — see `SCIENTIFIC_GRAPH.md`);
+  a Decision settles it.
 - **Checksum proves content integrity, not origin**: origin comes from the provenance
   assertion + provider identity; integrity from the checksum. The two are kept apart.
 - **Relational, no graph DB** (reaffirms ADR-0003); graph assembled at the app layer.

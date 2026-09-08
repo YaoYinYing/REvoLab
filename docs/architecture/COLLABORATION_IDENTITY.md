@@ -15,6 +15,9 @@ Role                     small enumerated set at Project level: owner · member 
 ProjectMembership        an Actor(role) within a Project; the security unit
 ProjectResourceLink      the set of global resources (objects/references) a Project's context includes + the visibility lens (see ADR-0008)
 ResourceStewardship      which steward Project (if any) may MUTATE a global resource — visibility is not stewardship
+MutationGrant            Core shared authority primitive: a pre-validated authority token
+                         (resource_id, steward_project, actor, role, purpose) issued to a
+                         domain command — SO/EP accept it without importing Identity
 ResourceOwnership        the creating Actor recorded as audit/provenance (no full ACL)
 ExternalProviderCredentialBinding  a per-(Actor, provider, credential kind) non-secret binding row authorizing a Driver; the secret material lives in the Secret store
 ```
@@ -24,9 +27,35 @@ ExternalProviderCredentialBinding  a per-(Actor, provider, credential kind) non-
   username.
 - **Visibility is not stewardship.** `ProjectResourceLink` grants *read/context*
   visibility only. Mutation of a global resource (rename, append revision, add
-  external identity, archive, create a global provenance edge about it) requires
-  `ResourceStewardship` — a separate grant naming the steward Project. A non-steward
-  Project's link is read-only by default.
+  external identity, archive) requires `ResourceStewardship` — a separate grant naming
+  the steward Project. **Creating a global provenance edge** follows the **per-edge
+  creator contract in `SCIENTIFIC_GRAPH.md`** (steward(source) for #1–4; task-submission /
+  import / provider authority for #5–7), *not* a blanket stewardship of both endpoints.
+  A non-steward Project's link is read-only by default.
+- **Creation authority vs mutation stewardship (round 6):** creating a new global
+  resource does **not** pre-exist a stewardship grant (that would be circular) — a
+  **mutation-capable membership** (`owner`/`member`, never `viewer`) in a Project
+  atomically creates, in one transaction:
+  `ScientificObjectSeries` + initial `ScientificObjectRevision` +
+  `ProjectResourceLink(Project, series)` + `ResourceStewardship(Project, series)`.
+  Thereafter, append-revision / rename / archive require that stewardship grant; global
+  edges require the per-edge authority (see `SCIENTIFIC_GRAPH.md`).
+- **Acting-Actor mutation formula (round 6, derived at the command boundary):**
+
+  ```text
+  can_mutate(actor, project, resource)
+      = ProjectMembership(actor, project).role ∈ {owner, member}
+        AND ResourceStewardship(resource).steward_project == project
+        AND project.deleted_at IS NULL
+  ```
+
+  A `viewer` in the steward Project cannot mutate; a member of a non-steward Project
+  cannot mutate even if it holds a read link.
+- **Who enforces it (round 6):** the application command layer asks Identity to issue a
+  **`MutationGrant`**; `Scientific Object` and `Evidence/Provenance` domain commands
+  accept the already-validated grant and therefore **do not import Identity** — so they
+  remain free of any Identity dependency in the DAG while the enforcement point is
+  still explicit.
 - **Access is inherited from Project membership** — one authorization vector.
   Per-object ACL is out of scope.
 - **Sharing happens at the Project level** (add a member, or a read link for another
@@ -266,11 +295,13 @@ projection behavior — the graph must never contain project knowledge whose glo
 anchors the Project cannot see.
 
 **Write side (stewardship, not projection):** the read projection above governs
-*visibility only*. *Mutation* of a global resource or a global provenance edge requires
-`ResourceStewardship` over that resource, and a global edge is created **only** through
-its typed domain operation (run import → `produced`; import command → `imported_as`;
+*visibility only*. *Mutation* of a global resource (rename/revision/external-id/archive)
+requires `ResourceStewardship` over that resource. A global provenance edge is created
+**only** through its typed domain operation with the **per-edge creator authority** from
+`SCIENTIFIC_GRAPH.md` (which is `steward(source)` for #1–4, task-submission / import /
+provider authority for #5–7) — run import → `produced`; import command → `imported_as`;
 task submission → `consumed_as_input_by`; object commands →
-`variant_of`/`represents`/`derived_from`/`evaluates`) — never a generic global relation
+`variant_of`/`represents`/`derived_from`/`evaluates` — never a generic global relation
 writer. **Visibility is not stewardship.**
 
 (Read-time projection example: Project B links global object `X` but not `Y`, a private

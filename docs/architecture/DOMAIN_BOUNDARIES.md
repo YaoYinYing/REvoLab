@@ -80,12 +80,13 @@ External systems own their capabilities and execution truth.
   - **Mutation requires stewardship:** append revision, rename, add external identity,
     archive — all require an Identity-owned `ResourceStewardship` grant over the
     object; a `ProjectResourceLink` alone is read-only visibility.
-- **Public contracts:** object create/read/version operations via the domain service
-  (create/version commands are executed under an injected `ResourceStewardship` check).
+- **Public contracts:** object create/read/version operations via the domain service;
+  mutation commands accept an already-validated `MutationGrant` (a Core shared authority
+  primitive issued by Identity at the command boundary).
 - **Dependencies:** none in Core — Scientific Object is a **global leaf**; it is
   bound into Project contexts through `ProjectResourceLink` (owned by the consuming
-  Project domain) and mutated under an injected stewardship check (the domain model
-  itself imports neither Project nor Identity).
+  Project domain) and mutated only under an injected `MutationGrant`. It imports neither
+  Project nor Identity.
 - **Non-responsibilities:** expressing scientific relationships (that is the
   graph domain's job); owning external execution state.
 
@@ -114,14 +115,19 @@ External systems own their capabilities and execution truth.
   - Provenance must remain traversable after external systems change.
   - **Global edges have no generic writer:** `produced` is created by run import,
     `imported_as` by the import command, `consumed_as_input_by` by task submission,
-    `variant_of`/`represents`/`derived_from`/`evaluates` by object commands — each
-    gated by `ResourceStewardship` where it touches a global resource.
+    `variant_of`/`represents`/`derived_from`/`evaluates` by object commands — each with
+    the **per-edge creator authority** from `SCIENTIFIC_GRAPH.md` (`steward(source)` for
+    #1–4; task-submission / import / provider authority for #5–7), never a blanket
+    stewardship of both endpoints.
   - **Project-context write-time invariant:** a project-scoped Evidence (or its
     source/target) may only reference global endpoints already visible through that
     Project's `ProjectResourceLink` set — never ghost knowledge (same write-time rule
     as the Knowledge domain's `ProjectKnowledgeEdge`).
-- **Public contracts:** evidence/reference CRUD plus provenance traversal queries.
-- **Dependencies:** Scientific Object, Project.
+- **Public contracts:** evidence/reference CRUD, typed global-edge creation commands
+  (each accepts an already-validated `MutationGrant`), plus provenance traversal queries.
+- **Dependencies:** Scientific Object, Project. (Global-edge and reference-importing
+  commands are authorized by an injected `MutationGrant`; the domain itself imports
+  neither Identity nor the grant issuer.)
 - **Non-responsibilities:** storing external execution truth; versioning external
   artifacts; being a graph database.
 
@@ -199,7 +205,10 @@ External systems own their capabilities and execution truth.
   from project membership; **read visibility (`ProjectResourceLink`) never grants
   mutation** — only `ResourceStewardship` does.
 - **Public contracts:** membership/role operations (Project consumes this contract);
-  the ownership boundary for the domain and agent authority model.
+  `ResourceStewardship` grant/transfer/freeze; and **`MutationGrant` issuance** — the
+  command boundary calls Identity to authorize a mutation, and the grant (not the
+  caller) is passed into the domain command. This is the ownership boundary for the
+  domain and agent authority model.
 - **Dependencies:** none in Core — this domain **owns ProjectMembership** and treats
   the Project only as an opaque UUID in the membership row, so it does **not** depend on
   the Project domain. (This breaks the former circular ownership: Project → Identity,

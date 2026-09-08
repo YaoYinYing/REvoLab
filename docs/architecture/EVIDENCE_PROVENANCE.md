@@ -172,12 +172,15 @@ becomes unavailable.
   contradict another of the same target)
 - `as_of`: interpretation timestamp
 
-**Contradiction:** contradictory Evidence records coexist as separate append-only
-rows. Evidence is **append-only and non-cancelling**; contradiction is a first-class
-fact, not an inconsistency to avoid. A **Decision** settles it by citing both sides
-with per-citation `cited_as` polarity and stating the resolution rationale.
-Supersession happens by recording a *newer* Decision, never by mutating or deleting
-the old one.
+**Contradiction & lifecycle:** contradictory Evidence records coexist as separate rows;
+contradiction is a first-class fact, not an inconsistency to avoid. An Evidence row is
+**mutable only while no COMMITTED Decision cites it** (see `SCIENTIFIC_GRAPH.md`): its
+`source`/`target` are immutable from creation, and its interpretive fields freeze once a
+committed Decision cites it — a draft Decision's citation does **not** freeze it.
+Correction after freeze is a **new Evidence row**, never an in-place edit. A
+**Decision** settles a contradiction by citing both sides with per-citation `cited_as`
+polarity and stating the resolution rationale; supersession happens by recording a
+*newer* Decision, never by mutating or deleting the old one.
 
 ---
 
@@ -204,7 +207,9 @@ Conclusion are **modes**, not tables:
 - A hypothesis is an Evidence with a `hypothesis` role/interpretation + a proposed test.
 - A conclusion is the *derived* current committed, not-superseded Decision on a
   question (there is no stored `status=concluded`).
-- Next actions live in `Decision.next_actions` and in a Note's free `next_actions`.
+- Next actions live in `Decision.next_actions`. A free-form **Note is deferred** — it is
+  not a canonical node and has **no durable model** in PR1 (no fields to point at); if a
+  note-like first-hand claim is needed it is modeled as an Evidence with `kind=note`.
 
 **Decision is the one first-class knowledge node** — the durable project-truth
 record with its own lifecycle.

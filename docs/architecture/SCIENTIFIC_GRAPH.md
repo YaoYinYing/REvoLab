@@ -92,14 +92,33 @@ physical shape is deferred:**
 - Whether the two share one physical table or are separate edge families is left to the
   Phase-1 spike; **ownership and lifecycle are not.**
 
-**Write authority (round 5):** global provenance edges (#1–7) are created **only** by
-typed authoritative domain operations — `produced` by run/artifact import,
-`imported_as` by the import command, `consumed_as_input_by` by task submission,
-`variant_of`/`represents`/`derived_from`/`evaluates` by their object-domain commands.
-There is **no generic `POST /relations` writer for global edges**; the mutator must hold
-the injected authority (see `ResourceStewardship` in `COLLABORATION_IDENTITY.md`).
-Project knowledge edges (#8–10) are created only through Decision domain commands with
-the project-context write-time check.
+**Write authority (round 5) + per-edge creator contract (round 6, frozen):** global
+provenance edges (#1–7) are created **only** by typed authoritative domain operations —
+there is **no generic `POST /relations` writer for global edges**. The creating command
+must present the authority below. `steward(X)` means a `ResourceStewardship` grant over
+the owning Series; `read(X)` means the endpoint is visible through the acting Project;
+provider/import task-submission authority is the typed command's own authority (see the
+authority matrix in `ADR-0013` / `AGENT_CONTEXT.md`):
+
+| relation | creator authority |
+|---|---|
+| `variant_of` (#1) | steward(source Series) + read(target Series) |
+| `derived_from` (#2) | steward(source Series) + read(target Revision, + owning Series via closure) |
+| `represents` (#3) | steward(source Series) + read(target Series) |
+| `evaluates` (#4) | steward(source Assay Series) + read(target Revision, + owning Series via closure) |
+| `consumed_as_input_by` (#5) | task-submission authority + read(input) |
+| `produced` (#6) | run/artifact import authority over the Run/Artifact refs |
+| `imported_as` (#7) | import authority + steward(target Series) |
+| `selects` / `supersedes` / `cites` (#8–10) | the Decision's authoring Actor in its Project — **frozen only at commit** (see draft lifecycle below) |
+
+For the **conceptual/content edges #1–4**, the rule of thumb is: an edge asserts a fact
+*about its source*, so the creator needs **authority over the source** and
+**readability of the target** — never stewardship of both (which would make
+cross-project references impossible). Rows #5–7 carry their own authority (task
+submission / run-import / import), stated per row. Project knowledge edges (#8–10) are
+created only through Decision domain commands with the project-context write-time check,
+and they become immutable truth **at commit** (a draft Decision's associations are
+mutable draft state, not graph edges yet).
 
 **Direction decisions (resolving prior ambiguity):**
 - **`produced`**: `Run/Session → produced → Artifact` (a run/session produces an
@@ -197,8 +216,11 @@ Evidence.target  (exactly one, required) — what the claim is about
   claim is expressed as **multiple Evidence rows** sharing an interpretation, never as
   an Evidence with many sources/targets.
 - **Immutability:** `source` and `target` are immutable once the Evidence is written.
-  Only interpretive fields (`kind`/`role`/`polarity`/`confidence`/`scope`/
-  `interpretation`) may change, and only while no Decision cites the Evidence.
+  Interpretive fields (`kind`/`role`/`polarity`/`confidence`/`scope`/`interpretation`)
+  remain mutable **until a COMMITTED Decision cites the Evidence** — a *draft* Decision's
+  citation does **not** freeze it, because a draft is not project truth yet. Once a
+  committed Decision cites it, the Evidence is frozen; correction is a **new Evidence
+  row**, never an in-place edit.
 - **`experiment` and `note` are not canonical node types.** An experiment that is the
   claim source is modeled as an Evidence with `kind=experimental`; a direct human
   observation is `kind=observation` (a `hypothesis` is an Evidence with a `hypothesis`
@@ -228,8 +250,8 @@ executable spike will decide, against a real implementation, between:
 Reasoning for deferral: a single polymorphic table tends to produce many nullable
 FK columns and weak referential integrity, and adding a node kind still needs a
 migration — true polymorphism is not gained. The likely outcome is edge-family tables
-(b), with the already-promoted `DecisionEvidence` as the natural model for the
-`cites` family. Do **not** treat either option as fixed today.
+(b), with the existing bootstrap `DecisionEvidence` composite-key join as the natural
+model for the `cites` family. Do **not** treat either option as fixed today.
 
 **Relation uniqueness vs append-only supersession** is likewise deferred. The earlier
 draft's `UNIQUE(source, target, relation_type)` conflicts with append-only
@@ -248,11 +270,31 @@ id + optional `superseded_by` — which reconciles immutability with correction.
 
 ---
 
-## Which edges are immutable
+## Which edges are immutable — including the draft/commit boundary
 
-All matrix edges are immutable once written (a provenance graph). A wrong edge is
-corrected by adding a **superseding edge** (pointing `superseded_by`) or, for the
-`cites` family, by a newer join row — never by editing or deleting the original.
+Global provenance edges (#1–7) are immutable once written. A wrong edge is corrected by
+adding a **superseding edge** (pointing `superseded_by`) — never by editing or deleting
+the original.
+
+Project knowledge edges (#8–10) have a **draft ↔ committed boundary**, not an immediate
+freeze:
+
+```text
+Draft Decision
+    statement / cites / selects    → mutable draft state (NOT persisted edges yet)
+
+commit (the authorized promotion gate)
+    ↓ atomically freezes statement AND creates the immutable
+      ProjectKnowledgeEdge rows (cites + selects)
+    ↓
+    committed Decision's edge set is immutable; correction = new Decision (supersedes)
+```
+
+A draft Decision may therefore change which Evidence it cites or which Series/Revision
+it selects **until commit**. After commit, `cites`/`selects` are immutable
+`ProjectKnowledgeEdge` rows (a `cites` correction is a newer `cited_as` join row, never
+an edit of the committed statement). This keeps "all *committed* edges are immutable"
+true while letting drafts actually be drafted.
 
 ## How relation types are extended
 

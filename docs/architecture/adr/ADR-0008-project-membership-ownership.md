@@ -59,6 +59,25 @@ steward Project. A non-steward Project's link is read-only by default. Deleting 
 steward Project does **not** delete the resource: the grant is transferred or the
 resource is frozen until transferred. **Visibility is not stewardship.**
 
+**Creation vs mutation (round 6).** Creation cannot require a pre-existing grant (the
+resource does not exist yet). A mutation-capable membership (`owner`/`member`) therefore
+atomically creates `ScientificObjectSeries` + its initial `ScientificObjectRevision` +
+`ProjectResourceLink(Project, series)` + `ResourceStewardship(Project, series)` in one
+transaction. Every later mutation of that resource uses the Acting-Actor formula:
+
+```text
+can_mutate(actor, project, resource)
+    = ProjectMembership(actor, project).role ∈ {owner, member}
+      AND ResourceStewardship(resource).steward_project == project
+      AND project.deleted_at IS NULL
+```
+
+**Enforcement layer.** The application command layer asks Identity to issue a
+**`MutationGrant`** (Core shared authority primitive); `Scientific Object` /
+`Evidence/Provenance` commands accept the pre-validated grant, so the domain models
+need not import Identity — the DAG stays honest without hiding the authorization
+dependency.
+
 **Series vs revision visibility (reviewer round 3) + the round-5 closure:**
 `scientific_object_revision` and `scientific_object_series` are **distinct** link kinds.
 Linking a series exposes the series record but does **not** auto-expose all its
