@@ -4,15 +4,23 @@ REvoLab is the scientific project and context workspace of the REvo ecosystem. I
 
 REvoLab is independent from REvoCompute and REvoDesign:
 
-- REvoLab owns projects, hierarchical scientific objects, relationships, evidence, decisions, and context.
+- REvoLab owns projects, typed scientific objects (Series/Revision), relationships, evidence, decisions, and context.
 - REvoCompute owns execution: Runner, Task, Slurm, Apptainer, and mutable run state.
 - REvoDesign owns interactive protein design and structural analysis.
 
-## Current slice
+## Current slice (Phase 1)
 
-The repository contains a Python/FastAPI backend with typed SQLAlchemy models and resource APIs for projects, hierarchical scientific objects, relations, evidence, and decisions. It also contains a React/Vite scientific workspace prototype centered on the object tree and context inspector, plus driver lifecycle primitives, Alembic configuration, PostgreSQL Compose setup, tests, and CI configuration.
+The backend implements the accepted Phase-1 architecture: a minimal authority
+substrate (`Actor`, `ProjectMembership`, `ResourceStewardship`, `MutationGrant`
+issuance), the `GlobalResourceRegistry` referential spine, typed
+`ScientificObjectSeries`/`ScientificObjectRevision`, reference identity cards
+(run/session/artifact/literature/external), the frozen edge matrix (#1-7 global
+provenance, #8-10 project knowledge), Evidence with the interpreted-claim model,
+Decision with the `draft → committed` promotion gate, and a content-addressed
+`ContentStore` (fsspec local backend). The ordinary API is project-scoped.
 
-The frontend currently uses a small fixture graph while the generated OpenAPI client is being established. It does not claim to be a production integration until contract generation and browser smoke validation are complete.
+The React/Vite frontend is still the prototype fixture workspace; it is replaced
+by generated-contract-driven UI in Phase 2.
 
 ## Development
 
@@ -22,6 +30,8 @@ Backend:
 cd backend
 uv sync --extra dev
 uv run pytest
+uv run ruff check backend
+uv run mypy
 uv run uvicorn revolab.main:app --app-dir src --reload
 cd ..
 ```
@@ -57,16 +67,13 @@ alembic check
 REvoLab owns scientific context and relationships; REvoCompute, REvoDesign, and
 external providers own their capabilities and execution truth. The design is a
 relational scientific graph over typed scientific objects, evidence/provenance,
-and decisions, accessed through domain services and capability-neutral providers.
+and decisions, accessed through typed domain services behind a project-scoped API.
 
-The proposed top-level architecture lives in `docs/architecture/` — start with
+The accepted architecture lives in `docs/architecture/` — start with
 `SYSTEM_ARCHITECTURE.md` (domains + diagrams) and `DOMAIN_BOUNDARIES.md`; see
-`IMPLEMENTATION_ROADMAP.md` for the staged implementation plan and the ADRs under
-`docs/architecture/adr/`. `IMPLEMENTATION_STATE.md` records verified implementation
-state only. Per the Harness authority model, this architecture is **Proposed — pending
-human review** (PR #1); it becomes `Accepted` only after a human approves/merges.
-Note: the current backend/frontend remain the prototype the proposed design overturns
-(see the roadmap's bootstrap classification).
+`IMPLEMENTATION_ROADMAP.md` for the staged implementation plan, `SCIENTIFIC_GRAPH.md`
+for the single edge matrix, and the ADRs under `docs/architecture/adr/`.
+`IMPLEMENTATION_STATE.md` records verified implementation state only.
 
 ## License
 

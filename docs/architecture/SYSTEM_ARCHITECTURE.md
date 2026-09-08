@@ -1,6 +1,6 @@
 # REvoLab System Architecture
 
-> **Status: Proposed — pending human architecture review.** Reconciled from eight
+> **Status: Accepted** (merged into `main`). Reconciled from eight
 > parallel design analyses. Per the Harness authority model only a human (you) may
 > accept or reject the top-level architecture; the `Accepted` status is set only
 > after this PR is merged / you approve.

@@ -1,6 +1,6 @@
 # Workspace Information Architecture & API Contract
 
-> **Status: Proposed — pending human architecture review.** Wireframe-level
+> **Status: Accepted** (merged into `main`). Wireframe-level
 > workspace IA and the API/frontend contract,
 > reconciled from Subagent D.
 

@@ -2,271 +2,119 @@
 
 Last verified: 2026-09-08
 
-## Exists
+This file records actual, machine-verified repository state — not future plans.
 
-- Standalone repository metadata for a Python 3.12+ package with FastAPI, Pydantic Settings, SQLAlchemy, Alembic configuration, PostgreSQL driver, Uvicorn, and development tooling.
-- SQLAlchemy mappings for Project, hierarchical ScientificObject, Relation, Evidence, Decision, and DecisionEvidence.
-- Pydantic request/response models with object-tree parent references, provider/external-ID pairing validation, and relation self-reference validation.
-- FastAPI health endpoint and project/object/relation/evidence/decision creation/list/graph endpoints.
-- Application-scoped driver protocol, lifecycle states, collision handling, entry-point discovery, and explicit stop behavior.
-- Focused backend API and driver lifecycle tests for the project graph, hierarchy boundaries, negative relation/reference cases, and startup rollback: 10 tests pass.
-- Backend Ruff, mypy, Alembic drift check, SQLite migration apply, and Python wheel build pass in the local `.venv`.
-- Alembic `upgrade head` and `check` verified against PostgreSQL 16 (via docker compose) with zero drift; the full project/object/relation/evidence/decision vertical slice runs end-to-end on PostgreSQL, and duplicate decision–evidence pairs are rejected by the composite primary key. This uncovered and fixed a schema drift: the initial migration/graph mismatch on PostgreSQL (original `DecisionEvidence` declared a redundant separate `UniqueConstraint` over its composite primary key columns, which autogenerate saw as an added constraint on PostgreSQL but not SQLite); the redundant constraint was removed from both the model and the root migration so `alembic check` reports no drift on both SQLite and PostgreSQL.
-- React/Vite frontend prototype with a hierarchical object tree, scientific workspace, relation/evidence trail, decision inspector, responsive layout, and one component test; frontend typecheck, test, and production build pass.
-- PostgreSQL Docker Compose service, Alembic environment configuration, GitHub Actions CI configuration, architecture documentation, ADR directory, agent conventions, and Apache-2.0 licensing files.
-- Harness operating model control plane: `docs/agents/HARNESS_OPERATING_MODEL.md` defines the four loops (agent/goal/subagent-workflow/Ralph), the Primary Integrator role, the skill taxonomy, the safety/permission plane (default `workspace-write` + approval), and the 7-phase ODDRIVC workflow. `CLAUDE.md` carries only the short invariants derived from it.
-- Project skills relocated from the top-level `skills/` tree into `.agents/skills/` (the canonical DSH skill root) and verified to load: `project-architecture`, `scientific-object-model`, `provenance-lineage`, `decision-record`, `project-context`, `artifact-inspection`, `driver-development`, `project-plugin-development`, plus the new constitutional `engineering-workflow` skill. The `engineering-workflow` skill (v0.2.0) carries both the ODDRIVC procedure and the long-running refactor protocol (three sources of truth, persistent checklist, migration-first deletion, vertical-slice migration, executable acceptance, DESIGN/EXECUTION/MACHINE definition of done); a draft root-level `LONG_TASK_HANDLING.md` was composed into that skill and removed to avoid a second source of truth.
-- GitHub Actions CI is green on the architecture PR (head `f8f21f2`, the round-7 final commit; CI runs #47–#48 all green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
+## Status
 
-## Not yet verified
+The accepted architecture (merged into `main`, commit `a58e8f4`) is implemented as
+Phase 1 ("Scientific context core + minimal authority substrate"). The earlier
+backend/frontend prototype has been replaced; obsolete prototype paths were
+removed, not shimmed.
 
-- Generated OpenAPI TypeScript client and frontend/backend live integration; the frontend currently uses a fixture graph.
-- Browser smoke testing.
-- Authentication, project membership, artifact storage, provider drivers, and production deployment.
+## Implemented (Phase 1)
 
-This file records actual repository state, not future architecture plans.
+- **Minimal authority substrate** (`revolab/domain/identity.py`):
+  `Actor`, `ProjectMembership` (owner/member/viewer), `ResourceStewardship`
+  (transfer/freeze), and `MutationGrant` issuance via the frozen Acting-Actor
+  formula `membership.role ∈ {owner,member} AND steward_project == project AND
+  project.deleted_at IS NULL`. Creation is distinct from mutation: a
+  mutation-capable membership atomically creates Series + initial Revision +
+  `ProjectResourceLink` + `ResourceStewardship`.
+- **Domain layering (DAG honest).** Authority is derived only in
+  `revolab/domain/identity.py` at the command boundary (`revolab/services.py`),
+  which issues `MutationGrant` values (`revolab/domain/grants.py`) and delegates
+  identity-free writes to `revolab/domain/scientific_object.py`,
+  `revolab/domain/provenance.py`, and `revolab/domain/knowledge.py` — none of
+  which import Identity. `revolab/domain/persistence.py` holds the shared,
+  authority-free registry/link/stewardship/edge primitives.
+- **Read-side authorization projection.** Reads through a Project require
+  `readable_membership` (any role in an active Project); a non-member or a
+  tombstoned Project is rejected, so global identity is not global readability.
+  Granting the read lens (`link_series`) requires a mutation-capable membership
+  in the target Project.
+- **Global identity spine** (`revolab/models.py`): `GlobalResourceRegistry` with
+  every concrete global table PK = FK to `resource_id`; `ProjectResourceLink`
+  carries read/context visibility + folder placement + optional
+  `preferred_revision_id` (no per-resource role, no `resource_kind` duplicate).
+- **ScientificObject** Series + Revision: `series_id` vs `revision_id` are
+  distinct; no `current_revision_id` (derived `max(revision_seq)`); typed payload
+  validated by the Core type registry (`revolab/domain/types_registry.py`) and
+  stored as schema-versioned JSONB — no unvalidated JSON.
+- **Reference identity cards**: `RunReference`, `SessionReference`,
+  `ArtifactReference`, `LiteratureReference`, `ExternalReference`, plus the
+  `ExternalIdentity` registry and `ScientificObjectExternalIdentity` mapping.
+- **Frozen edge matrix**: `GlobalProvenanceEdge` (#1-7) with registry-FK
+  endpoints + kind columns, immutable, corrected via `superseded_by_id`
+  (never archived by a Project); `DecisionEvidence` (#10 cites, with `cited_as`),
+  `DecisionTarget` (#8 selects), `DecisionSupersedes` (#9, 0..1-out/0..1-in).
+  Edges are created only by typed domain commands with per-edge authority — there
+  is no generic relation writer. `generated_by` is a derived traversal
+  (`revolab/queries.py`), not persisted.
+- **Evidence**: interpreted claim with immutable source/target and mutable
+  interpretive fields; freeze is derived (committed Decision cites it or another
+  Evidence targets it), correction is a new Evidence row.
+- **Decision**: `draft → committed` promotion gate; `commit` atomically freezes
+  the statement and materializes the immutable knowledge edges; committed
+  Decisions are superseded, never edited.
+- **Project deletion** = tombstone: hard-delete links/memberships, soft-archive
+  Evidence/Decisions/knowledge edges, transfer-or-freeze stewardship; global
+  resources and global provenance edges survive.
+- **`ContentStore`** (`revolab/content_store.py`): immutable, content-addressed
+  `put`/`get` over an fsspec local backend; internal artifacts are
+  `ArtifactReference(authority=revolab)`.
+- **Project-scoped API** (`revolab/api.py`, `revolab/schemas.py`): project CRUD +
+  membership, object Series/Revision + import + external identity, typed
+  per-edge endpoints, reference creation + ContentStore upload/resolve, evidence,
+  decision draft/commit/supersede, bounded graph query, and the object-detail
+  aggregate. Mutations require an `X-Actor-Id` header (real auth remains
+  deferred).
 
-## 2026-09-07 — Architecture design proposal (pending human review)
+## Physical-representation spike
 
-Delivered a reconciled top-level architecture **proposal** (see `docs/architecture/`
-and ADRs 0008–0014). **Status: PROPOSED, not approved** — per the Harness authority
-model only the human (via PR review/merge) can accept or reject the top-level
-architecture. The current backend/frontend remain the prototype the proposal
-overturns.
+Recorded in **ADR-0015**: typed JSONB payload (Core type registry) and one edge
+table per frozen ownership class (`global_provenance_edges` + the project
+knowledge-edge tables). See
+`docs/architecture/adr/ADR-0015-phase1-physical-representation.md`.
 
-Produced:
-- 10 documents in `docs/architecture/`: SYSTEM_ARCHITECTURE, DOMAIN_BOUNDARIES,
-  SCIENTIFIC_OBJECT_MODEL, SCIENTIFIC_GRAPH, EVIDENCE_PROVENANCE,
-  PROVIDER_CAPABILITIES, AGENT_CONTEXT, COLLABORATION_IDENTITY,
-  WORKSPACE_INFORMATION_ARCHITECTURE, IMPLEMENTATION_ROADMAP.
-- 7 new ADRs (0008–0014): project-membership ownership; typed object model;
-  provenance graph; decision promotion; provider/capability; agent-as-consumer +
-  authority; generated contract.
-- `CLAUDE.md` gained the 10 load-bearing architecture invariants (§ REvoLab
-  architecture invariants).
-- Eight parallel read-only subagent analyses (A–H) fed the reconciliation; an
-  independent reviewer then audited the final documents for complexity failure modes
-  and cross-document consistency. The review found 16 failure modes (15 RESOLVED,
-  1 PARTIAL at the time) and 6 internal-consistency contradictions; the integrator
-  resolved all six (decision promotion verb → `commit`; canonical `RelationType`
-  closed enum incl. `evaluates`/`selects` — `generated_by` is now a derived traversal,
-  not an enum member; generic-Relation polymorphic
-  target; added `hypothesis` evidence role; OpenBio cache defined as identity +
-  validated metadata with no snapshot copy; SessionReference/ExternalReference added
-  to the canonical node set and import unified on the `imported_as` edge with no
-  separate ImportRecord node) and made DoD-18 explicit in IMPLEMENTATION_ROADMAP.
-- The superseded bootstrap docs (`overview.md`, `domain-model.md`, `drivers.md`,
-  `evidence-and-lineage.md`, `agent-and-skills.md`) were reduced to thin pointers to
-  the proposed documents to avoid dual sources of truth; `reference-study.md` remains
-  the external-reference analysis.
+## Verified evidence
 
-### 2026-09-07 — Human review REQUEST CHANGES (PR #1), being addressed
+- `pytest` (50 tests) passes: authority/roles/stewardship/tombstone/MutationGrant;
+  atomic object creation; series/revision identity + immutability; revision
+  visibility closure; typed-payload validation; ProjectResourceLink read
+  visibility != stewardship; per-edge authority + endpoint matrix + no self-edge +
+  generated_by; Evidence freeze and ghost-knowledge rejection; Decision draft
+  mutability / commit atomicity / committed immutability / supersede (only a
+  committed Decision may supersede); Evidence revision-target kind validation;
+  read-side membership rejection; ContentStore byte identity; project-scoped API
+  vertical slice.
+- `ruff check backend` and `mypy` (strict) pass.
+- Migration: the prototype root migration was squashed into one clean root
+  migration `9f115cb60074` (no backward-compat requirement). `alembic upgrade
+  head` + `alembic check` report **no drift** on SQLite and on a **clean
+  PostgreSQL 16** database; a full object→revision→evidence→decision→commit
+  vertical slice was smoke-run against PostgreSQL and committed successfully.
+- Frontend gates still pass: `npm run typecheck`, `npm run test`, `npm run build`
+  (the fixture frontend is untouched and remains a Phase-2 replacement target).
 
-A human reviewer returned **REQUEST CHANGES** on the proposal (not merge). The review
-confirmed ~80% of the top-level direction but required converging the remaining
-"two-truths" before Phase 1 writes a migration. Its findings (architecture
-authority/status language; global-resource vs project-scope persistence mapping;
-object conceptual-identity vs revision-identity; a single canonical edge endpoint
-matrix incl. the `produced`/`imported_as` direction contradiction; Evidence as
-source+target with one polarity truth; freezing only the logical graph contract and
-deferring physical Relation persistence to a Phase-1 spike; Relation uniqueness vs
-append-only correction; authority/namespace vs resolver/provider split;
-Actor-contextual provider availability; narrowing promotion to the Decision
-draft→commit gate; unifying lifecycle/API command model; checksum-vs-origin
-semantics; restoring short Engineering principles to CLAUDE.md; making Ralph
-conditional) are being folded into the documents on this branch. Status remains
-PROPOSED until the human accepts.
+## Removed prototype paths
 
-### 2026-09-07 — Human review round 2 (PR #1), convergence addressed; PROPOSED pending human review
+- Old `ScientificObject` self-tree (`parent_id`) and `metadata_json` blob.
+- `Evidence.provider`/`external_id` + `evidence_type` conflation.
+- Immediate `POST /decisions`-as-truth; generic `POST /relations` writer;
+  free-string relation/evidence/status columns.
+- Old `cascade="all, delete-orphan"` ownership semantics (replaced by the
+  three-class lifecycle).
+- Checked-in `revolab.db` SQLite artifacts at repo root and under `backend/`
+  (now gitignored via `*.db`), and the prototype root Alembic migration.
+- Hardcoded CORS origin made configurable (`REVOLAB_CORS_ORIGINS`).
 
-### 2026-09-08 — Human review round 3 (PR #1), final convergence: four P1 constitution blockers closed; PROPOSED pending human review
+## Known deferrals (explicit, not silently postponed)
 
-The third human review rated the PR 9.3/10 and said the remaining work is the final
-convergence — close four constitution blockers, clear stale text, delete the spike
-brief, refresh CI evidence. All four blockers are now closed on this branch: (1)
-organization state is fully project-local — the ScientificObject universal spine no
-longer carries `organization_anchor`; placement is a folder/container annotation on
-`ProjectResourceLink`, owned by the Project domain; (2) `ProjectResourceLink`
-referential identity is realizable — a thin `GlobalResourceRegistry(resource_id PK,
-resource_kind)` spine provides the single-column FK target (no polymorphic FK);
-(3) graph edge ownership/lifecycle is fixed — `GlobalProvenanceEdge` (#1–7, owned by
-Evidence/Provenance, never Project-archived) vs `ProjectKnowledgeEdge` (#8–10, owned by
-Knowledge/Decision, archived with Decision/Evidence); (4) the canonical edge matrix
-freezes Series vs Revision endpoints — conceptual semantic edges address Series,
-content/provenance edges address Revision, Decision targets are explicitly typed.
-Also cleared: stale Provider-owned Tool/Credential text in DOMAIN_BOUNDARIES; the
-container guardrail now requires `docker compose config` inspection (policy inspects the
-effective config, not the filename); the package-install boundary is now
-"trusted-manifest-baseline unchanged vs changed" (not "existing dep vs new dep");
-`SPIKE_PR1_BRIEF.md` deleted. CI evidence refreshed to head `18d1bc9` (runs #19–#20
-green). A fresh independent architecture review found the four P1 blockers CLOSED with
-no new P1. Status remains **PROPOSED — pending human review**.
+- Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
+- Provider/Driver/Capability/credential material (Phase 3); generated
+  OpenAPI→TypeScript client + real frontend integration (Phase 2). The fixture
+  frontend still builds green.
 
-### 2026-09-08 — Human review round 4 (PR #1), internal contradictions closed; PROPOSED pending human review
+## Working set
 
-The fourth review rated the PR ~9.5/10 and found no new subsystems needed; it flagged
-seven internal contradictions the round-3 fixes had introduced, and said they must close
-before approval. All seven are now closed: (1) `ProjectResourceLink` no longer stores
-`resource_kind` (the kind is joined from the registry) and every concrete global table
-PK is also an FK to `GlobalResourceRegistry.resource_id`; (2) the one-directional
-revision⇒series visibility closure is frozen (revision visible ⇒ owning series visible;
-series visible ⇏ revisions visible; no sibling auto-exposure); (3) a write-time
-project-context visibility invariant forbids ghost knowledge in
-Evidence/Decision/ProjectKnowledgeEdge; (4) provenance single truth — RunReference is an
-identity card and input/output/originating-run are derived aggregate fields over the
-edges, not persisted columns; (5) the compute input contract is closed
-(`consumed_as_input_by` accepts `ScientificObjectRevision | ArtifactReference`;
-`ComputeCapability.submit` takes `inputs: [InputBinding]`); (6) the roadmap is reordered
-so an Identity foundation precedes Provider integration (7 phases); (7) `ExternalIdentity`
-is the single external-identity registry and `ExternalReference` holds an
-`external_identity_id` FK plus cache metadata. Also: `version` removed from the series
-spine, and the approved dependency baseline is defined as a digest (future policy note).
-A fresh independent architecture review found all seven CLOSED with **no new P0/P1**.
-Status remains **PROPOSED — pending human review**.
-
-### 2026-09-08 — Human review round 5 (PR #1), resource authority / provenance single-truth / harness enforcement; PROPOSED pending human review
-
-The fifth review (9.5/10, REQUEST CHANGES) found the design had matured enough to expose
-second-layer governance issues, and asked for a narrow convergence: resource authority,
-provenance single-truth, and harness enforcement boundaries. Landed on this branch: (1)
-**write authority** — `ResourceStewardship` (Identity-owned) separates mutation from
-read visibility; `ProjectResourceLink` is read-only context, and global provenance edges
-are created **only** by typed authoritative domain operations (no generic global relation
-writer); (2) **`current_revision_id` removed** from the series — "current" is derived
-(`max(revision_seq)`, per-Project over visible revisions, with an optional
-`preferred_revision_id` pin on `ProjectResourceLink`); (3) **`generated_by` demoted to a
-derived traversal** (`Revision ←imported_as← Artifact ←produced← Run/Session`), and the
-matrix renumbered to `GlobalProvenanceEdge` #1–7 + `ProjectKnowledgeEdge` #8–10; (4)
-**Harness** — two-layer architecture authority (implementation decisions within accepted
-ADRs = Primary; constitutional changes = human) and an explicit `SubagentGrant` that must
-be mapped by the subagent provider (read-only/reject otherwise); (5) **project-scoped
-API lens** as the ordinary workspace surface; (6) **CredentialLease/InvocationContext**
-last-mile secret model (ephemeral lease, plural credential kinds); (7) **`ContentStore`**
-byte-ownership boundary (fsspec; internal artifacts = `authority=revolab`);
-(8) `GlobalResourceRegistry` declared a Core shared identity primitive with honest
-subtype-integrity wording. P2s: ScientificObject physical storage deferred to the Phase-1
-spike (typed JSONB vs joined tables), ExternalIdentity mapping is a global assertion vs
-project interpretation, AGENT_CONTEXT converged to SeriesRef/RevisionRef, ledger/PR body
-swept to 7 phases. A fresh independent architecture review found the round-5 closures
-correct and surfaced one renumber off-by-one (`supersedes` = #9, not #10) plus two P2s —
-all fixed. Final clean audit: **no P0, no P1**. Status remains **PROPOSED — pending
-human review**.
-
-### 2026-09-08 — Human review round 6 (PR #1), authority + draft-lifecycle convergence; PROPOSED pending human review
-
-The sixth review (9.6/10, REQUEST CHANGES) narrowed to three questions — who may assert
-a global fact, when does draft knowledge become immutable, where is authorization
-enforced. Landed on this branch: (1) a **per-edge creator-authority contract** is frozen
-(steward(source) + read(target) for conceptual/content edges; task-submission / import /
-provider authority for `consumed_as_input_by`/`imported_as`/`produced`; Decision author
-for #8–10); (2) **create vs mutate** split — a mutation-capable membership
-(`owner`/`member`) atomically creates Series + initial Revision + `ProjectResourceLink` +
-`ResourceStewardship`, so creation no longer circularly requires a pre-existing grant;
-(3) the acting-Actor formula `can_mutate(actor, project, resource)` is frozen; (4) an
-explicit **`MutationGrant`** (Core shared authority primitive, issued by Identity at the
-command boundary) keeps SO/EP as DAG leaves while making the enforcement point explicit;
-(5) **draft ↔ committed boundary** — a draft Decision's statement/cites/selects are
-mutable and only become immutable `ProjectKnowledgeEdge` rows at `commit`; (6) Evidence
-interpretive fields stay mutable until a **committed** Decision cites it (drafts do not
-freeze), then freeze → correction by a new Evidence row; (7) project-scoped
-Evidence/Decision creation + detail surface restored in the API contract; (8)
-SYSTEM_ARCHITECTURE Identity/Sharing diagram rewritten to the new authority model, and
-the stale `current_revision` pointer sentence removed. A fresh independent architecture
-review verified all eight items and found one P1 (a leftover blanket "global-edge-create
-requires stewardship" that contradicted the per-edge table — reconciled to the table)
-plus six P2s — all fixed. Final clean audit: **no P0, no P1**. Status remains
-**PROPOSED — pending human review**.
-
-### 2026-09-08 — Human review round 7 (PR #1), final executable-authority patch; PROPOSED pending human review
-
-The seventh and final review (9.8/10) found the top-level architecture accepted and
-named a single merge blocker plus small cleanups, recommending merge after this patch
-with no further architecture review. Landed: (1) **Roadmap phase ordering fixed** —
-Phase 1 is now "Scientific context + minimal authority substrate" (`Actor`,
-`ProjectMembership`, `ResourceStewardship`, `MutationGrant` issuance), so Phase-1 object
-creation is executable against the real authority model; Phase 3 is now "Provider
-identity foundation" (`ExternalProviderCredentialBinding`, Secret-store boundary,
-`CapabilityAvailability`); (2) **`ProjectResourceLink.role?` removed** — membership role
-is the single authorization-role truth; the link has no per-resource role (any future
-scientific qualifier is a separate non-authorizing field); (3) **global object search
-explicitly authorization-filtered** (union of resources visible through the Actor's
-Projects, never a bare global `SELECT`); (4) two Phase-1 acceptance rules added —
-Evidence freezes once a committed Decision cites it **or** another Evidence targets it,
-and stewardship transfer/freeze requires project owner + approval. Ledger swept to the
-current head; outdated Codex threads resolved. **Final clean audit: no P0, no P1.**
-Status remains **PROPOSED — pending human review**.
-
----
-
-A second human review again returned **REQUEST CHANGES** (still "don't merge yet",
-~80–85% of direction right). Its 12-plus findings have all converged on this branch:
-(1) project-scoped authorization projection (`Actor → ProjectMembership →
-ProjectResourceLink → visible resource → visible edge`) with global-identity !=
-global-readability, and `ProjectObjectMembership` renamed `ProjectResourceLink`
-(ADR-0008, COLLABORATION_IDENTITY); (2) SQL-valid Project deletion via tombstone
-(`deleted_at`), hard-deleting active links and archiving Evidence/Decision, never
-hard-deleting a Project row; (3) `SCIENTIFIC_GRAPH.md` as the single source of graph
-truth (wire value standardized to `consumed_as_input_by`, SYSTEM diagram direction
-fixed, and IMPLEMENTATION_ROADMAP no longer claims the stale `UNIQUE(project,…)` or a
-"Decided" Generic-Relation target — physical relation shape deferred to the Phase-1
-spike); (4) a frozen Evidence association contract (legal source/target kinds incl.
-experiment/note as source, 1:1 cardinality, immutability); (5) one dependency DAG with
-`A --> B` meaning "A imports/consumes B's public contract", shared by
-DOMAIN_BOUNDARIES and SYSTEM_ARCHITECTURE; (6) `ProviderRuntimeHealth`
-(READY/DEGRADED/UNREACHABLE) split from derived, never-stored
-`CapabilityAvailability(actor,project)` (AVAILABLE/CREDENTIAL_MISSING/NOT_AUTHORIZED/
-PROVIDER_UNAVAILABLE); (7) Harness step 7 renamed `INDEPENDENT REVIEW` with Ralph only
-on explicit human request; (8) container-engine guardrails (docker = privileged
-external capability, not a workspace write); (9) frozen `ScientificObjectSeries.id`
-(`series_id`) / `ScientificObjectRevision.id` (`revision_id`), no ambiguous
-`ScientificObject.id`; (10) `.agents/skills/` now matches the documented skill list by
-adding `architecture-review` and `security-boundaries`; (11) clean-dependency-install
-and full hosted-CI moved to verified (GHA green); (12) the five superseded pointer
-files deleted. A fresh independent architecture review follows. Status remains
-**PROPOSED — pending human review**.
-
-Deliberately NOT implemented (deferred by the design: Phases 1–7 in
-IMPLEMENTATION_ROADMAP): real auth/identity tables, real REvoCompute/REvoDesign/
-OpenBio drivers, agent chat UI, typed-object migration of the backend, generated
-TypeScript client. Backend tests (pytest) and frontend typecheck/test/build still
-pass on the prototype (unchanged this phase).
-
-### 2026-09-08 — Ralph consistency loop round 1 (PR #1): zero P0/P1 remain; PROPOSED pending human review
-
-A fresh-agent (Ralph) consistency loop audited the proposed architecture against its
-canonical documents with four independent read-only auditors (object/graph/provenance;
-Project/registry/visibility; Provider/Identity/Agent/credentials; harness safety +
-roadmap). No new subsystem or concept was added — the round only removed contradictions
-so each concept has one canonical answer. Zero P0 and eight P1 findings were closed,
-plus the cheap P2s:
-
-- `supersedes` is an edge (`ProjectKnowledgeEdge` #9), not a stored `supersedes_id`
-  self-FK; `superseded` is a derived status (COLLABORATION_IDENTITY).
-- Series vs Revision endpoint wording: conceptual semantic relations address
-  `series_id`, content/provenance relations address `revision_id`; an observation maps
-  to `kind=observation` (SCIENTIFIC_OBJECT_MODEL, SCIENTIFIC_GRAPH).
-- Ownership wording: Project owns `ProjectResourceLink`, not membership
-  (SYSTEM_ARCHITECTURE, DOMAIN_BOUNDARIES); the credential binding is
-  `(actor_id, provider_key, kind, secret_ref)` and Actor-scoped, not project-local
-  (COLLABORATION_IDENTITY).
-- Provider callability formula now includes "for the calling Actor" and "project policy
-  permits" in every document that states it (SYSTEM_ARCHITECTURE, DOMAIN_BOUNDARIES,
-  IMPLEMENTATION_ROADMAP), matching CLAUDE.md invariant #10.
-- Cheap P2s: `ArtifactReference --consumed_as_input_by--> Run/Session` added to the
-  SYSTEM_ARCHITECTURE diagram; Evidence `cited_as` vs `polarity` value sets pinned;
-  ADR-0008 Project-deletion step now archives `ProjectKnowledgeEdge`;
-  "import/promotion boundary" renamed "import boundary"; IMPLEMENTATION_ROADMAP final
-  invariants re-synced to CLAUDE.md; the durable-record/node-category wording aligned
-  with SCIENTIFIC_GRAPH's nine-node list.
-
-Two follow-up fresh verification passes then caught and closed two further P1s and the
-remaining cheap P2s: `derived_from` is Revision→Revision only (never a Series endpoint)
-and `imported_as` is `ArtifactReference | ExternalReference → Revision` (the
-"why does this object exist" gloss no longer reads `imported_as` as Revision→Revision);
-the GlobalResourceRegistry off-by-one is "seven" global tables; the decision-log facet is
-"draft / committed / superseded"; and the roadmap final invariant #8 now carries the
-global-vs-project-scoped split.
-
-A final fresh audit pass (two independent read-only verifiers) found **NO P0 and NO P1**
-on the pushed consistency head `f59fae2`. CI green on that head (runs #33–#34). Status
-remains **PROPOSED — pending human review**.
+- Added dependencies: `fsspec` (ContentStore), `python-multipart` (artifact upload).

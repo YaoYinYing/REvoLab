@@ -1,6 +1,6 @@
 # Provider & Capability Architecture
 
-> **Status: Proposed — pending human architecture review.** Defines Provider /
+> **Status: Accepted** (merged into `main`). Defines Provider /
 > Driver / Capability / Tool / Credential,
 > capability discovery, schema-as-data, failure handling, and the REvoCompute /
 > REvoDesign / OpenBio integration contracts. Reconciles Subagents B and G.

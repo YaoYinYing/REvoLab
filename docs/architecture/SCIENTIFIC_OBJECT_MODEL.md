@@ -1,6 +1,6 @@
 # Scientific Object Model
 
-> **Status: Proposed — pending human architecture review.** Reconciles the
+> **Status: Accepted** (merged into `main`). Reconciles the
 > Scientific Object domain from first
 > principles. Replaces the bootstrap's single-table "enum + JSON" model.
 

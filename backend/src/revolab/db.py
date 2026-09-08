@@ -1,6 +1,7 @@
 from collections.abc import Generator
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import JSON, Engine, create_engine
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from revolab.config import get_settings
@@ -8,6 +9,10 @@ from revolab.config import get_settings
 
 class Base(DeclarativeBase):
     pass
+
+
+# JSON on SQLite, JSONB on PostgreSQL: one declared type, no backend drift.
+JSONType = JSON().with_variant(JSONB(), "postgresql")
 
 
 def build_engine(database_url: str | None = None) -> Engine:

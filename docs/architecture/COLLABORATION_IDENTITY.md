@@ -1,6 +1,6 @@
 # Identity, Collaboration, Persistence, Lifecycle & Audit
 
-> **Status: Proposed — pending human architecture review.** Reconciles
+> **Status: Accepted** (merged into `main`). Reconciles
 > identity/sharing, persistence, lifecycle/deletion,
 > and the event/audit posture from Subagent F.
 

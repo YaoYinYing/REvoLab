@@ -1,6 +1,6 @@
 # Domain Boundaries
 
-> **Status: Proposed — pending human architecture review.** Defines each
+> **Status: Accepted** (merged into `main`). Defines each
 > architectural domain — purpose, owned
 > concepts, owned mutable state, invariants, public contracts, dependencies, and
 > explicit non-responsibilities — plus the Project boundary decision.

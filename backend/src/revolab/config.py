@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./revolab.db"
     app_name: str = "REvoLab"
     environment: str = "development"
+    # Local ContentStore root (fsspec local backend). Immutable byte artifacts.
+    content_root: str = ".revolab-content"
+    # Comma-separated CORS origins (configurable, not a hardcoded asset host).
+    cors_origins: str = "http://localhost:5173"
 
 
 @lru_cache
