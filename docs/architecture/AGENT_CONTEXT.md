@@ -1,6 +1,6 @@
 # Agent Context & Skills
 
-> **Status: Proposed — pending human architecture review.** Defines the Agent as a
+> **Status: Accepted** (merged into `main`). Defines the Agent as a
 > *consumer* (never an owner) of project
 > truth, the context/selection/builder abstractions, the promotion loop, the skills
 > architecture, and the safety/authority model.

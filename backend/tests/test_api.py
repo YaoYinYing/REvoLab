@@ -1,141 +1,196 @@
-from uuid import uuid4
+"""HTTP vertical slice over the project-scoped API surface."""
+
+import io
+
+from revolab.content_store import ContentStore
 
 
-def test_health(client):
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+def _headers(actor_id: str) -> dict[str, str]:
+    return {"X-Actor-Id": actor_id}
 
 
-def test_project_graph_vertical_slice(client):
-    project = client.post("/api/projects", json={"name": "T5alphaH Engineering"}).json()
-    project_id = project["id"]
-    protein = client.post(
-        f"/api/projects/{project_id}/objects",
-        json={"name": "T5alphaH", "object_type": "protein"},
-    ).json()
-    variant = client.post(
-        f"/api/projects/{project_id}/objects",
-        json={"name": "L72M/Q122A", "object_type": "variant"},
-    ).json()
-    relation = client.post(
-        f"/api/projects/{project_id}/relations",
-        json={
-            "source_id": variant["id"],
-            "target_id": protein["id"],
-            "relation_type": "variant_of",
-        },
+def _actor(client) -> str:
+    return client.post("/api/actors").json()["actor_id"]
+
+
+def _project(client, actor_id: str, name: str = "P") -> dict:
+    return client.post("/api/projects", json={"name": name}, headers=_headers(actor_id)).json()
+
+
+def test_health_and_actor_creation(client):
+    assert client.get("/health").json()["status"] == "ok"
+    actor = client.post("/api/actors")
+    assert actor.status_code == 201
+    assert actor.json()["actor_id"]
+
+
+def test_full_vertical_slice_through_project_lens(client):
+    actor_id = _actor(client)
+    project = _project(client, actor_id)
+    pid = project["id"]
+
+    created = client.post(
+        f"/api/projects/{pid}/objects",
+        json={"object_type": "protein", "name": "T5alphaH", "payload": {"organism": "T"}},
+        headers=_headers(actor_id),
     )
-    assert relation.status_code == 201
+    assert created.status_code == 201
+    series_id = created.json()["series"]["series_id"]
+
+    revision = client.post(
+        f"/api/projects/{pid}/objects/{series_id}/revisions",
+        json={"payload": {"organism": "T", "chain": "A"}},
+        headers=_headers(actor_id),
+    )
+    assert revision.status_code == 201
+    revision_id = revision.json()["revision_id"]
+
     evidence = client.post(
-        f"/api/projects/{project_id}/evidence",
+        f"/api/projects/{pid}/evidence",
         json={
-            "evidence_type": "run",
-            "label": "External evaluation",
-            "provider": "revocompute",
-            "external_id": "run-123",
+            "kind": "computation",
+            "interpretation": "supports",
+            "polarity": "supports",
+            "source_kind": "scientific_object_revision",
+            "source_id": revision_id,
+            "target_kind": "scientific_object_revision",
+            "target_id": revision_id,
         },
-    ).json()
+        headers=_headers(actor_id),
+    )
+    assert evidence.status_code == 201
+    evidence_id = evidence.json()["id"]
+
     decision = client.post(
-        f"/api/projects/{project_id}/decisions",
+        f"/api/projects/{pid}/decisions",
         json={
-            "title": "Select variant",
-            "statement": "Select L72M/Q122A for experimental validation",
-            "evidence_ids": [evidence["id"]],
+            "title": "Select",
+            "statement": "Selected",
+            "cites": [{"evidence_id": evidence_id, "cited_as": "supports"}],
+            "selects": [{"target_id": series_id, "target_kind": "scientific_object_series"}],
         },
+        headers=_headers(actor_id),
     )
     assert decision.status_code == 201
-    assert decision.json()["evidence_ids"] == [evidence["id"]]
-    graph = client.get(f"/api/projects/{project_id}")
+    assert decision.json()["status"] == "draft"
+    decision_id = decision.json()["id"]
+
+    committed = client.post(
+        f"/api/projects/{pid}/decisions/{decision_id}/commit", headers=_headers(actor_id)
+    )
+    assert committed.status_code == 200
+    assert committed.json()["status"] == "committed"
+    assert committed.json()["cites"][0]["evidence_id"] == evidence_id
+
+    detail = client.get(f"/api/projects/{pid}/objects/{series_id}", headers=_headers(actor_id))
+    assert detail.status_code == 200
+    assert detail.json()["series"]["name"] == "T5alphaH"
+    assert len(detail.json()["visible_revisions"]) == 2
+    assert detail.json()["decisions"][0]["id"] == decision_id
+
+    graph = client.get(
+        f"/api/projects/{pid}/graph",
+        params={"from_id": series_id, "depth": 3},
+        headers=_headers(actor_id),
+    )
     assert graph.status_code == 200
-    assert len(graph.json()["objects"]) == 2
-    assert graph.json()["relations"][0]["relation_type"] == "variant_of"
-    assert graph.json()["decisions"][0]["title"] == "Select variant"
-    assert graph.json()["decisions"][0]["evidence_ids"] == [evidence["id"]]
+    assert any(e["kind"] == "decision" for e in graph.json()["edges"])
 
 
-def test_rejects_cross_project_relation(client):
-    first = client.post("/api/projects", json={"name": "First"}).json()
-    second = client.post("/api/projects", json={"name": "Second"}).json()
-    first_object = client.post(
-        f"/api/projects/{first['id']}/objects", json={"name": "A", "object_type": "protein"}
-    ).json()
-    second_object = client.post(
-        f"/api/projects/{second['id']}/objects", json={"name": "B", "object_type": "variant"}
-    ).json()
-    response = client.post(
-        f"/api/projects/{first['id']}/relations",
-        json={
-            "source_id": first_object["id"],
-            "target_id": second_object["id"],
-            "relation_type": "related_to",
-        },
+def test_actor_header_is_required(client):
+    response = client.post("/api/projects", json={"name": "No actor"})
+    assert response.status_code == 401
+
+
+def test_typed_edge_endpoints_and_projection(client):
+    actor_id = _actor(client)
+    project = _project(client, actor_id)
+    pid = project["id"]
+    protein = client.post(
+        f"/api/projects/{pid}/objects",
+        json={"object_type": "protein", "name": "X", "payload": {}},
+        headers=_headers(actor_id),
+    ).json()["series"]["series_id"]
+    variant = client.post(
+        f"/api/projects/{pid}/objects",
+        json={"object_type": "variant", "name": "V", "payload": {}},
+        headers=_headers(actor_id),
+    ).json()["series"]["series_id"]
+
+    edge = client.post(
+        f"/api/projects/{pid}/relations/variant_of",
+        json={"source_series_id": variant, "target_series_id": protein},
+        headers=_headers(actor_id),
     )
-    assert response.status_code == 422
+    assert edge.status_code == 201
+    assert edge.json()["relation_type"] == "variant_of"
 
 
-def test_rejects_unpaired_external_reference(client):
-    project = client.post("/api/projects", json={"name": "Evidence"}).json()
-    response = client.post(
-        f"/api/projects/{project['id']}/evidence",
-        json={"evidence_type": "artifact", "label": "Missing provider"},
+def test_artifact_upload_through_content_store(client, monkeypatch, tmp_path):
+    actor_id = _actor(client)
+    project = _project(client, actor_id)
+    pid = project["id"]
+    monkeypatch.setattr("revolab.api._content_store", lambda: ContentStore(tmp_path))
+
+    upload = client.post(
+        f"/api/projects/{pid}/artifacts",
+        files={"file": ("seq.fasta", io.BytesIO(b">seq\nACGT"), "text/plain")},
+        headers=_headers(actor_id),
     )
-    assert response.status_code == 422
+    assert upload.status_code == 201
+    body = upload.json()
+    assert body["authority"] == "revolab"
+    assert body["checksum"] is not None
 
-
-def test_rejects_self_relation(client):
-    project = client.post("/api/projects", json={"name": "Self"}).json()
-    item = client.post(
-        f"/api/projects/{project['id']}/objects", json={"name": "A", "object_type": "protein"}
-    ).json()
-    response = client.post(
-        f"/api/projects/{project['id']}/relations",
-        json={"source_id": item["id"], "target_id": item["id"], "relation_type": "related_to"},
+    content = client.get(
+        f"/api/projects/{pid}/artifacts/{body['resource_id']}/content", headers=_headers(actor_id)
     )
-    assert response.status_code == 422
+    assert content.status_code == 200
+    assert content.content == b">seq\nACGT"
 
 
-def test_unknown_relation_object_is_rejected(client):
-    project = client.post("/api/projects", json={"name": "Unknown"}).json()
-    response = client.post(
-        f"/api/projects/{project['id']}/relations",
-        json={"source_id": str(uuid4()), "target_id": str(uuid4()), "relation_type": "related_to"},
+def test_viewer_cannot_mutate(client):
+    owner = _actor(client)
+    viewer = _actor(client)
+    project = _project(client, owner)
+    pid = project["id"]
+    client.post(
+        f"/api/projects/{pid}/members",
+        json={"actor_id": viewer, "role": "viewer"},
+        headers=_headers(owner),
     )
-    assert response.status_code == 422
-
-
-def test_object_listing_is_stable_and_grouped_by_parent(client):
-    project = client.post("/api/projects", json={"name": "Tree"}).json()
-    root = client.post(
-        f"/api/projects/{project['id']}/objects",
-        json={"name": "Root", "object_type": "protein"},
-    ).json()
-    child = client.post(
-        f"/api/projects/{project['id']}/objects",
-        json={"name": "Child", "object_type": "variant", "parent_id": root["id"]},
-    ).json()
-    sibling = client.post(
-        f"/api/projects/{project['id']}/objects",
-        json={"name": "Sibling", "object_type": "structure", "parent_id": root["id"]},
-    ).json()
-
-    response = client.get(f"/api/projects/{project['id']}/objects")
-
-    assert response.status_code == 200
-    assert [item["id"] for item in response.json()] == [root["id"], child["id"], sibling["id"]]
-
-
-def test_parent_from_another_project_is_rejected(client):
-    first = client.post("/api/projects", json={"name": "First"}).json()
-    second = client.post("/api/projects", json={"name": "Second"}).json()
-    parent = client.post(
-        f"/api/projects/{first['id']}/objects",
-        json={"name": "Parent", "object_type": "protein"},
-    ).json()
-
     response = client.post(
-        f"/api/projects/{second['id']}/objects",
-        json={"name": "Child", "object_type": "variant", "parent_id": parent["id"]},
+        f"/api/projects/{pid}/objects",
+        json={"object_type": "protein", "name": "X", "payload": {}},
+        headers=_headers(viewer),
+    )
+    assert response.status_code == 403
+
+
+def test_delete_project_leaves_global_resources_untouched(client):
+    owner = _actor(client)
+    other_actor = _actor(client)
+    project = _project(client, owner)
+    pid = project["id"]
+    client.post(
+        f"/api/projects/{pid}/objects",
+        json={"object_type": "protein", "name": "X", "payload": {}},
+        headers=_headers(owner),
     )
 
-    assert response.status_code == 422
+    deleted = client.delete(f"/api/projects/{pid}", headers=_headers(owner))
+    assert deleted.status_code == 204
+    # A tombstoned Project lost its memberships, so nobody can read through it.
+    assert client.get(f"/api/projects/{pid}", headers=_headers(owner)).status_code == 403
+    # A tombstoned Project no longer appears in anyone's active list.
+    other_project = _project(client, other_actor, name="Other")
+    assert other_project["id"] != pid
+
+
+def test_non_member_cannot_read(client):
+    owner = _actor(client)
+    stranger = _actor(client)
+    project = _project(client, owner)
+    pid = project["id"]
+    response = client.get(f"/api/projects/{pid}", headers=_headers(stranger))
+    assert response.status_code == 403

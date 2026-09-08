@@ -10,6 +10,7 @@
 - Default to workspace-write + approval; never broaden permissions to bypass a failing task.
 - Container-engine access is a privileged external capability, NOT a workspace write; only the known repo `docker-compose.yml` for local postgres, with no privileged/host-PID/docker.sock/bind-outside the approved root, and approval when invoking host Docker/Podman.
 - Conversation is working memory; repository docs/tests/ADRs/IMPLEMENTATION_STATE are durable project truth.
+- Before production use, prototype code has no compatibility privilege: when accepted architecture and prototype structure conflict, replace the prototype rather than distorting the architecture to preserve it.
 
 ## REvoLab architecture invariants
 

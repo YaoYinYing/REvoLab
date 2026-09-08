@@ -1,6 +1,6 @@
 # Scientific Graph
 
-> **Status: Proposed — pending human architecture review.** Defines the **logical**
+> **Status: Accepted** (merged into `main`). Defines the **logical**
 > graph contract: node categories, the single canonical edge endpoint matrix, whether
 > edges are immutable, and how semantic mistakes are prevented. Deliberately
 > relational (ADR-0003) — **no graph DB**, no RDF. The *physical* persistence shape of

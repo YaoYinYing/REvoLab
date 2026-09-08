@@ -1,6 +1,6 @@
 # Evidence & Provenance
 
-> **Status: Proposed — pending human architecture review.** Defines the distinct
+> **Status: Accepted** (merged into `main`). Defines the distinct
 > durable record types, provenance
 > semantics, and the Decision/knowledge promotion boundary. Inspired by
 > LaminDB / AiiDA / OpenLineage, adapted to REvoLab. Relational, no event sourcing,

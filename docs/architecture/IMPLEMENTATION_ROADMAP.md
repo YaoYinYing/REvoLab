@@ -1,6 +1,6 @@
 # Implementation Roadmap
 
-> **Status: Proposed — pending human architecture review.** Staged,
+> **Status: Accepted** (merged into `main`). Staged,
 > dependency-ordered vertical slices each with a goal,
 > owned domains, acceptance evidence, and explicit non-goals. Also classifies the
 > current bootstrap into keep / revise / remove / defer.

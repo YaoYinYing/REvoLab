@@ -1,6 +1,6 @@
 # Identity, Collaboration, Persistence, Lifecycle & Audit
 
-> **Status: Proposed — pending human architecture review.** Reconciles
+> **Status: Accepted** (merged into `main`). Reconciles
 > identity/sharing, persistence, lifecycle/deletion,
 > and the event/audit posture from Subagent F.
 
@@ -119,7 +119,7 @@ everywhere).
 |---|---|---|---|---|
 | **Global resource** | ScientificObject (series + revision), RunReference, SessionReference, ArtifactReference, LiteratureReference, ExternalReference, and **global provenance edges** (`GlobalProvenanceEdge`, #1–7) | global UUID, project-independent | no single Project owns these; they may be referenced by many Projects | NOT deleted; a Project merely stops referencing them |
 | **Project-local context** | Project record, ProjectResourceLink (incl. its folder/container placement), Project annotation/visibility | project-scoped | the Project | **Project record → tombstone** (`deleted_at`); ProjectResourceLink/annotation → hard-delete (they are links/perms) |
-| **Project-scoped scientific records** | Evidence, Decision, DecisionEvidence, **project knowledge edges** (`ProjectKnowledgeEdge`, #8–10) | project-scoped | Evidence → Evidence/Provenance domain; Decision/DecisionEvidence/`ProjectKnowledgeEdge` → Knowledge/Decision domain (all project-scoped) | **soft-archive** the Project's Evidence/Decisions/DecisionEvidence/ProjectKnowledgeEdge |
+| **Project-scoped scientific records** | Evidence, Decision, DecisionEvidence, **project knowledge edges** (`ProjectKnowledgeEdge`, #8–10) | project-scoped | Evidence → Evidence/Provenance domain; Decision/DecisionEvidence/`ProjectKnowledgeEdge` → Knowledge/Decision domain (all project-scoped) | soft-archive the Project's Evidence and Decision rows; their **immutable** DecisionEvidence/DecisionTarget/DecisionSupersedes knowledge edges are retained with the archived Decision (never given their own archival state) and are hidden from reads by the archived-Project projection |
 
 **Concrete relational mapping:**
 
@@ -248,8 +248,11 @@ claims cite remain untouched and shared.
    its minimal identity/framing. **Never hard-delete the Project row.**
 2. **Hard-delete** active membership rows and `ProjectResourceLink` rows (access/
    context/placement state, safe to remove).
-3. **Soft-archive** the Project's Evidence, Decisions, DecisionEvidence, and
-   `ProjectKnowledgeEdge` rows.
+3. **Soft-archive** the Project's Evidence and Decision rows (`archived_at`). Their
+   immutable knowledge edges (`DecisionEvidence`, `DecisionTarget`, the
+   `supersedes` link) are **retained** with the archived Decision — no separate
+   archival column is added to immutable edges; the read projection hides them
+   because their owning Project (or Decision/Evidence) is archived.
 4. **Global objects, references, and `GlobalProvenanceEdge` rows are untouched** — they
    survive, may remain attached to other Projects, and their provenance stays
    traversable.
@@ -351,7 +354,7 @@ project-scoped scientific record):
 | ResourceStewardship | project-local (steward Project) | yes | transfer / freeze | n/a | n/a | hard-delete on explicit transfer; on steward-Project tombstone the resource **freezes** (no mutation) until transferred |
 | ScientificObject | **global** | yes | label/metadata while draft (stewardship-gated) | **yes — revision (see SCIENTIFIC_OBJECT_MODEL)** | soft (once referenced) | global object: blocked if referenced; else archived, never hard-deleted |
 | GlobalProvenanceEdge (#1–7) | **global** | yes | **never** | n/a | n/a | **never** — a provenance node; correct by superseding edge |
-| ProjectKnowledgeEdge (#8–10) | **project-scoped** | yes | **never** | n/a | soft-archive with its Decision/Evidence | archive with its Decision/Evidence on Project tombstone; never hard-delete the row |
+| ProjectKnowledgeEdge (#8–10) | **project-scoped** | yes | **never** | n/a | retained with its Decision/Evidence (no own archival column) | retained immutably with its Decision/Evidence; hidden from reads once the owning Project/Decision is archived |
 | Run/Artifact/Session/Lit/ExternalReference | **global** | once | **never** (identity immutable) | n/a | revoke (mark `revoked_at`/broken) | never — provenance stays traversable |
 | Evidence | project-scoped | yes | only interpretive fields (not identity/source/target) | n/a | soft | only if no citing Decision; else archive |
 | Decision | project-scoped | yes (draft) | status while draft | n/a | soft | **never** once committed — supersede |
@@ -365,8 +368,10 @@ archived or revoked. They live as long as their global identity survives.
 
 **Unique project-scoped rule:** Evidence, Decision, and `ProjectKnowledgeEdge` rows are
 authored in and scoped to one Project. Deleting a Project **soft-archives** its
-Evidence/Decisions/DecisionEvidence/ProjectKnowledgeEdge; it **never touches** the
-global objects/references they reference or the global provenance edges linking them.
+Evidence and Decision rows (its immutable `DecisionEvidence`/`DecisionTarget`/
+`DecisionSupersedes` knowledge edges are retained with them, not independently
+archived); it **never touches** the global objects/references they reference or the
+global provenance edges linking them.
 
 **Deleting a Project (definitive sequence):**
 1. **Tombstone** the Project row (`deleted_at != NULL`) — never hard-delete it — so
@@ -374,8 +379,8 @@ global objects/references they reference or the global provenance edges linking 
    survives for audit.
 2. Hard-delete the Project's membership rows and `ProjectResourceLink` rows (incl.
    their folder/container placement annotation).
-3. Soft-archive the Project's Evidence, Decisions, DecisionEvidence, and
-   `ProjectKnowledgeEdge` rows.
+3. Soft-archive the Project's Evidence and Decision rows (retain their immutable
+   knowledge edges; the read projection hides the archived context).
 4. For any global resource this Project **stewards**: transfer `ResourceStewardship` to
    another steward Project, or **freeze** the resource (no further mutation) — never
    delete the resource.
