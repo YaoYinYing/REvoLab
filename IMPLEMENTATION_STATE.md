@@ -147,8 +147,10 @@ byte-ownership boundary (fsspec; internal artifacts = `authority=revolab`);
 subtype-integrity wording. P2s: ScientificObject physical storage deferred to the Phase-1
 spike (typed JSONB vs joined tables), ExternalIdentity mapping is a global assertion vs
 project interpretation, AGENT_CONTEXT converged to SeriesRef/RevisionRef, ledger/PR body
-swept to 7 phases. A fresh independent review follows. Status remains **PROPOSED —
-pending human review**.
+swept to 7 phases. A fresh independent architecture review found the round-5 closures
+correct and surfaced one renumber off-by-one (`supersedes` = #9, not #10) plus two P2s —
+all fixed. Final clean audit: **no P0, no P1**. Status remains **PROPOSED — pending
+human review**.
 
 ---
 
