@@ -13,7 +13,7 @@ preserve. No backward compatibility is required. Classify every current piece:
 ### KEEP
 - Global UUID identity on all records.
 - Provider/external-id pairing + validation (normalize into a first-class
-  `ExternalId` registry).
+  `ExternalIdentity` registry + series↔external-identity mapping).
 - Relation self-reference rejection.
 - Relation identity + uniqueness/supersession **deferred to the Phase-1 executable
   spike** (see `SCIENTIFIC_GRAPH.md`); no `UNIQUE(project, source, target,

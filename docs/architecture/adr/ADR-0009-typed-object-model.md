@@ -16,7 +16,8 @@ scientific semantics.
   runtime plugins and not JSON blobs.
 - **Separate organization from scientific relation.** Folders/container-membership
   carry navigation; typed `Relation` edges are the sole scientific-semantics carrier.
-- **First-class `ExternalId` and `Alias` registries.** Canonical internal identity is
+- **First-class `ExternalIdentity` registry (+ series↔external-identity mapping) and
+  `Alias` registries.** Canonical internal identity is
   the `series_id`; **durable external identity is `(authority, native_id)`** with an
   identity authority (uniprot, pdb, doi, ...) — never a resolver/provider; aliases are
   search synonyms.

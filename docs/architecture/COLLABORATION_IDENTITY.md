@@ -55,9 +55,13 @@ PostgreSQL is the durable store. Do **not** treat SQLite as architecture truth.
 - **Dangerous:** foreign keys, stable identity, provider/external refs, relation
   endpoints, or any field that becomes a query filter. JSON must never hold those.
 
-**Indexing:** index all FK columns and (project_id, relation_type); index
-`authority + native_id` for external-reference lookup. Use PostgreSQL enums or
-CHECK constraints, not free `String(50)` where the domain is closed.
+**Indexing:** index all FK columns. Global tables (ScientificObject series/revision,
+references, provenance Relations) index their own relation columns — **no
+`(project_id, relation_type)` composite**, because global Relations carry no
+`project_id`. Project-scoped tables (`project_resource_link`, `evidence`, `decision`)
+index their `project_id`. Index `authority + native_id` for external-reference lookup.
+Use PostgreSQL enums or CHECK constraints, not free `String(50)` where the domain is
+closed.
 
 ## Global resource vs project-local context (the Project-boundary persistence answer)
 
@@ -70,7 +74,7 @@ everywhere).
 | Class | Records | Identity | Owned by | Project deletion |
 |---|---|---|---|---|
 | **Global resource** | ScientificObject (series + revision), RunReference, SessionReference, ArtifactReference, LiteratureReference, ExternalReference, and provenance Relation records | global UUID, project-independent | no single Project owns these; they may be referenced by many Projects | NOT deleted; a Project merely stops referencing them |
-| **Project-local context** | Project record, ProjectResourceLink, Project annotation/visibility | project-scoped | the Project | hard-delete safe (these are links/perms) |
+| **Project-local context** | Project record, ProjectResourceLink, Project annotation/visibility | project-scoped | the Project | **Project record → tombstone** (`deleted_at`); ProjectResourceLink/annotation → hard-delete (they are links/perms) |
 | **Project-scoped scientific records** | Evidence, Decision, DecisionEvidence | project-scoped | authored in, and scoped to, one Project | **soft-archive** the Project's Evidence/Decisions/DecisionEvidence |
 
 **Concrete relational mapping:**
@@ -89,11 +93,16 @@ everywhere).
 - **Project membership of global resources is a separate join, not a column on the
   resource:** `project_resource_link (project_id, resource_id, resource_kind,
   role?, annotation?)` where `resource_kind` constrains which global resource
-  categories a Project's context may include (`scientific_object`, `run_reference`,
+  categories a Project's context may include (`scientific_object_series`,
+  `scientific_object_revision`, `run_reference`,
   `session_reference`, `artifact_reference`, `literature_reference`,
   `external_reference`). A global resource belongs to a Project's context *because a
   link row exists*, not because the resource row can only live in one Project. This
-  is what lets one object/reference sit in many Projects.
+  is what lets one object/reference sit in many Projects. **Series vs revision
+  (reviewer round 3):** linking a series exposes the series record but does **not**
+  auto-expose its revisions — a specific immutable revision is visible to a Project only
+  through a `scientific_object_revision` link, so a new private revision is never
+  auto-visible to a Project that only links the series (see ADR-0008).
 - **Special case — `ProjectMembership` (the Actor-in-Project row)** is a separate
   join over `actors × projects` and is the security unit; `ProjectResourceLink` is the
   context/visibility lens over **global resources**. They are distinct and both live at

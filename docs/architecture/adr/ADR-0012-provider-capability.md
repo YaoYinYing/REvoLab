@@ -53,5 +53,8 @@ is available.
 ## Rejected alternatives
 - One generic interface for all integrations (fails stateful REvoDesign / REvoCompute
   distinction).
-- CredentialBinding entity (one-use-case fake abstraction).
+- Credential **binding** embedded with/owning the secret **material** in one row
+  (a fake one-use-case abstraction) — instead the binding
+  (`ExternalProviderCredentialBinding`) is a non-secret Identity-owned record whose
+  `secret_ref` points at the Secret store that owns the material (ADR-0008/#6).
 - Provider-specific branches in Core.

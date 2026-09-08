@@ -55,6 +55,56 @@ DSH states Goal has **no independent evaluator** and a round cap is not a
 token/time/cost budget. Therefore `"the model says done"` is not meaningful;
 completion is **Acceptance Gates == PASS** (executable machine evidence).
 
+### The runaway guard: every autonomous Goal is bounded
+
+Autonomous Goal loops are not open-ended. A Goal may run unattended **only**
+within a finite, pre-committed envelope. Every Goal launched via `/goal` for
+substantial multi-round work must carry all of the following before it starts:
+
+```text
+FINITE ROUND BUDGET       a concrete maximum number of rounds; the loop halts
+                          when it is exhausted, even if Acceptance is not yet PASS
+
+ACCEPTANCE GATES          the objective plus one or more concrete, executable
+                          acceptance checks (machine gates, not model prose);
+                          completion is gates == PASS, never model self-assessment
+
+NON-GOALS                 what the agent must NOT do, and when to stop instead of
+                          "helpfully" broadening scope
+
+NO-PROGRESS DETECTOR      a rule for recognizing that a round produced no forward
+                          movement (no gate moved closer, no durable change) so the
+                          loop does not spin forever
+
+PERMISSION CEILING        a fixed maximum scope/permission the Goal may use, granted
+                          up front and NEVER self-escalated by the agent
+```
+
+The **permission ceiling** is fixed when the Goal is declared and is not a floor:
+the agent may operate up to it, but may never ask to raise it and may never widen
+it on its own. Scope expansion and permission expansion are both **human-only**
+decisions.
+
+The **no-progress detector** plus the acceptance gates define concrete
+**STOP-AND-ASK-HUMAN** triggers. At any of the following the agent must stop
+and ask the human rather than push forward:
+
+```text
+(a) two consecutive rounds with no progress     (no-progress detector trips)
+(b) the same acceptance gate failing repeatedly (it is not converging; keep
+    retrying a broken gate is not productive)
+(c) a request to expand scope                   (goes beyond the declared Non-goals)
+(d) a request to expand permissions             (exceeds the Permission ceiling)
+(e) any decision that is an architecture-authority call — a design decision better
+    made by a human (e.g. ownership, the smallest-durable-abstraction choice on a
+    fork, a promotion policy that changes what becomes project truth)
+```
+
+When a trigger fires, the agent stops and reports to the human with the round
+budget consumed, the gates tripped, and the concrete decision required — it does
+not keep looping, self-escalate, or reinterpret its acceptance to declare
+victory.
+
 ### Loop 3 — Subagent / Workflow Loop (parallel thinking inside one round)
 
 Subagents are an official capability (fresh in-process, fork, Codex, Claude
@@ -81,6 +131,50 @@ Primary Integrator
 - Do **not** split one shared domain contract across parallel writers (e.g. A
   edits `models.py`, B edits `schemas.py`, C edits `api.py`): three locally
   correct but globally inconsistent patches result.
+
+### The subagent composition contract
+
+Every delegated subagent is dispatched under an explicit composition contract.
+A bare "go investigate / go fix this" prompt is not enough; the delegation must
+declare each field before the subagent starts:
+
+```text
+Role                what the subagent is (investigator, specialist, reviewer) and
+                    the one thing it is responsible for
+
+Question            the concrete question / deliverable it must answer
+
+Allowed paths       the explicit file / workspace scope it may touch — and the
+                    explicit list it must NOT touch
+
+Write permission    whether the subagent may write at all (default: NO — subagents
+                    read/analyze/report, never write the integration)
+
+Evidence required   what must be cited / attached for the result to count
+                    (machine gate output, file paths, test results — not prose)
+
+Output schema       the structured shape of a completed result the parent expects
+                    back (so the parent can reconcile, not free-form prose)
+
+Stop condition      when the subagent is done and may not go further (a bounded
+                    scope, a bounded round count, or a STOP-AND-ASK-HUMAN trigger
+                    from the runaway guard)
+```
+
+The contract reflects and reinforces the **"Primary Integrator owns writes;
+subagents read/analyze/report"** model:
+
+- **NO RECURSIVE SUBAGENT SPAWNING BY DEFAULT.** A subagent must not spawn its
+  own subagents unless that permission is explicitly enabled in its contract.
+  Delegation is a Primary-integrator responsibility, kept one level deep by
+  default.
+- **BOUNDED CONCURRENCY.** The parent starts a bounded, pre-declared number of
+  parallel subagents and reconciles their reports itself; it does not let fan-out
+  grow without limit.
+- **NO PERMISSION-INHERITANCE EXPANSION.** A subagent's permissions never exceed
+  its parent's — there is no transitive escalation through the delegation tree.
+  Whatever a subagent may do, the parent already may do; a subagent can never
+  gain scope or permission its parent lacks.
 
 ### Loop 4 — Ralph (final independent convergence / certification loop)
 
@@ -225,9 +319,44 @@ more dangerous mode and is never the default.
 
 ```text
 /repo/REvoLab/**                   read/write
-package install, tests, build, lint
+package install (NORMAL class)     install existing, locked / project-declared
+                                   dependencies exactly as declared
+tests, build, lint
 localhost API                      (read/test the running app)
 ```
+
+### Package install is split into two classes (reviewer finding #11)
+
+`package install` is **not one homogeneous operation**. It is split into a
+NORMAL class (no approval needed) and a REQUIRES-APPROVAL class, because adding
+or executing unreviewed code is a code-execution risk, not a workspace write:
+
+```text
+(a) NORMAL — no approval needed:
+    installing existing, locked / project-declared dependencies exactly as
+    declared, e.g. `pip install -r requirements.lock`, or restoring a
+    lockfile / vendored dependency state to what the project already declares.
+
+(b) REQUIRES APPROVAL:
+    - adding or updating a dependency (changing versions / the lockfile),
+    - installing an arbitrary or unreviewed package,
+    - executing unreviewed install / post-install scripts.
+```
+
+Approval is required because install time is code-execution time, not just file
+writing. Two families of install-time scripts are explicit code-execution risks
+that require approval because they run arbitrary code from the package:
+
+```text
+npm lifecycle scripts    preinstall / install / postinstall
+Python build backends    PEP 517 / PEP 518 build-system, setup.py / egg_info,
+                         and Python post-install steps
+```
+
+The line between the classes is the same principle as the container-engine
+guardrail above: operating on an **existing, known, declared** artifact is a
+normal project operation; **introducing new or unreviewed executable content**
+into the environment is a privileged change that stops and asks.
 
 ### Container-engine operations are a privileged external capability (reviewer finding #8)
 

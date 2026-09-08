@@ -16,19 +16,37 @@ Instead Core owns (a) typed capability Protocols, (b) neutral durable references
 turns external data into project truth. Each integration is a Driver that implements
 one or more capability Protocols and keeps provider vocabulary inside itself.
 
-## The five concepts (keep) and one that is integrated elsewhere
+## The concepts, who owns them (four credential roles)
 
-| Concept | Owned by | Why keep |
+Cybersecurity-style credential ownership is split across **four distinct roles, each
+owning exactly one thing** (this resolves the "credential ownership 3-way stale"
+ambiguity the review found):
+
+| Concept | Owns | Why keep |
 |---|---|---|
-| **Provider** | Provider domain | the uniquely-identified external system you point at and bind to |
-| **Driver** | Provider domain | the concrete code realizing capabilities; ≥3 real targets |
-| **Capability** | Provider domain | the protocol boundary that hides provider vocabulary from Core |
-| **Tool** | Agent domain | the typed, agent-facing presentation of a capability |
-| **Credential** | Credential store | how a project learns a provider is callable |
+| **Provider** | Provider / Capability domain | the uniquely-identified external system you point at and bind to |
+| **Driver** | Provider / Capability domain | the concrete code realizing capabilities; ≥3 real targets |
+| **Capability** | Provider / Capability domain | the protocol boundary that hides provider vocabulary from Core |
+| **Tool** | Agent Context domain | the typed, agent-facing presentation of a capability |
+| **Credential binding** (`ExternalProviderCredentialBinding`) | Identity / Collaboration domain | the non-secret row `(actor_id, provider_key, kind, secret_ref)` — "this Actor has a credential of this kind for this provider; the material lives at secret_ref" |
+| **Secret material** (API key / token) | Credential / Secret store | the actual secret; never stored in Core, never read back as plaintext by Core |
 
-- **`CredentialBinding` is NOT introduced** — it is the textbook one-use-case fake
-  abstraction. A presence lookup (`has_credential(provider, kind)`) suffices. Add a
-  real binding entity only when a second cross-project sharing use case forces it.
+- **`ExternalProviderCredential` ≈ `ExternalProviderCredentialBinding` IS the real,
+  non-secret binding record** owned by the **Identity / Collaboration domain**. It is
+  **not** a fake or made-up abstraction, and it is **not** a pass-through. It is the
+  durable row that says *"this Actor has a credential of this kind for this provider;
+  the material lives at `secret_ref`."* The four roles each own one thing:
+  1. **Identity / Collaboration domain** owns the **binding** — the non-secret row
+     above.
+  2. **Credential / Secret store** owns the **secret material** (the actual API key /
+     token). It is **never stored in Core** and **never read back as plaintext by
+     Core**; `secret_ref` is only a locator / opaque handle.
+  3. **Provider / Capability domain** owns the provider / driver / capability and
+     **consumes the credential as an opaque handle**. It never owns or materializes
+     the secret itself; it uses the binding's handle to retrieve material **on-demand
+     through the Credential store**.
+  4. **Agent Context domain** owns the **Tool projection** (the set of tools the
+     agent may call) — **not** the credential.
 - **`ExternalReference` is a stored data shape in the Evidence domain**, not a
   driver concept. The driver side only needs a stable `(authority, native_id)` and
   a resolution interface (see "Authority vs provider" below).
@@ -47,7 +65,7 @@ resolver / provider     → who you reach it through: openbio, direct-uniprot, r
   keep the same durable identity whether it is resolved today through OpenBio or
   tomorrow through a direct UniProt API. Changing the resolver must **never** change
   the identity or invalidate stored references.
-- **`ExternalId` and `ExternalReference` carry the `authority`, not the provider.**
+- **`ExternalIdentity` and `ExternalReference` carry the `authority`, not the provider.**
   The provider/resolver is the *access* detail (which Driver/Capability can fetch it),
   recorded separately from the durable identity.
 - **REvoCompute**: its own run/artifact IDs are special: REvoCompute is *both* the
@@ -126,12 +144,17 @@ class InteractiveHandoffCapability(Capability, Protocol):  # deep-link / interac
 
 ## Credentials & availability (Actor-contextual)
 
-- The **Credential store owns** `(actor_id, provider_key, credential_kind) →
-  secret-ref`. It is opaque to Core; Core cannot read secret values. Credentials are
-  **Actor-scoped** (per `COLLABORATION_IDENTITY.md`), not Project-owned.
-- Every capability method takes a `credential` handle acquired from the store for the
-  **calling actor**; no secret transits Core services or persists in the project
-  graph.
+- The **binding** — `ExternalProviderCredentialBinding(actor_id, provider_key, kind,
+  secret_ref)` — is a **non-secret** record owned by the **Identity / Collaboration
+  domain**: "this Actor has a credential of this kind for this provider." The **secret
+  material** it points at is owned by the **Credential / Secret store**: opaque to
+  Core, never read back as plaintext. Credentials are **Actor-scoped** (per
+  `COLLABORATION_IDENTITY.md`), not Project-owned.
+- Every capability method takes a `credential` **opaque handle** (the binding's
+  `secret_ref`) for the **calling actor**. The Provider domain treats the handle as
+  opaque — it never owns or materializes the secret itself; it retrieves material
+  **on-demand through the Secret store**. No secret transits Core services or persists
+  in the project graph.
 - **Availability is Actor-contextual** — not a single Project-wide boolean. Members
   of one Project may have different permissions for the same provider (e.g. only one
   member has an OpenBio commercial key or a REvoCompute privileged-runner grant). It

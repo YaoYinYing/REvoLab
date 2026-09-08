@@ -42,14 +42,23 @@ Each type has its own *schema* (its own column set).
 no-unvalidated-JSON policy for the scientific payload.**
 
 ```text
-scientific_objects (core spine — universal fields only)
+scientific_object_series (identity spine — universal fields + object_type, current_revision_id)
+    │ 1:*
+scientific_object_revision (revision_id, series_id, revision_seq, checksum, immutable content refs)
     │ 1:1
-    ├── protein_objects     (per-type typed columns)
-    ├── variant_objects
-    ├── structure_objects
+    ├── protein_revision      (revision_id FK — per-type typed columns)
+    ├── variant_revision
+    ├── structure_revision
     ├── ...
     └── (no typed table for OTHER / generic — allowed but carries almost nothing)
 ```
+
+The **typed scientific payload hangs on the revision, not the series** (reviewer round
+3): each immutable `scientific_object_revision` row (own `revision_id`, `revision_seq`,
+`checksum`) carries exactly the typed columns for its content version in a sibling
+`*_revision` table keyed by `revision_id`. The series row is only the identity/governance
+spine (label, `object_type`, `current_revision_id`) — it never carries scientific payload
+columns.
 
 - **Core owns the type registry** — a single Core module mapping
   `object_type → {typed model, view schema, validator, versioned?}`. This is the
@@ -139,14 +148,41 @@ aliases              → search synonyms used to find, never to cite
 ```
 
 - **Canonical internal identity:** `series_id` only; `name` is a mutable label.
-- **External identifiers:** a first-class `ExternalId` registry whose durable key is
-  the **identity authority/namespace** (see `PROVIDER_CAPABILITIES.md` — this is
-  *not* the access provider):
-  `(object_series_id, authority, native_id, is_canonical, provenance_ref)`,
-  `UNIQUE(authority, native_id)`. `authority ∈ {uniprot, pdb, doi, pubmed, ...}`.
-  An authority ID maps to exactly one REvoLab series where we assert it. (This
-  normalizes the bootstrap's ad-hoc plain `provider + external_id` into an
-  authority-keyed, integrity-checked registry.)
+- **External identities:** a first-class `ExternalIdentity` registry whose durable
+  key is the **identity authority/namespace** (see `PROVIDER_CAPABILITIES.md` — this
+  is *not* the access provider). The external identity itself is uniquely identified
+  by its authority + native id, with **no series on the row**:
+
+  ```
+  ExternalIdentity(external_identity_id, authority, native_id, kind)
+      UNIQUE(authority, native_id)
+  ```
+
+  `authority ∈ {uniprot, pdb, doi, pubmed, ...}`; `kind` captures what the identifier
+  denotes (e.g. protein, transcript, structure, dataset) where a project cares. One
+  registry row exists per external identity, independent of which REvoLab series it
+  points at. (This normalizes the bootstrap's ad-hoc plain `provider + external_id`
+  into an authority-keyed, integrity-checked registry.)
+
+- **Series ↔ external identity mapping:** a **separate, non-global-1:1** join table
+  links a series to one or more external identities. This mapping is **not** forced to
+  be globally 1:1 — it is a normal many-to-many join between series and external
+  identities, carrying an optional `qualifier`/`role` (which aspect of the object the
+  identifier means) and the `is_canonical` preference **on the mapping** (which
+  external identity is the preferred one *for that series*), not on the
+  `ExternalIdentity` row:
+
+  ```
+  ScientificObjectExternalIdentity(series_id, external_identity_id,
+                                   qualifier/role, is_canonical)
+  ```
+
+  An external identity maps at the **series level** (conceptual identity), never at
+  the revision level — a revision sample is always identified through its owning
+  series. Unless a project deliberately asserts otherwise, an authority ID points at
+  one REvoLab series; but if a project chooses, the *same* external identity can be
+  asserted against (mapped to) multiple series, driven by this mapping table rather
+  than by a forced global uniqueness on the object.
 - **Aliases:** a separate, search-oriented, mutable, non-unique list (bound to the
   series).
 
@@ -199,7 +235,7 @@ scientific semantics or destructive ownership.*
 - Deleting an object that is a Relation/Evidence/Decision endpoint is **blocked or
   soft-suspended**, never CASCADEd — the destructive `delete-orphan` is removed
   from scientific objects.
-- Provider state stays in the provider; only `ExternalId` references live here.
+- Provider state stays in the provider; only `ExternalIdentity` references live here.
 - `series_id` (Series identity) is the only durable identity, never a path or username;
   `revision_id` (Revision identity) is what provenance edges address.
 

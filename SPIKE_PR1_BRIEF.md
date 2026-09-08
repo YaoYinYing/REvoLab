@@ -1,62 +1,59 @@
-# SPIKE PR1 — Converge the Contract (Brief)
+# SPIKE PR1 — Converge the Contract (Brief) — Round 3
 
 Save for a fresh agent / new round. Branch: `docs/architecture-design`. PR #1: open,
-mergeable, head as of writing `d7bc7fe`. Executable gates are green (GHA: backend
-pytest, frontend typecheck/test/build, PostgreSQL 16 `alembic upgrade head && alembic
-check`).
+mergeable, head as of writing `93544af` (`9dab54e` + cleanup). Executable gates are green
+(GHA run #14 all green; backend pytest, frontend typecheck/test/build, PostgreSQL 16
+`alembic upgrade head && alembic check`).
 
 ## Objective (verbatim)
 
-Revise PR #1 (branch docs/architecture-design, head d7bc7fe) to address the reviewer's
-second round (REQUEST CHANGES):
-
-(1) define the project-scoped authorization projection for global resources &
-provenance — global identity != global readability, Actor -> ProjectMembership ->
-ProjectResourceLink -> visible edges — write it into ADR-0008/COLLABORATION_IDENTITY
-and rename ProjectObjectMembership to ProjectResourceLink;
-
-(2) fix Project deletion to be SQL-valid (tombstone Project with deleted_at, hard-delete
-active membership links, archive Evidence/Decision, leave global resources untouched —
-never hard-delete a Project row);
-
-(3) make SCIENTIFIC_GRAPH.md the single source of graph truth — unify the wire value
-(consumed_as_input_by vs consumed_input_by), fix the SYSTEM diagram direction, remove
-from IMPLEMENTATION_ROADMAP the stale UNIQUE(project,...) and the "Generic Relation
-target type: Decided" claim so Roadmap only references SCIENTIFIC_GRAPH;
-
-(4) add an Evidence association contract (freeze legal Evidence.source / Evidence.target
-kinds incl. experiment/note as source, plus cardinality and immutability);
-
-(5) define A-->B as "imports/consumes B's public contract" and regenerate ONE dependency
-DAG consistent across DOMAIN_BOUNDARIES/SYSTEM_ARCHITECTURE (fix SO->Project, Project
-"membership links", Provider owning credentials/tools);
-
-(6) split ProviderRuntimeHealth (READY/DEGRADED/UNREACHABLE) from
-CapabilityAvailability(actor,project) (AVAILABLE/CREDENTIAL_MISSING/NOT_AUTHORIZED/
-PROVIDER_UNAVAILABLE, derived, never stored);
-
-(7) align HARNESS_OPERATING_MODEL step 7 to "INDEPENDENT REVIEW" with Ralph only on
-explicit human request;
-
-(8) add container-engine safety guardrails (docker = privileged external capability, not
-a workspace write) to the safety plane;
-
-(9) freeze ScientificObject Series.id/Revision.id nomenclature (no ambiguous
-ScientificObject.id);
-
-(10) make AGENT_CONTEXT + Harness skill list match the real .agents/skills (create
-architecture-review + security-boundaries or mark Planned);
-
-(11) update IMPLEMENTATION_STATE "not verified" to verified (GHA green);
-
-(12) delete the 5 superseded pointer files (overview/domain-model/drivers/
-evidence-and-lineage/agent-and-skills).
-
-Then run a fresh architecture review pass; keep the PR honest as
-Proposed-pending-human-review and mergeable.
+Address the third-round human review (REQUEST CHANGES) of PR #1 on branch
+docs/architecture-design (head 93544af) to converge the four core blockers and remaining
+findings, then run the final fresh architecture review. The reviewer's four core blockers:
+(1) uniquely assign ProjectResourceLink ownership (Project owns Project + ProjectResourceLink;
+Identity owns Actor + ProjectMembership + Role; authorization projection =
+Actor->ProjectMembership[Identity]->Project->ProjectResourceLink[Project]->visible resource,
+so Phase 1 can do Project-context composition without full auth);
+(2) close series/revision visibility (define whether linking a series auto-exposes all
+revisions; use distinct resource_kinds scientific_object_series vs scientific_object_revision
+or pinned-visible-revisions so a new private revision is not auto-visible to other Projects);
+(3) add a scope column to the canonical edge matrix in SCIENTIFIC_GRAPH (edges #1-8
+variant_of/derived_from/consumed_as_input_by/produced/imported_as/generated_by = global;
+edges #9-11 selects/supersedes/cites = project-scoped, archive with Decision/Evidence on
+Project tombstone);
+(4) fix the Evidence.source contract contradiction (not 'exactly one required' + 'nullable
+for observation' — choose 0..1 with required-for computation/literature/imported and
+optional-for direct-observation/note, or a real project-scoped NoteRecord source).
+Additionally:
+(5) fix ScientificObject physical model so typed payload hangs on ScientificObjectRevision not
+series (series table holds series_id/object_type/title/current_revision_id; revision table
+holds revision_id/series_id/revision_seq/checksum; typed protein_revision/structure_revision
+FK to revision_id);
+(6) consolidate credential ownership (Identity owns ExternalProviderCredentialBinding
+(actor_id,provider_key,kind,secret_ref), Secret/Credential store owns secret material,
+Provider consumes opaque handle, Agent owns Tool projection; stop claiming CredentialBinding
+is a fake abstraction);
+(7) relax ExternalId uniqueness to ExternalIdentity UNIQUE(authority,native_id) with a
+separate non-global-1:1 mapping series_id->external_identity_id + qualifier/role;
+(8) clean stale contracts in COLLABORATION_IDENTITY (remove relation (project_id,relation_type)
+index since global Relations have no project_id; fix Project-local context
+hard-delete-safety label since Project is always tombstoned);
+(9) add a Harness runaway guard (every autonomous Goal has finite round budget, explicit
+acceptance gates, explicit non-goals, no-progress detector, permission ceiling;
+stop-and-ask-human triggers);
+(10) fix subagent composition contract (Role/Question/Allowed paths/Write permission/
+Evidence required/Output schema/Stop condition; no recursive subagent spawning by default,
+bounded concurrency, no permission inheritance expansion);
+(11) classify package install in the safety plane (install existing locked/project-declared
+deps = normal; add/update dependency, install arbitrary package, execute unreviewed
+install/postinstall scripts = approval);
+and update IMPLEMENTATION_STATE CI evidence to the current head (93544af) not d7bc7fe.
+Keep the PR honest as Proposed-pending-human-review and mergeable; run the final fresh
+architecture review (the reviewer will approve/merge if no new P1).
 
 ## Status notes
 
-Reviewer still REQUEST CHANGES, "don't merge yet". Direction ~80–85% right. After the
-12 items converge, run ONE fresh architecture reviewer; if it finds no new
-cross-document ownership/security contradiction, PR #1 is approvable.
+Third human review: REQUEST CHANGES, "don't merge yet", direction now ~90%. Core blockers
+(1)-(4) plus findings (5)-(11) must converge, then ONE final fresh architecture review.
+If that finds no new P1, the reviewer will approve and merge PR #1, then DSH proceeds to
+Phase 1 scientific-context core migration.

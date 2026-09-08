@@ -127,13 +127,13 @@ The eight domains and their one-line purpose (detailed in
 
 | Domain | Owns |
 |---|---|
-| Project | the workspace boundary: project record, membership participation (via the Identity contract), resource links into a Project context, scoping |
+| Project | the workspace boundary: project record, membership participation (via the Identity contract), **owns `ProjectResourceLink`** (binds global resources into a Project context), scoping |
 | Scientific Object | typed scientific entities and their per-type metadata (a global resource) |
 | Evidence / Provenance | references, evidence claims, and lineage edges |
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
 | Provider / Capability | providers, drivers, capabilities, capability schemas |
 | Agent Context | project-scoped context, tools, skills, and the agent loop |
-| Identity / Collaboration | actors, authentication identities, membership, roles, credentials, resource links |
+| Identity / Collaboration | actors, authentication identities, membership, roles, credential **bindings** (`ExternalProviderCredentialBinding`: actor + provider + kind + `secret_ref`; the secret **material** lives in the Secret store) |
 | Presentation / Workspace | API surface and the user workspace information architecture |
 
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
@@ -150,7 +150,7 @@ Arrow meaning: A --> B  =  A imports/consumes B's public contract.
 Relational persistence (PostgreSQL)
 
 S Scientific Object          (global leaf; depends on nothing in Core)
-I Identity / Collaboration   (global leaf; owns membership + credentials + resource links)
+I Identity / Collaboration   (global leaf; owns membership + credential **bindings** — material in the Secret store; Project owns ProjectResourceLink)
 
 Project ------------------------------> Scientific Object   (links global resources)
 Project ------------------------------> Identity            (membership contract)
@@ -161,7 +161,7 @@ Evidence / Provenance ----------------> Project             (project-scoped fram
 Knowledge / Decision -----------------> Evidence / Provenance
 Knowledge / Decision -----------------> Project             (project-scoped decisions)
 
-Provider / Capability -----------------> Identity           (credential contract)
+Provider / Capability -----------------> Identity           (credential contract: consumes the binding as an opaque handle; reaches material through the Secret store)
 
 Agent Context ----> Project | Evidence | Knowledge | Provider | Identity   (consumer)
 Presentation ----> Project | Scientific Object | Evidence | Knowledge |
@@ -286,19 +286,23 @@ flowchart LR
     Mem["ProjectMembership<br/>(actor + role)"]
     Role["Role<br/>(owner · member · viewer)"]
     Res["Resource<br/>(scientific object / reference)"]
-    Cred["ExternalProviderCredential<br/>(actor + provider kind)"]
+    Cred["ExternalProviderCredentialBinding<br/>(non-secret: actor + provider + kind + secret_ref)"]
+    Sec["Secret store<br/>(owns the secret material / API key, token)"]
 
     Auth -- binds to --> Actor
     Actor -- has --> Mem
     Mem -- grants --> Role
     Role -- grants access to project resources --> Res
-    Actor -- owns --> Cred
+    Actor -- owns (binding) --> Cred
+    Cred -- points (secret_ref) --> Sec
     Cred -- authorizes calling --> Res
 ```
 
-Authentication identity, Actor, membership, role, resource, and external
-credential are **separate concepts**. Access is inherited from Project membership;
-no per-object ACL and no RBAC engine in this phase.
+Authentication identity, Actor, membership, role, resource, and the external
+credential **binding** are **separate concepts**; the binding is owned by the
+Identity / Collaboration domain while the **secret material** it references is owned
+by the Secret store. Access is inherited from Project membership; no per-object ACL
+and no RBAC engine in this phase.
 
 ---
 

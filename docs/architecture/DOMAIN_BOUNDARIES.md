@@ -33,10 +33,13 @@ External systems own their capabilities and execution truth.
 - **Purpose:** the durable workspace boundary that scopes context, membership, and
   access.
 - **Owned concepts:** Project record, project-level annotation, project visibility
-  (private / shared-with-members). Project **participation is expressed through the
+  (private / shared-with-members), **`ProjectResourceLink`** (the Project-owned context
+  link that binds global resources into this Project's context — the visibility lens,
+  see ADR-0008). Project **participation is expressed through the
   Identity/Collaboration membership contract** (see below) — Project does **not** own
   `ProjectMembership`.
-- **Owned mutable state:** project name/description, visibility.
+- **Owned mutable state:** project name/description, visibility, and the Project's
+  `ProjectResourceLink` set (the links a Project's context includes).
 - **Owned invariants:**
   - A Project is a namespace *and* a security/permission boundary, but **not** the
     scientific-identity boundary.
@@ -45,7 +48,9 @@ External systems own their capabilities and execution truth.
   - Organization (folders) is not scientific semantics.
 - **Public contracts:** project CRUD, project-scoped read and write entry points.
 - **Dependencies:** Identity/Collaboration (membership, roles), Scientific Object
-  (links global resources into a Project context). Depends on nothing else in Core.
+  (to *address* which global resources the Project's `ProjectResourceLink` set binds;
+  the `ProjectResourceLink` rows themselves are **owned by Project**). Depends on
+  nothing else in Core.
 - **Non-responsibilities:** owning object lifecycle; owning execution; owning
   provider credentials; being the provenance authority.
 
@@ -54,8 +59,8 @@ External systems own their capabilities and execution truth.
 - **Purpose:** represent typed scientific entities (Protein, Sequence, Structure,
   Variant, …) and their per-type metadata.
 - **Owned concepts:** ScientificObject (universal spine), per-type extension
-  records, ExternalId registry, Alias registry, the type registry, object
-  versioning.
+  records, ExternalIdentity registry (+ series↔external-identity mapping), Alias
+  registry, the type registry, object versioning.
 - **Owned mutable state:** object labels/descriptions (governance spine), aliases,
   organization placement, per-type content (versioned, immutable once referenced).
 - **Owned invariants:**

@@ -32,10 +32,19 @@ into a Project's context are not only ScientificObjects; references are global t
 ProjectResourceLink(project_id, resource_id, resource_kind, role?, annotation?)
 ```
 
-where `resource_kind ∈ {scientific_object, run_reference, session_reference,
-artifact_reference, literature_reference, external_reference}` enforces which global
-resource categories a Project's context may contain. It is **not** a per-object ACL; it
-is the statement "this Project's context includes these global resources."
+where `resource_kind ∈ {scientific_object_series, scientific_object_revision,
+run_reference, session_reference, artifact_reference, literature_reference,
+external_reference}` enforces which global resource categories a Project's context may
+contain. It is **not** a per-object ACL; it is the statement "this Project's context
+includes these global resources."
+
+**Series vs revision visibility (reviewer round 3):** `scientific_object_revision` and
+`scientific_object_series` are **distinct** link kinds. Linking a series exposes the
+series record but does **not** auto-expose all its revisions (past or future). A
+specific immutable revision becomes visible to a Project only when that Project holds a
+`scientific_object_revision` link for it (the source of truth for "is this revision
+shareable" is the link set, not the implicit series membership). A new private revision
+is therefore **never** auto-visible to other Projects that only link the series.
 
 ### Global identity != global readability (authorization projection)
 
