@@ -16,7 +16,9 @@ export function ContextInspector({ detail }: { detail: ObjectDetailRead | null }
     )
   }
 
-  const governing = detail.decisions.find((item) => item.status === DECISION_STATUS_COMMITTED)
+  const governing = detail.decisions.find(
+    (item) => item.status === DECISION_STATUS_COMMITTED && !item.superseded,
+  )
   const supporting = detail.evidence.filter((item) => item.polarity === POLARITY_SUPPORTS)
   const contradicting = detail.evidence.filter((item) => item.polarity === POLARITY_CONTRADICTS)
 

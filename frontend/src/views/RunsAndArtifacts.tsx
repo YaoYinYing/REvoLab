@@ -2,7 +2,10 @@ import { useMemo, useState } from 'react'
 import { Database } from 'lucide-react'
 
 import { useResources } from '../api/hooks'
-import { Badge, Empty, ErrorBox, Loading } from '../components/ui'
+import type { ResourceKind } from '../api/types'
+import { Badge, Empty, ErrorBox, LoadMore, Loading } from '../components/ui'
+
+const PAGE_SIZE = 50
 
 // Presentation-only labels for backend-owned resource_kind values. The kind
 // VALUES themselves come from the live reference data, never from this map.
@@ -15,11 +18,13 @@ const KIND_LABELS: Record<string, string> = {
 }
 
 export function RunsAndArtifactsView({ actorId, projectId }: { actorId: string; projectId: string }) {
-  const { data, loading, error } = useResources(actorId, projectId)
-  const [kind, setKind] = useState('')
+  const [kind, setKind] = useState<ResourceKind | ''>('')
+  const [limit, setLimit] = useState(PAGE_SIZE)
+  const { data, loading, error } = useResources(actorId, projectId, kind || null, { limit })
+  const hasMore = (data?.length ?? 0) === limit
 
   const kinds = useMemo(
-    () => Array.from(new Set((data ?? []).map((item) => item.resource_kind))).sort(),
+    () => Array.from(new Set((data ?? []).map((item) => item.resource_kind))).sort() as ResourceKind[],
     [data],
   )
   const visible = kind ? (data ?? []).filter((item) => item.resource_kind === kind) : (data ?? [])
@@ -70,6 +75,7 @@ export function RunsAndArtifactsView({ actorId, projectId }: { actorId: string; 
             </div>
           ))}
         </div>
+        <LoadMore visible={hasMore} onLoad={() => setLimit((value) => value + PAGE_SIZE)} />
       </section>
     </div>
   )

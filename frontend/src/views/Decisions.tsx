@@ -5,11 +5,15 @@ import { projectApi } from '../api/backend'
 import { useDecisions } from '../api/hooks'
 import type { DecisionRead } from '../api/types'
 import { Button } from '../components/buttons'
-import { Badge, Empty, ErrorBox, Loading } from '../components/ui'
+import { Badge, Empty, ErrorBox, LoadMore, Loading } from '../components/ui'
 import { DECISION_STATUS_COMMITTED, DECISION_STATUS_DRAFT } from '../contracts/enums'
 
+const PAGE_SIZE = 50
+
 export function DecisionsView({ actorId, projectId }: { actorId: string; projectId: string }) {
-  const { data, loading, error, reload } = useDecisions(actorId, projectId)
+  const [limit, setLimit] = useState(PAGE_SIZE)
+  const { data, loading, error, reload } = useDecisions(actorId, projectId, { limit })
+  const hasMore = (data?.length ?? 0) === limit
   const [busyId, setBusyId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -68,6 +72,7 @@ export function DecisionsView({ actorId, projectId }: { actorId: string; project
             </div>
           ))}
         </div>
+        <LoadMore visible={hasMore} onLoad={() => setLimit((value) => value + PAGE_SIZE)} />
       </section>
     </div>
   )

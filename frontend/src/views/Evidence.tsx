@@ -1,11 +1,16 @@
+import { useState } from 'react'
 import { Boxes } from 'lucide-react'
 
 import { useEvidence } from '../api/hooks'
-import { Badge, Empty, ErrorBox, Loading } from '../components/ui'
+import { Badge, Empty, ErrorBox, LoadMore, Loading } from '../components/ui'
 import { POLARITY_CONTRADICTS } from '../contracts/enums'
 
+const PAGE_SIZE = 50
+
 export function EvidenceView({ actorId, projectId }: { actorId: string; projectId: string }) {
-  const { data, loading, error } = useEvidence(actorId, projectId)
+  const [limit, setLimit] = useState(PAGE_SIZE)
+  const { data, loading, error } = useEvidence(actorId, projectId, { limit })
+  const hasMore = (data?.length ?? 0) === limit
 
   return (
     <div className="view">
@@ -35,6 +40,7 @@ export function EvidenceView({ actorId, projectId }: { actorId: string; projectI
             </div>
           ))}
         </div>
+        <LoadMore visible={hasMore} onLoad={() => setLimit((value) => value + PAGE_SIZE)} />
       </section>
     </div>
   )

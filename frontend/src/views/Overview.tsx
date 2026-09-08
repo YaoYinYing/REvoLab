@@ -23,7 +23,7 @@ export function OverviewView({ actorId, projectId }: { actorId: string; projectI
     <div className="view">
       <div className="view-header">
         <h1>Overview</h1>
-        <p>Current scientific state of this project and the next thing to do.</p>
+        <p>Recent scientific state of this project and the next thing to do. Use the collection pages for complete lists.</p>
       </div>
 
       {loading ? <Loading /> : null}

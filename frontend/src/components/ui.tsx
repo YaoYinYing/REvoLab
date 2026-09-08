@@ -38,6 +38,17 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   )
 }
 
+export function LoadMore({ visible, onLoad }: { visible: boolean; onLoad: () => void }) {
+  if (!visible) return null
+  return (
+    <div className="load-more">
+      <button type="button" className="quiet-button" onClick={onLoad}>
+        Load more
+      </button>
+    </div>
+  )
+}
+
 export function EnumSelect<T extends string>({
   value,
   options,

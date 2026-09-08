@@ -5,8 +5,10 @@ import { projectApi } from '../api/backend'
 import { useObjects } from '../api/hooks'
 import type { ObjectType } from '../api/types'
 import { Button } from '../components/buttons'
-import { Badge, Empty, ErrorBox, EnumSelect, Field, Loading } from '../components/ui'
+import { Badge, Empty, ErrorBox, EnumSelect, Field, LoadMore, Loading } from '../components/ui'
 import { DEFAULT_OBJECT_TYPE, OBJECT_TYPES } from '../contracts/enums'
+
+const PAGE_SIZE = 50
 
 function parsePayload(raw: string): Record<string, unknown> {
   const trimmed = raw.trim()
@@ -31,7 +33,9 @@ export function ObjectsView({
   projectId: string
   onOpenObject: (seriesId: string) => void
 }) {
-  const { data: objects, loading, error, reload } = useObjects(actorId, projectId)
+  const [limit, setLimit] = useState(PAGE_SIZE)
+  const { data: objects, loading, error, reload } = useObjects(actorId, projectId, { limit })
+  const hasMore = (objects?.length ?? 0) === limit
   const [formError, setFormError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [name, setName] = useState('')
@@ -162,6 +166,7 @@ export function ObjectsView({
             </button>
           ))}
         </div>
+        <LoadMore visible={hasMore} onLoad={() => setLimit((value) => value + PAGE_SIZE)} />
       </section>
     </div>
   )

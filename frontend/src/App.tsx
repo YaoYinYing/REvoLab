@@ -44,6 +44,9 @@ export function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [view, setView] = useState<View>('overview')
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null)
+  const [showProjectForm, setShowProjectForm] = useState(false)
+  const [projectName, setProjectName] = useState('')
+  const [projectDescription, setProjectDescription] = useState('')
   const objectDetail = useObjectDetail(actorId, activeProjectId, selectedSeriesId)
 
   useEffect(() => {
@@ -72,6 +75,21 @@ export function App() {
     if (res.error || !res.data) return
     projects.reload()
     setActiveProjectId(res.data.id)
+  }
+
+  async function submitNewProject(event: React.FormEvent) {
+    event.preventDefault()
+    if (!actorId) return
+    const res = await projectApi(actorId).createProject({
+      name: projectName,
+      description: projectDescription || null,
+    })
+    if (res.error || !res.data) return
+    projects.reload()
+    setActiveProjectId(res.data.id)
+    setProjectName('')
+    setProjectDescription('')
+    setShowProjectForm(false)
   }
 
   function selectProject(projectId: string) {
@@ -153,7 +171,34 @@ export function App() {
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              className="quiet-button"
+              onClick={() => setShowProjectForm((value) => !value)}
+              aria-label="New project"
+            >
+              {showProjectForm ? 'Close' : '+ New'}
+            </button>
           </div>
+          {showProjectForm ? (
+            <form className="gate-inline" onSubmit={submitNewProject}>
+              <input
+                placeholder="New project name"
+                value={projectName}
+                onChange={(event) => setProjectName(event.target.value)}
+                required
+                maxLength={200}
+              />
+              <input
+                placeholder="Description (optional)"
+                value={projectDescription}
+                onChange={(event) => setProjectDescription(event.target.value)}
+              />
+              <button type="submit" className="btn btn-primary">
+                Create
+              </button>
+            </form>
+          ) : null}
         </nav>
       </header>
 

@@ -112,6 +112,7 @@ h3 { margin: 0 0 8px; font-size: 12px; }
 .btn-danger { background: #a33b2b; color: #fff; }
 .quiet-button { border: 1px solid #cbd5ce; background: var(--panel); color: #38564b; padding: 7px 12px; font-size: 11px; font-weight: 700; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; }
 
+.load-more { display: flex; justify-content: center; padding: 14px 0 4px; }
 .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 8px; font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 500; background: #e2e8e2; color: #40524d; }
 .badge-good { background: #d6ecdf; color: #1f6f5b; }
 .badge-warn { background: #f3e4c8; color: #8a5a16; }

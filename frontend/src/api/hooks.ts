@@ -30,15 +30,21 @@ export function useProjects(actorId: string | null): AsyncState<ProjectRead[]> {
   )
 }
 
-export function useObjects(actorId: string | null, projectId: string | null): AsyncState<ObjectSummaryRead[]> {
+export type ListQuery = { limit?: number; offset?: number }
+
+export function useObjects(
+  actorId: string | null,
+  projectId: string | null,
+  query: ListQuery = {},
+): AsyncState<ObjectSummaryRead[]> {
   return useAsync(
     () =>
       actorId && projectId
         ? projectApi(actorId)
-            .listObjects(projectId)
+            .listObjects(projectId, query)
             .then((res) => value<ObjectSummaryRead[]>(res as ApiResult<ObjectSummaryRead[]>))
         : Promise.resolve([]),
-    [actorId, projectId],
+    [actorId, projectId, query.limit, query.offset],
   )
 }
 
@@ -58,27 +64,35 @@ export function useObjectDetail(
   )
 }
 
-export function useEvidence(actorId: string | null, projectId: string | null): AsyncState<EvidenceRead[]> {
+export function useEvidence(
+  actorId: string | null,
+  projectId: string | null,
+  query: ListQuery = {},
+): AsyncState<EvidenceRead[]> {
   return useAsync(
     () =>
       actorId && projectId
         ? projectApi(actorId)
-            .listEvidence(projectId)
+            .listEvidence(projectId, query)
             .then((res) => value<EvidenceRead[]>(res as ApiResult<EvidenceRead[]>))
         : Promise.resolve([]),
-    [actorId, projectId],
+    [actorId, projectId, query.limit, query.offset],
   )
 }
 
-export function useDecisions(actorId: string | null, projectId: string | null): AsyncState<DecisionRead[]> {
+export function useDecisions(
+  actorId: string | null,
+  projectId: string | null,
+  query: ListQuery = {},
+): AsyncState<DecisionRead[]> {
   return useAsync(
     () =>
       actorId && projectId
         ? projectApi(actorId)
-            .listDecisions(projectId)
+            .listDecisions(projectId, query)
             .then((res) => value<DecisionRead[]>(res as ApiResult<DecisionRead[]>))
         : Promise.resolve([]),
-    [actorId, projectId],
+    [actorId, projectId, query.limit, query.offset],
   )
 }
 
@@ -86,14 +100,15 @@ export function useResources(
   actorId: string | null,
   projectId: string | null,
   resourceKind: ResourceKind | null = null,
+  query: ListQuery = {},
 ): AsyncState<ReferenceRead[]> {
   return useAsync(
     () =>
       actorId && projectId
         ? projectApi(actorId)
-            .listResources(projectId, resourceKind ? { resource_kind: resourceKind } : {})
+            .listResources(projectId, { ...query, ...(resourceKind ? { resource_kind: resourceKind } : {}) })
             .then((res) => value<ReferenceRead[]>(res as ApiResult<ReferenceRead[]>))
         : Promise.resolve([]),
-    [actorId, projectId, resourceKind],
+    [actorId, projectId, resourceKind, query.limit, query.offset],
   )
 }

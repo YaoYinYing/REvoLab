@@ -1,6 +1,7 @@
 import { api } from './client'
 
 const STORAGE_KEY = 'revolab.actor_id'
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
  * Phase-2 dev identity seam (Phase 1 left real authentication deferred): the
@@ -11,14 +12,30 @@ const STORAGE_KEY = 'revolab.actor_id'
  * Creation is single-flight: React StrictMode's double effect invocation (dev)
  * must not mint two actors or store an id different from the one the app is
  * holding, or a later reload would resolve a different Actor and lose the
- * Project it created.
+ * Project it created. The persisted id is also validated against the backend
+ * and recreated when it is malformed or no longer exists there.
  */
 let creation: Promise<string> | null = null
 
 export function resolveActor(): Promise<string> {
   const existing = window.localStorage.getItem(STORAGE_KEY)
-  if (existing) return Promise.resolve(existing)
+  if (existing && existing.match(UUID_RE)) {
+    return api
+      .GET('/api/actors/{actor_id}', { params: { path: { actor_id: existing } } })
+      .then(({ response }) => {
+        if (response.ok) return existing
+        window.localStorage.removeItem(STORAGE_KEY)
+        return mintActor()
+      })
+  }
+  if (existing) {
+    // A malformed stored value would otherwise leave every request 401ing.
+    window.localStorage.removeItem(STORAGE_KEY)
+  }
+  return mintActor()
+}
 
+function mintActor(): Promise<string> {
   creation ??= api
     .POST('/api/actors')
     .then(({ data, error }) => {
@@ -29,7 +46,6 @@ export function resolveActor(): Promise<string> {
     .finally(() => {
       creation = null
     })
-
   return creation
 }
 
