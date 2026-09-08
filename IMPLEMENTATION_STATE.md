@@ -16,7 +16,7 @@ Last verified: 2026-09-08
 - PostgreSQL Docker Compose service, Alembic environment configuration, GitHub Actions CI configuration, architecture documentation, ADR directory, agent conventions, and Apache-2.0 licensing files.
 - Harness operating model control plane: `docs/agents/HARNESS_OPERATING_MODEL.md` defines the four loops (agent/goal/subagent-workflow/Ralph), the Primary Integrator role, the skill taxonomy, the safety/permission plane (default `workspace-write` + approval), and the 7-phase ODDRIVC workflow. `CLAUDE.md` carries only the short invariants derived from it.
 - Project skills relocated from the top-level `skills/` tree into `.agents/skills/` (the canonical DSH skill root) and verified to load: `project-architecture`, `scientific-object-model`, `provenance-lineage`, `decision-record`, `project-context`, `artifact-inspection`, `driver-development`, `project-plugin-development`, plus the new constitutional `engineering-workflow` skill. The `engineering-workflow` skill (v0.2.0) carries both the ODDRIVC procedure and the long-running refactor protocol (three sources of truth, persistent checklist, migration-first deletion, vertical-slice migration, executable acceptance, DESIGN/EXECUTION/MACHINE definition of done); a draft root-level `LONG_TASK_HANDLING.md` was composed into that skill and removed to avoid a second source of truth.
-- GitHub Actions CI is green on the architecture PR (head `08d2502`, the round-5 final commit; CI runs #37–#38 all green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
+- GitHub Actions CI is green on the architecture PR (head `ae8684b`, the round-6 final commit; CI runs #43–#44 all green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
 
 ## Not yet verified
 
@@ -171,8 +171,11 @@ interpretive fields stay mutable until a **committed** Decision cites it (drafts
 freeze), then freeze → correction by a new Evidence row; (7) project-scoped
 Evidence/Decision creation + detail surface restored in the API contract; (8)
 SYSTEM_ARCHITECTURE Identity/Sharing diagram rewritten to the new authority model, and
-the stale `current_revision` pointer sentence removed. A fresh independent review is
-pending. Status remains **PROPOSED — pending human review**.
+the stale `current_revision` pointer sentence removed. A fresh independent architecture
+review verified all eight items and found one P1 (a leftover blanket "global-edge-create
+requires stewardship" that contradicted the per-edge table — reconciled to the table)
+plus six P2s — all fixed. Final clean audit: **no P0, no P1**. Status remains
+**PROPOSED — pending human review**.
 
 ---
 
