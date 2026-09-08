@@ -177,6 +177,25 @@ requires stewardship" that contradicted the per-edge table — reconciled to the
 plus six P2s — all fixed. Final clean audit: **no P0, no P1**. Status remains
 **PROPOSED — pending human review**.
 
+### 2026-09-08 — Human review round 7 (PR #1), final executable-authority patch; PROPOSED pending human review
+
+The seventh and final review (9.8/10) found the top-level architecture accepted and
+named a single merge blocker plus small cleanups, recommending merge after this patch
+with no further architecture review. Landed: (1) **Roadmap phase ordering fixed** —
+Phase 1 is now "Scientific context + minimal authority substrate" (`Actor`,
+`ProjectMembership`, `ResourceStewardship`, `MutationGrant` issuance), so Phase-1 object
+creation is executable against the real authority model; Phase 3 is now "Provider
+identity foundation" (`ExternalProviderCredentialBinding`, Secret-store boundary,
+`CapabilityAvailability`); (2) **`ProjectResourceLink.role?` removed** — membership role
+is the single authorization-role truth; the link has no per-resource role (any future
+scientific qualifier is a separate non-authorizing field); (3) **global object search
+explicitly authorization-filtered** (union of resources visible through the Actor's
+Projects, never a bare global `SELECT`); (4) two Phase-1 acceptance rules added —
+Evidence freezes once a committed Decision cites it **or** another Evidence targets it,
+and stewardship transfer/freeze requires project owner + approval. Ledger swept to the
+current head; outdated Codex threads resolved. **Final clean audit: no P0, no P1.**
+Status remains **PROPOSED — pending human review**.
+
 ---
 
 A second human review again returned **REQUEST CHANGES** (still "don't merge yet",

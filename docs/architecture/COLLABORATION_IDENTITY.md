@@ -50,7 +50,11 @@ ExternalProviderCredentialBinding  a per-(Actor, provider, credential kind) non-
   ```
 
   A `viewer` in the steward Project cannot mutate; a member of a non-steward Project
-  cannot mutate even if it holds a read link.
+  cannot mutate even if it holds a read link. **Transferring or freezing
+  `ResourceStewardship` is higher authority than ordinary mutation** — it changes who
+  controls a global resource, so it requires the steward Project's **owner** plus
+  explicit approval (the same policy as a Project-sharing change), never a plain
+  `owner`/`member` mutation.
 - **Who enforces it (round 6):** the application command layer asks Identity to issue a
   **`MutationGrant`**; `Scientific Object` and `Evidence/Provenance` domain commands
   accept the already-validated grant and therefore **do not import Identity** — so they
@@ -175,14 +179,19 @@ identity only, **not** a God object.
   Their identity is a global UUID.
 - **Project membership of global resources is a separate join, not a column on the
   resource:** `project_resource_link (project_id, resource_id FK →
-  global_resource_registry.resource_id, role?, folder?, preferred_revision_id?,
+  global_resource_registry.resource_id, folder?, preferred_revision_id?,
   annotation?)` — **it does NOT store `resource_kind`**: `resource_id` already globally
   identifies the row, and the kind is obtained by joining the registry when needed (a
   second `resource_kind` column would be a second, denormalized copy of the same truth).
   The link also carries the project-local **folder/container placement** and any
-  annotation. `preferred_revision_id` is the optional **project-local pin** of which
-  revision this Project prefers — it is stored on the link, not on the global series,
-  and must point at a revision already visible through this Project's links. A global
+  annotation. **There is no `role?` on the link**: `ProjectMembership.role` is the single
+  authorization role truth, and `ProjectResourceLink` grants read/context visibility
+  only — never a per-resource role (that would be a second ACL). Any future *scientific*
+  qualifier (target / reference / control / candidate) is a separate, non-authorizing
+  field if and when a real need appears — not `role`. `preferred_revision_id` is the
+  optional **project-local pin** of which revision this Project prefers — it is stored on
+  the link, not on the global series, and must point at a revision already visible
+  through this Project's links. A global
   resource belongs to a Project's context *because a link row exists*, not because the
   resource row can only live in one Project. This is what lets one object/reference sit
   in many Projects. **Series vs revision (reviewer round 3):** linking a series exposes
@@ -338,7 +347,7 @@ project-scoped scientific record):
 | Entity | Class | Create | Update | Version | Archive | Delete |
 |---|---|---|---|---|---|---|
 | Project | project-local | yes | metadata/visibility | no | **tombstone** (`deleted_at`) | **never hard-delete the row**; delete active links/membership/placement; archive its Evidence/Decision/knowledge edges; global resources untouched |
-| ProjectResourceLink | project-local | yes | role/folder/preferred_revision/annotation | n/a | n/a | hard-delete safe (context/access/placement link) |
+| ProjectResourceLink | project-local | yes | folder/preferred_revision/annotation | n/a | n/a | hard-delete safe (context/access/placement link — no per-resource role) |
 | ResourceStewardship | project-local (steward Project) | yes | transfer / freeze | n/a | n/a | hard-delete on explicit transfer; on steward-Project tombstone the resource **freezes** (no mutation) until transferred |
 | ScientificObject | **global** | yes | label/metadata while draft (stewardship-gated) | **yes — revision (see SCIENTIFIC_OBJECT_MODEL)** | soft (once referenced) | global object: blocked if referenced; else archived, never hard-deleted |
 | GlobalProvenanceEdge (#1–7) | **global** | yes | **never** | n/a | n/a | **never** — a provenance node; correct by superseding edge |

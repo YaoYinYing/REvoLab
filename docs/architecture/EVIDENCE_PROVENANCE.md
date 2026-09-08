@@ -174,13 +174,14 @@ becomes unavailable.
 
 **Contradiction & lifecycle:** contradictory Evidence records coexist as separate rows;
 contradiction is a first-class fact, not an inconsistency to avoid. An Evidence row is
-**mutable only while no COMMITTED Decision cites it** (see `SCIENTIFIC_GRAPH.md`): its
-`source`/`target` are immutable from creation, and its interpretive fields freeze once a
-committed Decision cites it — a draft Decision's citation does **not** freeze it.
-Correction after freeze is a **new Evidence row**, never an in-place edit. A
-**Decision** settles a contradiction by citing both sides with per-citation `cited_as`
-polarity and stating the resolution rationale; supersession happens by recording a
-*newer* Decision, never by mutating or deleting the old one.
+**mutable only while no COMMITTED Decision cites it and no other Evidence targets it**
+(see `SCIENTIFIC_GRAPH.md`): its `source`/`target` are immutable from creation, and its
+interpretive fields freeze once a committed Decision cites it **or another Evidence
+targets it** — a draft Decision's citation does **not** freeze it. Correction after
+freeze is a **new Evidence row**, never an in-place edit. A **Decision** settles a
+contradiction by citing both sides with per-citation `cited_as` polarity and stating the
+resolution rationale; supersession happens by recording a *newer* Decision, never by
+mutating or deleting the old one.
 
 ---
 

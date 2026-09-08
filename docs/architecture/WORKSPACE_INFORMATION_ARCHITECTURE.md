@@ -10,7 +10,12 @@
 - **Project selector** (left) — switches the active Project; drives left nav,
   context inspector, and agent panel.
 - **Global object search** (command-palette typeahead over object names + external
-  IDs + evidence labels). Breadcrumbs mirror navigation.
+  IDs + evidence labels). Breadcrumbs mirror navigation. **"Global" means globally
+  placed UI, not an unrestricted global-resource query**: results are the **union of
+  resources visible through the Projects the Actor belongs to** (active Project first),
+  filtered through each Project's authorization projection — never a bare
+  `SELECT ... WHERE name ILIKE ...` over the global tables, which would leak
+  titles/external IDs.
 
 **Left navigation (project-scoped):**
 

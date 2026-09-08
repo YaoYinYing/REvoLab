@@ -217,10 +217,11 @@ Evidence.target  (exactly one, required) — what the claim is about
   an Evidence with many sources/targets.
 - **Immutability:** `source` and `target` are immutable once the Evidence is written.
   Interpretive fields (`kind`/`role`/`polarity`/`confidence`/`scope`/`interpretation`)
-  remain mutable **until a COMMITTED Decision cites the Evidence** — a *draft* Decision's
-  citation does **not** freeze it, because a draft is not project truth yet. Once a
-  committed Decision cites it, the Evidence is frozen; correction is a **new Evidence
-  row**, never an in-place edit.
+  remain mutable **until a COMMITTED Decision cites the Evidence OR another Evidence
+  targets it** — a *draft* Decision's citation does **not** freeze it, because a draft is
+  not project truth yet; but if a second Evidence points at this one as its target, the
+  first is referenced and freezes. Once frozen, correction is a **new Evidence row**,
+  never an in-place edit.
 - **`experiment` and `note` are not canonical node types.** An experiment that is the
   claim source is modeled as an Evidence with `kind=experimental`; a direct human
   observation is `kind=observation` (a `hypothesis` is an Evidence with a `hypothesis`

@@ -77,7 +77,7 @@ reason and the phase that resolves it:
 | **ProjectResourceLink referential identity** | **Decided** — thin `GlobalResourceRegistry(resource_id PK, resource_kind)` spine; `ProjectResourceLink.resource_id` FKs to it and **does not store `resource_kind`**; every concrete global table PK is both PK and FK to the registry (single-column FK, no polymorphic FK) (`COLLABORATION_IDENTITY.md`, ADR-0008) | Phase 1 |
 | **Relation physical schema** (one table shared by the two edge kinds vs edge-family tables; uniqueness/supersession key) | **Deferred to the Phase-1 executable spike** — see `SCIENTIFIC_GRAPH.md` (the single source for the logical graph contract; do NOT freeze the physical shape in PR1 — ownership/lifecycle are already frozen) | Phase 1 |
 | **Evidence kind/role enums** (incl. `hypothesis` role) | **Decided** — in `EVIDENCE_PROVENANCE.md` | Phase 1 |
-| **Actor / identity persistence** | **Shape decided** (opaque UUID Actor; auth identity/membership/role/credential separation in `COLLABORATION_IDENTITY.md`); tables built in Phase 3, not reopened | Phase 3 |
+| **Actor / identity persistence** | **Shape decided** (opaque UUID Actor; `ProjectMembership`/`ResourceStewardship`/`MutationGrant` in `COLLABORATION_IDENTITY.md`); the authority-substrate tables are built in Phase 1, credential binding in Phase 3 — not reopened | Phase 1 (authority substrate), Phase 3 (credential binding) |
 | **OpenBio cache semantics** | **Decided** — `ExternalReference` = `ExternalIdentity` FK + resolver/cache metadata (checksum, as_of), never a snapshot copy | Phase 7 |
 | **SessionReference / ExternalReference node types; import via `imported_as` edge (no separate ImportRecord node)** | **Decided** in `SCIENTIFIC_GRAPH.md` / `EVIDENCE_PROVENANCE.md` | Phase 1/7 |
 
@@ -93,24 +93,35 @@ real frontend/API slice, then an **Identity foundation** (the Provider/Capabilit
 domain depends on Identity for credential presence), then integrations, then
 collaboration/sharing and the agent.
 
-### Phase 1 — Scientific context core
+### Phase 1 — Scientific context core + minimal authority substrate
 
 - **Goal:** replace the bootstrap's accidental architecture with the proposed domain
-  model: typed object spine + extension tables, project-local organization / global
+  model — typed object spine + extension tables, project-local organization / global
   relation split, the `GlobalResourceRegistry` referential spine, distinct reference
-  nodes, decision promotion, soft-archive lifecycle, explicit Project-membership
-  ownership.
-- **Owned domains:** Project, Scientific Object, Evidence/Provenance, Knowledge (
-  Core), Identity (ownership boundary only).
-- **Vertical slice:** models + migrations + domain services + domain-command API for
-  objects/relations/evidence/decisions/promotion, the object-detail aggregate, bounded
-  graph query, and a minimal `ContentStore` (fsspec local backend) so uploaded
-  artifacts (`authority = revolab`) share the ArtifactReference abstraction.
-- **Acceptance evidence:** Alembic drift on SQLite + PG; tests for: no blanket CASCADE
-  (deleting a Project preserves objects), object revisioning, decision draft→commit,
-  relationship immutability, typed object extension, and `ContentStore.put/get` returns
-  `checksum`/`size`/`content_type` and never mutates stored bytes.
-- **Non-goals:** auth, providers, agent.
+  nodes, decision promotion, soft-archive lifecycle — **and the minimal authority
+  substrate the scientific commands already depend on**, so no command is built on a
+  fake identity.
+- **Owned domains:** Project, Scientific Object, Evidence/Provenance, Knowledge (Core),
+  Identity/Collaboration (minimal authority substrate).
+- **Vertical slice:**
+  - **Authority substrate:** `Actor` (opaque UUID), `ProjectMembership`
+    (owner/member/viewer), `ResourceStewardship` (grant/transfer/freeze), and
+    `MutationGrant` issuance at the command boundary — **not** authentication.
+  - **Scientific context:** models + migrations + domain services + domain-command API
+    for objects/relations/evidence/decisions/promotion, the object-detail aggregate,
+    bounded graph query, and a minimal `ContentStore` (fsspec local backend) so uploaded
+    artifacts (`authority = revolab`) share the ArtifactReference abstraction.
+- **Acceptance evidence:** Alembic drift on SQLite + PG; tests for: atomic create =
+  series + initial revision + `ProjectResourceLink` + `ResourceStewardship` (no
+  pre-existing grant); `can_mutate` works for owner/member in the steward Project and
+  denies viewer/non-steward/tombstoned Project; a mutation command rejects a missing or
+  stale `MutationGrant`; no blanket CASCADE (deleting a Project preserves objects);
+  object revisioning; decision draft→commit; relationship immutability; typed object
+  extension; Evidence freezes once a committed Decision cites it **or** another Evidence
+  targets it; stewardship transfer requires project owner + approval; and
+  `ContentStore.put/get` returns `checksum`/`size`/`content_type` and never mutates
+  stored bytes.
+- **Non-goals:** OIDC/login, RBAC engine, public visibility, providers, agent.
 
 ### Phase 2 — Real frontend/API vertical slice
 
@@ -125,19 +136,22 @@ collaboration/sharing and the agent.
   decision flows against the real API (no fixtures).
 - **Non-goals:** providers, agent, collaboration.
 
-### Phase 3 — Identity foundation (Actor + credential binding)
+### Phase 3 — Provider identity foundation (credential binding + secret store + availability)
 
-- **Goal:** establish the durable identity primitives that Provider availability and
-  collaboration both consume, without building full authentication.
-- **Owned domains:** Identity/Collaboration.
-- **Vertical slice:** `Actor` (opaque UUID), `ExternalProviderCredentialBinding`
-  (`actor_id, provider_key, kind, secret_ref`), and the **minimal
-  `ProjectMembership` contract** (owner/member/viewer). The Secret store owns the
-  material; Core holds only the non-secret binding.
+- **Goal:** add the **provider-side** identity work that Phase 4 integrations consume —
+  `Actor`/`ProjectMembership`/`ResourceStewardship`/`MutationGrant` already exist from
+  Phase 1; this phase adds credentials and availability.
+- **Owned domains:** Identity/Collaboration (credential binding), Provider/Capability
+  (availability query).
+- **Vertical slice:** `ExternalProviderCredentialBinding`
+  (`actor_id, provider_key, kind, secret_ref`), the Secret-store material boundary, and
+  `CapabilityAvailability(actor, project)` as a derived query. Core holds only the
+  non-secret binding; the `CredentialLease` materializes secrets only in the driver
+  transport at call time.
 - **Acceptance evidence:** an Actor can hold a credential binding; `has_credential(actor,
-  provider, kind)` is a derived query; no secret material appears in a Core table; the
-  availability formula `driver READY AND credential present for the calling Actor AND
-  project policy permits` is queryable with a stub driver.
+  provider, kind)` is a derived query; no secret material appears in a Core table or log;
+  the availability formula `driver READY AND credential present for the calling Actor
+  AND project policy permits` is queryable with a stub driver.
 - **Non-goals:** OIDC/login, RBAC engine, per-object ACL, public visibility (all still
   deferred).
 
@@ -163,9 +177,10 @@ collaboration/sharing and the agent.
   revision⇒series visibility closure and the project-context write invariant are
   exercised for real.
 - **Owned domains:** Identity/Collaboration, Project.
-- **Vertical slice:** membership/roles onto the Phase-3 foundation; project visibility
-  (private/shared); sharing a global object across projects via membership;
-  authorization-aware access with the revision⇒series closure.
+- **Vertical slice:** membership/roles are already in the Phase-1 authority substrate;
+  this phase adds project visibility (private/shared), sharing a global object across
+  projects via membership, and authorization-aware access with the revision⇒series
+  closure.
 - **Acceptance evidence:** two projects share one object without duplication; linking a
   revision makes its series visible but exposes no sibling revisions; every
   project-scoped write rejects endpoints not already in the Project's link set; deleting
