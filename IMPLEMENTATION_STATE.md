@@ -101,6 +101,28 @@ effective config, not the filename); the package-install boundary is now
 green). A fresh independent architecture review found the four P1 blockers CLOSED with
 no new P1. Status remains **PROPOSED — pending human review**.
 
+### 2026-09-08 — Human review round 4 (PR #1), internal contradictions closed; PROPOSED pending human review
+
+The fourth review rated the PR ~9.5/10 and found no new subsystems needed; it flagged
+seven internal contradictions the round-3 fixes had introduced, and said they must close
+before approval. All seven are now closed: (1) `ProjectResourceLink` no longer stores
+`resource_kind` (the kind is joined from the registry) and every concrete global table
+PK is also an FK to `GlobalResourceRegistry.resource_id`; (2) the one-directional
+revision⇒series visibility closure is frozen (revision visible ⇒ owning series visible;
+series visible ⇏ revisions visible; no sibling auto-exposure); (3) a write-time
+project-context visibility invariant forbids ghost knowledge in
+Evidence/Decision/ProjectKnowledgeEdge; (4) provenance single truth — RunReference is an
+identity card and input/output/originating-run are derived aggregate fields over the
+edges, not persisted columns; (5) the compute input contract is closed
+(`consumed_as_input_by` accepts `ScientificObjectRevision | ArtifactReference`;
+`ComputeCapability.submit` takes `inputs: [InputBinding]`); (6) the roadmap is reordered
+so an Identity foundation precedes Provider integration (7 phases); (7) `ExternalIdentity`
+is the single external-identity registry and `ExternalReference` holds an
+`external_identity_id` FK plus cache metadata. Also: `version` removed from the series
+spine, and the approved dependency baseline is defined as a digest (future policy note).
+A fresh independent architecture review found all seven CLOSED with **no new P0/P1**.
+Status remains **PROPOSED — pending human review**.
+
 ---
 
 A second human review again returned **REQUEST CHANGES** (still "don't merge yet",

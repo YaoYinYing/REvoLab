@@ -88,7 +88,9 @@ External systems own their capabilities and execution truth.
 - **Purpose:** record what external work and internal observation underpin the
   project, and reconstruct *why things exist*.
 - **Owned concepts:** RunReference, SessionReference, ArtifactReference,
-  LiteratureReference, ExternalReference, Evidence (interpreted claim) and its
+  LiteratureReference, ExternalReference (an `external_identity_id` FK + resolver/cache
+  metadata — it does **not** re-store `authority`/`native_id`; the Scientific Object
+  domain owns the `ExternalIdentity` registry), Evidence (interpreted claim) and its
   source/target associations, and the **global provenance edges #1–8**
   (`variant_of`, `derived_from`, `represents`, `evaluates`,
   `consumed_as_input_by`, `produced`, `imported_as`, `generated_by`) as
@@ -101,6 +103,9 @@ External systems own their capabilities and execution truth.
     **fact**, Evidence is an **interpreted claim**.
   - Contradiction coexists; a Decision settles it.
   - Provenance must remain traversable after external systems change.
+  - **Project-context write invariant:** a project-scoped Evidence (or its
+    source/target) may only reference global endpoints already visible through that
+    Project's `ProjectResourceLink` set — never ghost knowledge.
 - **Public contracts:** evidence/reference CRUD plus provenance traversal queries.
 - **Dependencies:** Scientific Object, Project.
 - **Non-responsibilities:** storing external execution truth; versioning external
@@ -121,6 +126,9 @@ External systems own their capabilities and execution truth.
   - A committed decision is never edited; it is superseded.
   - Project knowledge edges are immutable and are archived **with** their
     Decision/Evidence on Project tombstone — never kept as dangling global edges.
+  - **Project-context write invariant:** `Decision.selects` may only target a
+    Series/Revision already visible through that Project's `ProjectResourceLink` set
+    (same rule as Evidence source/target).
   - "Current scientific conclusion" is a derived query, not a mutable field.
 - **Public contracts:** decision draft → commit → supersede; cite evidence.
 - **Dependencies:** Evidence/Provenance, Project.

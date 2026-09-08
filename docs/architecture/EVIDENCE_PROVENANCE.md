@@ -25,7 +25,7 @@ external mutable execution truth. **Identity is durable; state is refreshable.**
 | **SessionReference** | durable, namespaced pointer to an external interactive session (REvoDesign) | `session_references` |
 | **ArtifactReference** | durable, namespaced pointer to an external output (identity card) | `artifact_references` |
 | **LiteratureReference** | durable citation to an external publication | `literature_references` |
-| **ExternalReference** | durable external lookup/cache identity handle (OpenBio) — identity + bounded validated metadata, never a snapshot copy | `external_references` |
+| **ExternalReference** | resolver/cache metadata record that **references** an `ExternalIdentity` (`external_identity_id` FK) — checksum/as_of/bounded validated metadata, never a copy of the external payload | `external_references` |
 | **Evidence** | a durable, interpreted **claim** that some reference/experiment/note supports or relates to a project target | `evidence` |
 | **Decision** | durable project conclusion + next actions citing Evidence | `decisions` |
 
@@ -64,22 +64,28 @@ pointing at a `source` (the reference/observation interpreted) and a `target`
 Model the chain as a directed acyclic provenance graph:
 
 ```text
-ScientificObjectRevision --consumed_as_input_by--> RunReference
-RunReference             --produced-->            ArtifactReference
+ScientificObjectRevision | ArtifactReference --consumed_as_input_by--> RunReference | SessionReference
+RunReference | SessionReference             --produced-->            ArtifactReference
 ArtifactReference
   | ExternalReference    --imported_as-->         ScientificObjectRevision   (creates the derived revision)
 ```
 
-The **RunReference does the stitching**: it carries explicit `input_objects` and
-`output_artifacts` links so you can walk from any object forward through runs to
-artifacts and back into derived objects.
+**RunReference is an identity card, not a relationship store (single provenance
+truth).** Input and output relationships live **only** as edges — `consumed_as_input_by`
+(what a run consumed) and `produced` (what a run produced) — never as denormalized
+columns on the reference rows:
+
+- `input_objects` / `output_artifacts` / `originating_run` are **derived aggregate
+  fields** returned by API/traversal queries, not persisted columns. Persisting them
+  alongside the edges would be a second, driftable copy of the same truth; the edges are
+  the single durable source, and the aggregate fields are computed on read.
 
 **Record origin AND content without copying REvoCompute state:** pin the immutable
 identity and a content fingerprint (checksum/digest). A RunReference stores:
 `authority(=revocompute for its own runs), run_id (stable identity), task_type,
-input_parameter_digest, submitted_at, immutable input artifact ids`. An
-ArtifactReference stores: `authority, artifact_id, content_type, size, checksum,
-version_id, originating run`.
+input_parameter_digest, submitted_at` — its inputs are the `consumed_as_input_by` edges.
+An ArtifactReference stores: `authority, artifact_id, content_type, size, checksum,
+version_id` — its originating run is the reverse traversal of `produced`.
 
 **Checksum is NOT "proof of origin"** (reviewer finding #12). A checksum proves
 **content integrity / byte identity** — that a fetched artifact is byte-for-byte what
@@ -98,6 +104,20 @@ nodes-with-edges (origin) — without a graph DB.
 `PROVIDER_CAPABILITIES.md` "Authority vs provider"), authority-native stable
 `run_id`/`artifact_id`/accession, `checksum`/`digest`, `size`, an immutable
 `version_ref`, content type.
+
+**External identity vs external reference — one truth.** `ExternalIdentity` (owned by
+the Scientific Object domain, `UNIQUE(authority, native_id)`) is the **single** registry
+of an external identity. `ExternalReference` does **not** re-store `authority`/
+`native_id`; it holds an `external_identity_id` FK plus resolver/cache metadata
+(`checksum`, `as_of`, bounded validated metadata). The chain is:
+
+```text
+ExternalIdentity  (the durable id, once)
+   ↓ external_identity_id FK
+ExternalReference (resolver/cache metadata)
+   ↓ imported_as
+ScientificObjectRevision
+```
 
 **Never identity:** a filesystem path, a mutable container tag (`:latest`), a bare
 bucket name, a mutable username, or a *resolver provider* (OpenBio vs a direct API).

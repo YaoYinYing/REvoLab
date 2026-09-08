@@ -61,8 +61,9 @@ PostgreSQL is the durable store. Do **not** treat SQLite as architecture truth.
 references, `GlobalProvenanceEdge` rows) index their own columns — **no
 `(project_id, relation_type)` composite**, because `GlobalProvenanceEdge` carries no
 `project_id`. Project-scoped records (`project_resource_link`, `ProjectKnowledgeEdge`,
-`evidence`, `decision`) index their `project_id`. Index `authority + native_id` for
-external-reference lookup.
+`evidence`, `decision`) index their `project_id`. `external_identity` enforces
+`UNIQUE(authority, native_id)`; `external_reference.external_identity_id` is indexed for
+reference/cache lookup (ExternalReference re-stores no identity columns).
 Use PostgreSQL enums or CHECK constraints, not free `String(50)` where the domain is
 closed.
 
@@ -101,11 +102,24 @@ GlobalResourceRegistry(resource_id PK, resource_kind, created_at)
                   | literature_reference | external_reference
 ```
 
+`resource_kind` values are singular **kind labels** (e.g. `run_reference`); the
+concrete tables are their plural forms (e.g. `run_references`). Phase 1 locks this
+convention for the enum labels.
+
 `resource_id` **is** the primary key of the concrete global row (the `series_id` /
-`revision_id` / reference id). Creating a global row inserts its registry row in the
-same transaction; the registry row is the **only** legal FK target for
-`ProjectResourceLink.resource_id`. The registry is referential identity only — it is
-**not** a God object and carries no scientific payload.
+`revision_id` / reference id), and the concrete table's primary key is **both PK and
+FK** to the registry:
+
+```text
+scientific_object_revision.revision_id   PK + FK → global_resource_registry.resource_id
+run_reference.run_id                     PK + FK → global_resource_registry.resource_id
+... (same for series / session / artifact / literature / external reference)
+```
+
+Creating a global row inserts its registry row **in the same transaction**, so a
+registry row can never exist without its concrete row (no dangling visible resource).
+The registry is referential identity only — it is **not** a God object and carries no
+scientific payload.
 
 - **Globally owned tables have NO `project_id` FK:**
   `global_resource_registry`, `scientific_object_series`/`scientific_object_revision`
@@ -114,17 +128,32 @@ same transaction; the registry row is the **only** legal FK target for
   `literature_references`, `external_references`, and `GlobalProvenanceEdge` rows.
   Their identity is a global UUID.
 - **Project membership of global resources is a separate join, not a column on the
-  resource:** `project_resource_link (project_id, resource_id, resource_kind,
-  role?, annotation?)` where `resource_id` FKs to
-  `global_resource_registry.resource_id` (a single-column FK to one real table) and
-  `resource_kind` mirrors the registry kind for validation/indexing convenience.
-  A global resource belongs to a Project's context *because a link row exists*, not
-  because the resource row can only live in one Project. This is what lets one
-  object/reference sit in many Projects. **Series vs revision (reviewer round 3):**
-  linking a series exposes the series record but does **not** auto-expose its
-  revisions — a specific immutable revision is visible to a Project only through a
-  `scientific_object_revision` link, so a new private revision is never auto-visible to
-  a Project that only links the series (see ADR-0008).
+  resource:** `project_resource_link (project_id, resource_id FK →
+  global_resource_registry.resource_id, role?, folder?, annotation?)` — **it does NOT
+  store `resource_kind`**: `resource_id` already globally identifies the row, and the
+  kind is obtained by joining the registry when needed (a second `resource_kind`
+  column would be a second, denormalized copy of the same truth). The link also
+  carries the project-local **folder/container placement** and any annotation. A global
+  resource belongs to a Project's context *because a link row exists*, not because the
+  resource row can only live in one Project. This is what lets one object/reference sit
+  in many Projects. **Series vs revision (reviewer round 3):** linking a series exposes
+  the series record but does **not** auto-expose its revisions — a specific immutable
+  revision is visible to a Project only through a `scientific_object_revision` link, so
+  a new private revision is never auto-visible to a Project that only links the series
+  (see ADR-0008 and the visibility closure below).
+- **Revision ⇒ series visibility closure (reviewer round 5, frozen):** a revision
+  cannot be displayed without its owning series (label, `object_type`, aliases,
+  external IDs, current-revision marker all live on the series). Therefore:
+
+  ```text
+  revision visible  ⇒  owning series visible
+  series visible    ⇏  revisions visible
+  ```
+
+  Concretely: creating or retaining a `scientific_object_revision` link **requires**
+  the owning series to be linked too (the authorization projection also derives the
+  owning series for free from the revision link). The reverse is **never** automatic —
+  linking a series exposes **no sibling revisions**, past or future.
 - **Special case — `ProjectMembership` (the Actor-in-Project row)** is a separate
   join over `actors × projects` and is the security unit; `ProjectResourceLink` is the
   context/visibility lens over **global resources**. They are distinct and both live at
@@ -159,8 +188,9 @@ claims cite remain untouched and shared.
 **Referential integrity:** FKs from project-scoped tables → `projects`; from
 project-scoped Evidence/Decision → referenced global objects/references (never
 CASCADE to a global object). FKs from `ProjectResourceLink.resource_id` →
-`global_resource_registry.resource_id` (single-column FK, no polymorphic FK).
-**Blanket CASCADE to global resources is removed** (see Lifecycle).
+`global_resource_registry.resource_id` (single-column FK, no polymorphic FK), and
+every concrete global table's primary key is **both PK and FK** to that same registry
+row. **Blanket CASCADE to global resources is removed** (see Lifecycle).
 
 ### Authorization projection: global identity != global readability
 
@@ -184,12 +214,30 @@ authorization projection (computed per query):
   Project's links, or themselves this Project's project-scoped Evidence/Decision).
   Partially-privileged edges are **not** shown — no partial leak.
 
-Example (from the review): Project B shares global object `X` but not `Y` (a private
-RunReference). Project B's users see `X`, but the edge
-`X --generated_by--> Y` is **not projected** for them, because endpoint `Y` is not in
-Project B's visible set. The storage graph is unchanged; the projection chooses what to
-expose. Revoking a `ProjectResourceLink` immediately removes visibility with no
-migration.
+**Write-time visibility invariant (reviewer round 5):** readability filtering is not
+enough on its own — it would allow **ghost knowledge**: a Project-scoped row that
+references a global endpoint the Project itself cannot see, hidden at read time but still
+persisted. Therefore, at **write time**, for every project-scoped row
+(`Evidence`, `Decision`, or `ProjectKnowledgeEdge`):
+
+```text
+every global endpoint it references
+    MUST already be visible through that Project's ProjectResourceLink set.
+
+Evidence.source / Evidence.target  → same rule (a target Revision implies its
+                                    owning Series is visible via the closure).
+Decision --selects (Series|Revision) → the permanent target must be linked.
+Decision --cites (Evidence)           → the cited Evidence is same-Project (already).
+```
+
+This is a **domain invariant** enforced by the command service, not merely a query-time
+projection behavior — the graph must never contain project knowledge whose global
+anchors the Project cannot see.
+
+(Read-time projection example: Project B links global object `X` but not `Y`, a private
+RunReference. The storage graph still holds `X --generated_by--> Y`, but Project B's
+projection hides that edge because endpoint `Y` is invisible to B — no partial leak.
+Revoking a `ProjectResourceLink` removes visibility immediately with no migration.)
 
 **Deletion:** soft-delete/archive for scientific content; hard-delete for
 links/memberships; immutable records never hard-deleted. Use a `deleted_at`/null

@@ -31,26 +31,38 @@ into a Project's context are not only ScientificObjects; references are global t
 `ProjectResourceLink` is:
 
 ```text
-ProjectResourceLink(project_id, resource_id, resource_kind, role?, annotation?)
+ProjectResourceLink(project_id, resource_id FK → GlobalResourceRegistry.resource_id,
+                    role?, folder?, annotation?)
 ```
 
-where `resource_id` FKs to a thin `GlobalResourceRegistry(resource_id PK, resource_kind)`
-spine that every global resource row registers into (the concrete row's own primary key,
-inserted in the same transaction), and `resource_kind ∈ {scientific_object_series,
-scientific_object_revision, run_reference, session_reference, artifact_reference,
-literature_reference, external_reference}` mirrors the registry kind for
-validation/indexing. A single relational column cannot FK polymorphically to six tables,
-so the registry provides one real referential identity target. `ProjectResourceLink` is
-**not** a per-object ACL; it is the statement "this Project's context includes these
-global resources."
+`ProjectResourceLink` **does not store `resource_kind`** — `resource_id` already
+globally identifies the row, and the kind is obtained by joining the registry (a second
+`resource_kind` column would be a denormalized copy of the same truth). `resource_id`
+FKs to a thin `GlobalResourceRegistry(resource_id PK, resource_kind)` spine that every
+global resource row registers into (the concrete row's own primary key, inserted in the
+same transaction), and every concrete global table's primary key is **both PK and FK**
+to that registry row — so a registry row can never exist without its concrete row. A
+single relational column cannot FK polymorphically to six tables, so the registry
+provides one real referential identity target. `ProjectResourceLink` is **not** a
+per-object ACL; it is the statement "this Project's context includes these global
+resources."
 
-**Series vs revision visibility (reviewer round 3):** `scientific_object_revision` and
-`scientific_object_series` are **distinct** link kinds. Linking a series exposes the
-series record but does **not** auto-expose all its revisions (past or future). A
-specific immutable revision becomes visible to a Project only when that Project holds a
-`scientific_object_revision` link for it (the source of truth for "is this revision
-shareable" is the link set, not the implicit series membership). A new private revision
-is therefore **never** auto-visible to other Projects that only link the series.
+**Series vs revision visibility (reviewer round 3) + the round-5 closure:**
+`scientific_object_revision` and `scientific_object_series` are **distinct** link kinds.
+Linking a series exposes the series record but does **not** auto-expose all its
+revisions (past or future). A specific immutable revision becomes visible to a Project
+only when that Project holds a `scientific_object_revision` link for it (the source of
+truth for "is this revision shareable" is the link set, not the implicit series
+membership). The frozen closure is one-directional:
+
+```text
+revision visible  ⇒  owning series visible
+series visible    ⇏  revisions visible
+```
+
+Creating or retaining a revision link requires the owning series link to exist (or the
+authorization projection derives the owning series for free); sibling revisions are
+**never** auto-exposed.
 
 ### Global identity != global readability (authorization projection)
 
@@ -83,6 +95,14 @@ is **not** projected for Project B's users, because endpoint `Y` is not visible 
 **Immutability of who-may-see:** the durable storage graph never changes for
 authorization reasons; visibility is a projection computed at read time from current
 membership + links. Revoking a link removes visibility immediately with no migration.
+
+**Write-time visibility invariant (round 5):** read-time projection is not sufficient —
+it would permit *ghost knowledge* (a project-scoped row referencing a global endpoint
+the Project itself cannot see, hidden at read time but still persisted). Every
+project-scoped write (`Evidence`, `Decision`, `ProjectKnowledgeEdge`) must therefore
+verify at write time that **every global endpoint it references is already visible
+through that Project's `ProjectResourceLink` set** — a domain invariant, not merely a
+projection behavior.
 
 ### Project deletion is a tombstone, not a hard delete (SQL-valid)
 

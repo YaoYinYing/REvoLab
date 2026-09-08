@@ -18,7 +18,10 @@ is the projection of a scientific entity REvoLab has decided to represent.
 - `object_type` — the type discriminator (a registry key)
 - `title`/`name` — human label (mutable, **not** identity)
 - `description`, `created_at`, `updated_at`, `created_by` (audit)
-- optional `version` (type-gated; most content types get it)
+
+**No `version` column on the series spine** — versioning is `revision_seq` on
+`ScientificObjectRevision` (the revision is the versioned record, never a second
+`version` number on the series).
 
 **No organization column lives on the universal spine.** Where a global object sits
 in a workspace tree is *project-local* placement, recorded by the Project domain as a
@@ -168,6 +171,11 @@ aliases              → search synonyms used to find, never to cite
   registry row exists per external identity, independent of which REvoLab series it
   points at. (This normalizes the bootstrap's ad-hoc plain `provider + external_id`
   into an authority-keyed, integrity-checked registry.)
+
+  **`ExternalIdentity` is the single external identity truth.** The Evidence domain's
+  `ExternalReference` does **not** re-store `authority`/`native_id`; it holds an
+  `external_identity_id` FK plus resolver/cache metadata (see `EVIDENCE_PROVENANCE.md`
+  / `SCIENTIFIC_GRAPH.md`).
 
 - **Series ↔ external identity mapping:** a **separate, non-global-1:1** join table
   links a series to one or more external identities. This mapping is **not** forced to

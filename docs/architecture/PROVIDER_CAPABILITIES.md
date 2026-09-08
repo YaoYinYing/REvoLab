@@ -65,9 +65,11 @@ resolver / provider     → who you reach it through: openbio, direct-uniprot, r
   keep the same durable identity whether it is resolved today through OpenBio or
   tomorrow through a direct UniProt API. Changing the resolver must **never** change
   the identity or invalidate stored references.
-- **`ExternalIdentity` and `ExternalReference` carry the `authority`, not the provider.**
-  The provider/resolver is the *access* detail (which Driver/Capability can fetch it),
-  recorded separately from the durable identity.
+- **`ExternalIdentity` is the single `(authority, native_id)` registry** (owned by the
+  Scientific Object domain, `UNIQUE(authority, native_id)`). `ExternalReference` does
+  **not** re-store the identity; it carries an `external_identity_id` FK + resolver/cache
+  metadata. The provider/resolver is the *access* detail (which Driver/Capability can
+  fetch it), recorded separately from the durable identity.
 - **REvoCompute**: its own run/artifact IDs are special: REvoCompute is *both* the
   authority (it defines those IDs) *and* the provider (it executes them). That is the
   normal case for a compute engine and is fine.
@@ -99,9 +101,15 @@ class Capability(Protocol):            # base
 class ComputeCapability(Capability, Protocol):            # REvoCompute (batch)
     def list_task_kinds(self, credential) -> list[TaskKindRef]: ...
     def task_kind_schema(self, kind_id) -> JsonSchema: ...   # schema-as-data
-    def submit(self, kind_id, params: dict, credential) -> RunHandle: ...
+    def submit(self, kind_id, inputs: list[InputBinding],
+               params: dict, credential) -> RunHandle: ...
     def get_run(self, run_id, credential) -> RunView: ...
     def cancel(self, run_id, credential) -> None: ...
+
+class InputBinding:                                       # REvoLab-neutral resource ref
+    kind: ScientificObjectRevision | ArtifactReference    # Canonical graph edge #5
+    resource_id: UUID                                      # resolved via GlobalResourceRegistry
+    role: str | None                                       # provider schema names the role
 
 class ArtifactResolutionCapability(Capability, Protocol):  # pure read
     def resolve(self, ext_ref, rev=None, credential) -> ArtifactHandle: ...
@@ -263,13 +271,21 @@ REvoLab must **not import REvoCompute internals**. The minimum external contract
 REvoLab needs (documented upstream, not implemented here):
 
 ```text
-list_task_kinds()                     → discover task types (id, name, required_inputs, version)
+list_task_kinds()                     → discover task types (id, name, inputs schema, version)
 task_kind_schema(kind)                → JSON Schema for parameters
-submit(task_kind, input_refs, params, auth, idempotency_key) → RunReference
+submit(task_kind, inputs: [InputBinding], params, auth, idempotency_key) → RunReference
 run(run_ref, auth)                    → RunStatus (refreshed on demand, never copied)
 artifacts(run_ref, auth)              → [ArtifactReference]
 resolve_artifact(artifact_ref, auth)  → ArtifactAccess (content, checksum, size, version)
 ```
+
+`InputBinding` is REvoLab-neutral: `kind ∈ {ScientificObjectRevision, ArtifactReference}`
+plus a `resource_id` (a `GlobalResourceRegistry.resource_id`) and an optional `role`.
+Provider-specific input vocabulary (e.g. "this is the candidate variant vs the reference
+structure") is expressed through the task-kind input schema (schema-as-data), never in
+Core. The run's inputs are persisted on the REvoLab side only as the
+`consumed_as_input_by` edge — the driver maps each `InputBinding` to the provider's own
+reference at submit time.
 
 **Separate the two truths:**
 - REvoCompute canonical mutable execution state (Run/task/status/job) is
@@ -321,12 +337,13 @@ OpenBio is primarily an **external biological knowledge capability**
 
 ```text
 1. Live external lookup    → transient result, never persisted as project truth
-2. Cached external reference → REvoLab stores an ExternalReference: the stable
-     identity `(authority, native_id)` (e.g. UniProt/P12345) + bounded, validated
-     metadata (label, kind, a content checksum when known). This is a durable identity
-     handle with lightweight validated metadata — NOT a copy of the provider's data. It
-     honors invariant #2 (no-mutable-external-copy): provider records stay authoritative
-     in the provider; no snapshot/full payload is mirrored into REvoLab.
+2. Cached external reference → REvoLab ensures an ExternalIdentity exists (the single
+     `(authority, native_id)` registry row, e.g. UniProt/P12345) and stores an
+     ExternalReference pointing at it (external_identity_id FK) + bounded, validated
+     metadata (label, kind, checksum/as_of when known). This is a durable identity/cache
+     handle, NOT a copy of the provider's data. It honors invariant #2
+     (no-mutable-external-copy): provider records stay authoritative in the provider;
+     no snapshot/full payload is mirrored into REvoLab.
 3. Imported scientific object → user/agent imports an ExternalReference into a
      REvoLab Protein object (typed import; reference becomes provenance origin
      via an imported_as edge). Explicit import is the ONLY way an external entity
@@ -339,11 +356,13 @@ OpenBio is primarily an **external biological knowledge capability**
 object.
 
 **Core records needed (all provider-neutral, each a canonical graph node — see
-`SCIENTIFIC_GRAPH.md` node categories):** `ExternalReference`, `RunReference`,
-`SessionReference` (REvoDesign interactive session identity card), `ArtifactReference`,
-`LiteratureReference`, `Evidence`. **Import provenance is a single mechanism — the
-`imported_as` edge** whose payload records the source reference and content
-fingerprint; there is **no separate `ImportRecord` node** (a second mechanism would
-duplicate import modeling). No OpenBio vocabulary leaks into Core.
+`SCIENTIFIC_GRAPH.md` node categories):** `ExternalIdentity` (the single
+`(authority, native_id)` registry, owned by the Scientific Object domain),
+`ExternalReference` (an `external_identity_id` FK + resolver/cache metadata),
+`RunReference`, `SessionReference` (REvoDesign interactive session identity card),
+`ArtifactReference`, `LiteratureReference`, `Evidence`. **Import provenance is a single
+mechanism — the `imported_as` edge** whose payload records the source reference and
+content fingerprint; there is **no separate `ImportRecord` node** (a second mechanism
+would duplicate import modeling). No OpenBio vocabulary leaks into Core.
 
 Recorded in **ADR-0012**.

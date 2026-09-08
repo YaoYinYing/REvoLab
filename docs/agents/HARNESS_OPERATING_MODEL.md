@@ -360,6 +360,19 @@ Python build backends    PEP 517 / PEP 518 build-system, setup.py / egg_info,
                          and Python post-install steps
 ```
 
+**Machine identity of the approved baseline (future executable-policy note, P2 not
+blocking PR1):** "approved baseline" must not stay a chat memory. The durable form is a
+**digest of the manifest surface that can execute code**:
+
+```text
+approved_dependency_baseline
+    = digest(pyproject + lockfile(s) + package scripts + build config)
+```
+
+The agent computes the same digest and may run the declared install path only while the
+digests match. This belongs in Harness tooling (not Core project truth) and may be
+deferred past PR1 merge.
+
 ### Container-engine operations are a privileged external capability (reviewer finding #8)
 
 The Docker/Podman **daemon is outside the filesystem sandbox**. A process with daemon

@@ -68,18 +68,18 @@ reason and the phase that resolves it:
 | ScientificObject typing, versioning, lifecycle | **Decided** (ADR-0008/0009) | Phase 1 |
 | Evidence/reference/provenance model | **Decided** (ADR-0010) | Phase 1 |
 | Decision promotion | **Decided** (ADR-0011) | Phase 1 |
-| Provider/Driver/Capability/Credential | **Decided** (ADR-0012) | Phase 3/6 |
-| Agent context + authority | **Decided** (ADR-0013) | Phase 5 |
+| Provider/Driver/Capability/Credential | **Decided** (ADR-0012) | Phase 3 (credential binding), Phase 4/7 (drivers) |
+| Agent context + authority | **Decided** (ADR-0013) | Phase 6 |
 | Generated API/frontend contract | **Decided** (ADR-0014) | Phase 2 |
 | **RelationType closed enum** | **Decided** — canonical list in `SCIENTIFIC_GRAPH.md` | Phase 1 |
 | **Edge endpoint semantics (Series vs Revision)** | **Decided** — conceptual semantic edges address Series; content/provenance edges address Revision; Decision targets are explicitly typed (`SCIENTIFIC_GRAPH.md`) | Phase 1 |
 | **Edge ownership & lifecycle** | **Decided** — `GlobalProvenanceEdge` (#1–8, Evidence/Provenance-owned, never Project-archived) vs `ProjectKnowledgeEdge` (#9–11, Knowledge/Decision-owned, archived with Decision/Evidence) (`SCIENTIFIC_GRAPH.md`) | Phase 1 |
-| **ProjectResourceLink referential identity** | **Decided** — thin `GlobalResourceRegistry(resource_id PK, resource_kind)` spine; `ProjectResourceLink.resource_id` FKs to it (single-column FK, no polymorphic FK) (`COLLABORATION_IDENTITY.md`, ADR-0008) | Phase 1 |
+| **ProjectResourceLink referential identity** | **Decided** — thin `GlobalResourceRegistry(resource_id PK, resource_kind)` spine; `ProjectResourceLink.resource_id` FKs to it and **does not store `resource_kind`**; every concrete global table PK is both PK and FK to the registry (single-column FK, no polymorphic FK) (`COLLABORATION_IDENTITY.md`, ADR-0008) | Phase 1 |
 | **Relation physical schema** (one table shared by the two edge kinds vs edge-family tables; uniqueness/supersession key) | **Deferred to the Phase-1 executable spike** — see `SCIENTIFIC_GRAPH.md` (the single source for the logical graph contract; do NOT freeze the physical shape in PR1 — ownership/lifecycle are already frozen) | Phase 1 |
 | **Evidence kind/role enums** (incl. `hypothesis` role) | **Decided** — in `EVIDENCE_PROVENANCE.md` | Phase 1 |
-| **Actor / identity persistence** | **Shape decided** (opaque UUID Actor; auth identity/membership/role/credential separation in `COLLABORATION_IDENTITY.md`); tables built in Phase 4, not reopened | Phase 4 |
-| **OpenBio cache semantics** | **Decided** — ExternalReference = identity + bounded validated metadata, never a snapshot copy | Phase 6 |
-| **SessionReference / ExternalReference node types; import via `imported_as` edge (no separate ImportRecord node)** | **Decided** in `SCIENTIFIC_GRAPH.md` / `EVIDENCE_PROVENANCE.md` | Phase 1/6 |
+| **Actor / identity persistence** | **Shape decided** (opaque UUID Actor; auth identity/membership/role/credential separation in `COLLABORATION_IDENTITY.md`); tables built in Phase 3, not reopened | Phase 3 |
+| **OpenBio cache semantics** | **Decided** — `ExternalReference` = `ExternalIdentity` FK + resolver/cache metadata (checksum, as_of), never a snapshot copy | Phase 7 |
+| **SessionReference / ExternalReference node types; import via `imported_as` edge (no separate ImportRecord node)** | **Decided** in `SCIENTIFIC_GRAPH.md` / `EVIDENCE_PROVENANCE.md` | Phase 1/7 |
 
 No architectural question is silently postponed: where an item is deferred it is
 explicitly named, with its resolved-in phase.
@@ -89,7 +89,9 @@ explicitly named, with its resolved-in phase.
 ## Phases (vertical slices, dependency-ordered)
 
 The phase order derives from architectural dependencies: context core first, then a
-real frontend/API slice, then integrations, then collaboration and agent.
+real frontend/API slice, then an **Identity foundation** (the Provider/Capability
+domain depends on Identity for credential presence), then integrations, then
+collaboration/sharing and the agent.
 
 ### Phase 1 — Scientific context core
 
@@ -121,33 +123,55 @@ real frontend/API slice, then integrations, then collaboration and agent.
   decision flows against the real API (no fixtures).
 - **Non-goals:** providers, agent, collaboration.
 
-### Phase 3 — REvoCompute integration
+### Phase 3 — Identity foundation (Actor + credential binding)
+
+- **Goal:** establish the durable identity primitives that Provider availability and
+  collaboration both consume, without building full authentication.
+- **Owned domains:** Identity/Collaboration.
+- **Vertical slice:** `Actor` (opaque UUID), `ExternalProviderCredentialBinding`
+  (`actor_id, provider_key, kind, secret_ref`), and the **minimal
+  `ProjectMembership` contract** (owner/member/viewer). The Secret store owns the
+  material; Core holds only the non-secret binding.
+- **Acceptance evidence:** an Actor can hold a credential binding; `has_credential(actor,
+  provider, kind)` is a derived query; no secret material appears in a Core table; the
+  availability formula `driver READY AND credential present AND policy permits` is
+  queryable with a stub driver.
+- **Non-goals:** OIDC/login, RBAC engine, per-object ACL, public visibility (all still
+  deferred).
+
+### Phase 4 — REvoCompute integration
 
 - **Goal:** link external executions as durable references with no execution-state
-  copy.
-- **Owned domains:** Provider/Capability, Evidence/Provenance.
+  copy, now that Actor-scoped credential presence exists (Phase 3).
+- **Owned domains:** Provider/Capability, Evidence/Provenance, Identity (credential
+  presence).
 - **Vertical slice:** `ComputeCapability` + `ArtifactResolutionCapability`;
   `RunReference`/`ArtifactReference` creation and resolve-on-demand; the documented
-  REvoCompute narrow scope/reference contract.
+  REvoCompute narrow scope/reference contract with `InputBinding` inputs.
 - **Acceptance evidence:** a fake REvoCompute provider test proves submit→reference→
-  resolve with credential presence gate and typed failure; a test proves Core holds
-  no provider vocabulary; provenance stays traversable when the provider goes
-  unreachable.
-- **Non-goals:** embedding REvoCompute state; hot-unloading.
+  resolve with credential presence gate and typed failure; an ArtifactReference can be
+  consumed directly by a run (`consumed_as_input_by` source `ArtifactReference`) without
+  a forced import; a test proves Core holds no provider vocabulary; provenance stays
+  traversable when the provider goes unreachable.
+- **Non-goals:** embedding REvoCompute state; hot-unloading; full collaboration.
 
-### Phase 4 — Project collaboration
+### Phase 5 — Project collaboration & sharing
 
-- **Goal:** cross-project sharing by membership/link, never copy.
+- **Goal:** cross-project sharing by membership/link, never copy; the
+  revision⇒series visibility closure and the project-context write invariant are
+  exercised for real.
 - **Owned domains:** Identity/Collaboration, Project.
-- **Vertical slice:** Actor + membership + owner/member/viewer; project visibility
+- **Vertical slice:** membership/roles onto the Phase-3 foundation; project visibility
   (private/shared); sharing a global object across projects via membership;
-  authorization-aware access.
-- **Acceptance evidence:** two projects share one object without duplication; deleting
+  authorization-aware access with the revision⇒series closure.
+- **Acceptance evidence:** two projects share one object without duplication; linking a
+  revision makes its series visible but exposes no sibling revisions; every
+  project-scoped write rejects endpoints not already in the Project's link set; deleting
   one Project leaves the shared object + provenance intact; access boundaries enforce
   membership/role.
 - **Non-goals:** RBAC engine, per-object ACL, public visibility, real login.
 
-### Phase 5 — Agent context & tools
+### Phase 6 — Agent context & tools
 
 - **Goal:** the Agent as consumer, with the promotion boundary enforced.
 - **Owned domains:** Agent Context.
@@ -160,7 +184,7 @@ real frontend/API slice, then integrations, then collaboration and agent.
   write; chat history never appears in the graph.
 - **Non-goals:** chat UI polish, RAG.
 
-### Phase 6 — REvoDesign & OpenBio integration
+### Phase 7 — REvoDesign & OpenBio integration
 
 - **Goal:** interactive design and external biological knowledge fit without
   special-case Core logic.
