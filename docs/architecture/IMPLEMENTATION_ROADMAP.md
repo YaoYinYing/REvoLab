@@ -29,8 +29,9 @@ preserve. No backward compatibility is required. Classify every current piece:
 ### REVISE
 - **Blanket `cascade="all, delete-orphan"`** → explicit soft-archive + link
   semantics; Project owns links, not objects; no destructive delete-orphan.
-- **`parent_id` self-tree as the scientific structure** → split into organization
-  (folders/membership) vs scientific relations.
+- **`parent_id` self-tree as the scientific structure** → split into project-local
+  organization (ProjectResourceLink folder/container annotation) vs scientific
+  relations (global provenance + project knowledge edges).
 - **Single `ScientificObject` table + `metadata_json`** → base record + typed
   extension tables; no unvalidated JSON payload.
 - **`Evidence.provider`+`external_id` + `evidence_type=RUN|ARTIFACT`** → split into
@@ -71,7 +72,10 @@ reason and the phase that resolves it:
 | Agent context + authority | **Decided** (ADR-0013) | Phase 5 |
 | Generated API/frontend contract | **Decided** (ADR-0014) | Phase 2 |
 | **RelationType closed enum** | **Decided** — canonical list in `SCIENTIFIC_GRAPH.md` | Phase 1 |
-| **Relation physical schema** (one polymorphic table vs edge-family tables; uniqueness/supersession key) | **Deferred to the Phase-1 executable spike** — see `SCIENTIFIC_GRAPH.md` (the single source for the logical graph contract; do NOT freeze the physical shape in PR1) | Phase 1 |
+| **Edge endpoint semantics (Series vs Revision)** | **Decided** — conceptual semantic edges address Series; content/provenance edges address Revision; Decision targets are explicitly typed (`SCIENTIFIC_GRAPH.md`) | Phase 1 |
+| **Edge ownership & lifecycle** | **Decided** — `GlobalProvenanceEdge` (#1–8, Evidence/Provenance-owned, never Project-archived) vs `ProjectKnowledgeEdge` (#9–11, Knowledge/Decision-owned, archived with Decision/Evidence) (`SCIENTIFIC_GRAPH.md`) | Phase 1 |
+| **ProjectResourceLink referential identity** | **Decided** — thin `GlobalResourceRegistry(resource_id PK, resource_kind)` spine; `ProjectResourceLink.resource_id` FKs to it (single-column FK, no polymorphic FK) (`COLLABORATION_IDENTITY.md`, ADR-0008) | Phase 1 |
+| **Relation physical schema** (one table shared by the two edge kinds vs edge-family tables; uniqueness/supersession key) | **Deferred to the Phase-1 executable spike** — see `SCIENTIFIC_GRAPH.md` (the single source for the logical graph contract; do NOT freeze the physical shape in PR1 — ownership/lifecycle are already frozen) | Phase 1 |
 | **Evidence kind/role enums** (incl. `hypothesis` role) | **Decided** — in `EVIDENCE_PROVENANCE.md` | Phase 1 |
 | **Actor / identity persistence** | **Shape decided** (opaque UUID Actor; auth identity/membership/role/credential separation in `COLLABORATION_IDENTITY.md`); tables built in Phase 4, not reopened | Phase 4 |
 | **OpenBio cache semantics** | **Decided** — ExternalReference = identity + bounded validated metadata, never a snapshot copy | Phase 6 |
@@ -90,9 +94,10 @@ real frontend/API slice, then integrations, then collaboration and agent.
 ### Phase 1 — Scientific context core
 
 - **Goal:** replace the bootstrap's accidental architecture with the proposed domain
-  model: typed object spine + extension tables, organization/relation split,
-  distinct reference nodes, decision promotion, soft-archive lifecycle, explicit
-  Project-membership ownership.
+  model: typed object spine + extension tables, project-local organization / global
+  relation split, the `GlobalResourceRegistry` referential spine, distinct reference
+  nodes, decision promotion, soft-archive lifecycle, explicit Project-membership
+  ownership.
 - **Owned domains:** Project, Scientific Object, Evidence/Provenance, Knowledge (
   Core), Identity (ownership boundary only).
 - **Vertical slice:** models + migrations + domain services + domain-command API for

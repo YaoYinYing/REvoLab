@@ -20,7 +20,7 @@ external mutable execution truth. **Identity is durable; state is refreshable.**
 
 | Record type | What it IS | Distinct table |
 |---|---|---|
-| **ScientificObject** | a typed scientific entity REvoLab owns | `scientific_objects` + per-type tables |
+| **ScientificObject** | a typed scientific entity REvoLab owns | `scientific_object_series` + `scientific_object_revision` + per-type tables |
 | **RunReference** | durable, namespaced pointer to an external execution (identity card) | `run_references` |
 | **SessionReference** | durable, namespaced pointer to an external interactive session (REvoDesign) | `session_references` |
 | **ArtifactReference** | durable, namespaced pointer to an external output (identity card) | `artifact_references` |
@@ -53,7 +53,9 @@ The current `Evidence` model carries `provider`/`external_id` directly and
 `evidence_type = RUN | ARTIFACT | LITERATURE | ...`, which conflates the *thing*
 (a reference) with the *claim* (Evidence). **Split reference nodes out of
 Evidence** into first-class reference tables; make Evidence an edge-like claim
-pointing at a `subject_ref`.
+pointing at a `source` (the reference/observation interpreted) and a `target`
+(the ScientificObjectRevision/Decision/Evidence the claim is about; see
+`SCIENTIFIC_GRAPH.md`).
 
 ---
 
@@ -62,9 +64,10 @@ pointing at a `subject_ref`.
 Model the chain as a directed acyclic provenance graph:
 
 ```text
-ScientificObject --consumed_as_input_by--> RunReference
-RunReference     --produced-->            ArtifactReference
-ArtifactReference--imported_as-->         ScientificObject   (creates the derived object)
+ScientificObjectRevision --consumed_as_input_by--> RunReference
+RunReference             --produced-->            ArtifactReference
+ArtifactReference
+  | ExternalReference    --imported_as-->         ScientificObjectRevision   (creates the derived revision)
 ```
 
 The **RunReference does the stitching**: it carries explicit `input_objects` and
@@ -134,8 +137,8 @@ the old one.
 ## Minimal provenance graph (the four questions)
 
 ```text
-Why does this object exist?          → derived_from / imported_as chains + generated_by back to producing runs + citing Decisions
-Where did this structure come from?  → RunReference --produced--> ArtifactReference --imported_as--> Structure
+Why does this object exist?          → derived_from / imported_as chains (Revision → Revision) + generated_by back to producing runs + citing Decisions
+Where did this structure come from?  → RunReference --produced--> ArtifactReference --imported_as--> StructureRevision
 Which run produced this artifact?    → RunReference --produced--> ArtifactReference (single owning edge; direction run→artifact)
 Which evidence caused which decision?→ Decision --cites--> Evidence, then Evidence.target (polarity is an Evidence field / cited_as)
 ```

@@ -31,11 +31,11 @@ ambiguity the review found):
 | **Credential binding** (`ExternalProviderCredentialBinding`) | Identity / Collaboration domain | the non-secret row `(actor_id, provider_key, kind, secret_ref)` — "this Actor has a credential of this kind for this provider; the material lives at secret_ref" |
 | **Secret material** (API key / token) | Credential / Secret store | the actual secret; never stored in Core, never read back as plaintext by Core |
 
-- **`ExternalProviderCredential` ≈ `ExternalProviderCredentialBinding` IS the real,
-  non-secret binding record** owned by the **Identity / Collaboration domain**. It is
-  **not** a fake or made-up abstraction, and it is **not** a pass-through. It is the
-  durable row that says *"this Actor has a credential of this kind for this provider;
-  the material lives at `secret_ref`."* The four roles each own one thing:
+- **`ExternalProviderCredentialBinding` IS the real, non-secret binding record** owned
+  by the **Identity / Collaboration domain**. It is **not** a fake or made-up
+  abstraction, and it is **not** a pass-through. It is the durable row that says *"this
+  Actor has a credential of this kind for this provider; the material lives at
+  `secret_ref`."* The four roles each own one thing:
   1. **Identity / Collaboration domain** owns the **binding** — the non-secret row
      above.
   2. **Credential / Secret store** owns the **secret material** (the actual API key /

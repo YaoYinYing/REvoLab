@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-09-07
+Last verified: 2026-09-08
 
 ## Exists
 
@@ -16,7 +16,7 @@ Last verified: 2026-09-07
 - PostgreSQL Docker Compose service, Alembic environment configuration, GitHub Actions CI configuration, architecture documentation, ADR directory, agent conventions, and Apache-2.0 licensing files.
 - Harness operating model control plane: `docs/agents/HARNESS_OPERATING_MODEL.md` defines the four loops (agent/goal/subagent-workflow/Ralph), the Primary Integrator role, the skill taxonomy, the safety/permission plane (default `workspace-write` + approval), and the 7-phase ODDRIVC workflow. `CLAUDE.md` carries only the short invariants derived from it.
 - Project skills relocated from the top-level `skills/` tree into `.agents/skills/` (the canonical DSH skill root) and verified to load: `project-architecture`, `scientific-object-model`, `provenance-lineage`, `decision-record`, `project-context`, `artifact-inspection`, `driver-development`, `project-plugin-development`, plus the new constitutional `engineering-workflow` skill. The `engineering-workflow` skill (v0.2.0) carries both the ODDRIVC procedure and the long-running refactor protocol (three sources of truth, persistent checklist, migration-first deletion, vertical-slice migration, executable acceptance, DESIGN/EXECUTION/MACHINE definition of done); a draft root-level `LONG_TASK_HANDLING.md` was composed into that skill and removed to avoid a second source of truth.
-- GitHub Actions CI is green on the architecture PR (head `27ceba7`, the round-3 convergence commit; GHA runs #15–#16 all green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
+- GitHub Actions CI is green on the architecture PR (head `eeeedc4`, the round-4 convergence commit; current CI run #18 green): backend Ruff/mypy/pytest + Alembic `upgrade head`/`check` against PostgreSQL 16; frontend typecheck/test/build all pass.
 
 ## Not yet verified
 
@@ -77,6 +77,30 @@ conditional) are being folded into the documents on this branch. Status remains
 PROPOSED until the human accepts.
 
 ### 2026-09-07 — Human review round 2 (PR #1), convergence addressed; PROPOSED pending human review
+
+### 2026-09-08 — Human review round 3 (PR #1), final convergence: four P1 constitution blockers closed; PROPOSED pending human review
+
+The third human review rated the PR 9.3/10 and said the remaining work is the final
+convergence — close four constitution blockers, clear stale text, delete the spike
+brief, refresh CI evidence. All four blockers are now closed on this branch: (1)
+organization state is fully project-local — the ScientificObject universal spine no
+longer carries `organization_anchor`; placement is a folder/container annotation on
+`ProjectResourceLink`, owned by the Project domain; (2) `ProjectResourceLink`
+referential identity is realizable — a thin `GlobalResourceRegistry(resource_id PK,
+resource_kind)` spine provides the single-column FK target (no polymorphic FK);
+(3) graph edge ownership/lifecycle is fixed — `GlobalProvenanceEdge` (#1–8, owned by
+Evidence/Provenance, never Project-archived) vs `ProjectKnowledgeEdge` (#9–11, owned by
+Knowledge/Decision, archived with Decision/Evidence); (4) the canonical edge matrix
+freezes Series vs Revision endpoints — conceptual semantic edges address Series,
+content/provenance edges address Revision, Decision targets are explicitly typed.
+Also cleared: stale Provider-owned Tool/Credential text in DOMAIN_BOUNDARIES; the
+container guardrail now requires `docker compose config` inspection (policy inspects the
+effective config, not the filename); the package-install boundary is now
+"trusted-manifest-baseline unchanged vs changed" (not "existing dep vs new dep");
+`SPIKE_PR1_BRIEF.md` deleted. CI evidence refreshed to head `eeeedc4` (run #18 green).
+Status remains **PROPOSED — pending human review**.
+
+---
 
 A second human review again returned **REQUEST CHANGES** (still "don't merge yet",
 ~80–85% of direction right). Its 12-plus findings have all converged on this branch:

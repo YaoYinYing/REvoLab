@@ -24,7 +24,7 @@ truth. See `docs/architecture/SYSTEM_ARCHITECTURE.md` and the ADRs for the full 
 5. Scientific provenance must remain traversable after external systems change (references are never deleted, only revoked).
 6. Durable identity is an opaque UUID, never a filesystem path or a mutable username; external identity is `(authority, native_id)`, never a resolver/provider. A ScientificObject's conceptual identity (`series_id`) is distinct from its immutable revision identity (`revision_id`); provenance addresses revisions.
 7. Scientific content is immutable once referenced; change is a new version/revision or a superseding record, never in-place.
-8. A Project is a namespace and membership boundary, not the owner of objects; deleting a Project removes links, never the underlying objects or provenance. ScientificObjects/references/relations are global; Evidence/Decision are project-scoped.
+8. A Project is a namespace and membership boundary, not the owner of objects; deleting a Project removes links, never the underlying objects or provenance. ScientificObjects/references and the global provenance edges (#1–8) are global; the project knowledge edges (#9–11 selects/supersedes/cites) and Evidence/Decision are project-scoped.
 9. The Agent is a consumer, not an owner: read context -> reason -> propose -> typed tool -> domain validation -> persisted truth.
 10. Credentials are owned by the credential store; a provider is callable iff its driver is READY and every required credential kind is present **for the calling Actor** and project policy permits — all queries, never stored truth.
 

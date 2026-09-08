@@ -19,10 +19,12 @@ Use **global/stable resource identity + project-scoped reference/membership** �
 
 **Scope split (definitive):** `ScientificObjectSeries`/`ScientificObjectRevision`, all
 reference nodes (`RunReference`, `SessionReference`, `ArtifactReference`,
-`LiteratureReference`, `ExternalReference`), and provenance Relations are **global** (no
-`project_id` owner, held across many Projects). `Evidence` and `Decision` are
-**project-scoped** (authored in and owned by one Project). `Project`, membership, and
-annotation are project-local. Nothing is owned by a Project through a cascade.
+`LiteratureReference`, `ExternalReference`), and **global provenance edges**
+(`GlobalProvenanceEdge`, #1–8) are **global** (no `project_id` owner, held across many
+Projects). `Evidence`, `Decision`, and **project knowledge edges** (`ProjectKnowledgeEdge`,
+#9–11) are **project-scoped** (authored in and owned by one Project). `Project`,
+membership, organization placement, and annotation are project-local. Nothing is owned
+by a Project through a cascade.
 
 **`ProjectResourceLink` renames `ProjectObjectMembership`** — the global resources linked
 into a Project's context are not only ScientificObjects; references are global too. A
@@ -32,11 +34,15 @@ into a Project's context are not only ScientificObjects; references are global t
 ProjectResourceLink(project_id, resource_id, resource_kind, role?, annotation?)
 ```
 
-where `resource_kind ∈ {scientific_object_series, scientific_object_revision,
-run_reference, session_reference, artifact_reference, literature_reference,
-external_reference}` enforces which global resource categories a Project's context may
-contain. It is **not** a per-object ACL; it is the statement "this Project's context
-includes these global resources."
+where `resource_id` FKs to a thin `GlobalResourceRegistry(resource_id PK, resource_kind)`
+spine that every global resource row registers into (the concrete row's own primary key,
+inserted in the same transaction), and `resource_kind ∈ {scientific_object_series,
+scientific_object_revision, run_reference, session_reference, artifact_reference,
+literature_reference, external_reference}` mirrors the registry kind for
+validation/indexing. A single relational column cannot FK polymorphically to six tables,
+so the registry provides one real referential identity target. `ProjectResourceLink` is
+**not** a per-object ACL; it is the statement "this Project's context includes these
+global resources."
 
 **Series vs revision visibility (reviewer round 3):** `scientific_object_revision` and
 `scientific_object_series` are **distinct** link kinds. Linking a series exposes the

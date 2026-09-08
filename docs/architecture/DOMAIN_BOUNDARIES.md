@@ -33,13 +33,15 @@ External systems own their capabilities and execution truth.
 - **Purpose:** the durable workspace boundary that scopes context, membership, and
   access.
 - **Owned concepts:** Project record, project-level annotation, project visibility
-  (private / shared-with-members), **`ProjectResourceLink`** (the Project-owned context
-  link that binds global resources into this Project's context — the visibility lens,
-  see ADR-0008). Project **participation is expressed through the
+  (private / shared-with-members), and **`ProjectResourceLink`** — the Project-owned
+  context link that binds global resources into this Project's context (the visibility
+  lens, see ADR-0008) **and carries the project-local folder/container placement** of
+  those resources. Project **participation is expressed through the
   Identity/Collaboration membership contract** (see below) — Project does **not** own
   `ProjectMembership`.
 - **Owned mutable state:** project name/description, visibility, and the Project's
-  `ProjectResourceLink` set (the links a Project's context includes).
+  `ProjectResourceLink` set (the context links, including their folder/container
+  placement, that a Project includes).
 - **Owned invariants:**
   - A Project is a namespace *and* a security/permission boundary, but **not** the
     scientific-identity boundary.
@@ -49,8 +51,9 @@ External systems own their capabilities and execution truth.
 - **Public contracts:** project CRUD, project-scoped read and write entry points.
 - **Dependencies:** Identity/Collaboration (membership, roles), Scientific Object
   (to *address* which global resources the Project's `ProjectResourceLink` set binds;
-  the `ProjectResourceLink` rows themselves are **owned by Project**). Depends on
-  nothing else in Core.
+  the `ProjectResourceLink` rows themselves are **owned by Project** and FK
+  `resource_id → global_resource_registry.resource_id`). Depends on nothing else in
+  Core.
 - **Non-responsibilities:** owning object lifecycle; owning execution; owning
   provider credentials; being the provenance authority.
 
@@ -62,13 +65,16 @@ External systems own their capabilities and execution truth.
   records, ExternalIdentity registry (+ series↔external-identity mapping), Alias
   registry, the type registry, object versioning.
 - **Owned mutable state:** object labels/descriptions (governance spine), aliases,
-  organization placement, per-type content (versioned, immutable once referenced).
+  per-type content (versioned, immutable once referenced). **Organization placement is
+  NOT owned here** — it is project-local, owned by the Project domain.
 - **Owned invariants:**
   - Universal fields are a small fixed spine; scientific payload lives in typed
-    extension records, not an unvalidated JSON blob.
+    extension records, not an unvalidated JSON blob. **No `organization_anchor` /
+    folder column on the global object.**
   - A referenced object's scientific content is immutable; change is a new
     version or a new object, never in-place.
-  - Organization (parent/tree/membership) is separate from scientific relations.
+  - Project-local organization (folders/placement) is separate from global
+    scientific relations; a global object may be filed differently in each Project.
   - Durable identity is the stable UUID, never a path or a username.
 - **Public contracts:** object create/read/version operations via the domain service.
 - **Dependencies:** none in Core — Scientific Object is a **global leaf**; it is
@@ -82,11 +88,12 @@ External systems own their capabilities and execution truth.
 - **Purpose:** record what external work and internal observation underpin the
   project, and reconstruct *why things exist*.
 - **Owned concepts:** RunReference, SessionReference, ArtifactReference,
-  LiteratureReference, ExternalReference, Evidence (interpreted claim), provenance
-  edges (`consumed_as_input_by`, `produced`, `imported_as`, `derived_from`,
-  `generated_by`, `evaluates`, `selects`, `cites`,
-  `supersedes`). (`supports`/`contradicts` are Evidence `polarity` fields, not
-  edges — see `SCIENTIFIC_GRAPH.md`.)
+  LiteratureReference, ExternalReference, Evidence (interpreted claim) and its
+  source/target associations, and the **global provenance edges #1–8**
+  (`variant_of`, `derived_from`, `represents`, `evaluates`,
+  `consumed_as_input_by`, `produced`, `imported_as`, `generated_by`) as
+  `GlobalProvenanceEdge`. (`supports`/`contradicts` are Evidence `polarity` fields,
+  not edges — see `SCIENTIFIC_GRAPH.md`.)
 - **Owned mutable state:** evidence interpretive fields (summary, confidence,
   scope); reference *status* (refreshable, resolved via the provider — never copied).
 - **Owned invariants:**
@@ -104,12 +111,16 @@ External systems own their capabilities and execution truth.
 - **Purpose:** the knowledge layer — decisions and the promotion of proposals into
   accepted project truth.
 - **Owned concepts:** Decision (with status and supersession), DecisionEvidence
-  citations, "current conclusion" (derived by following supersession).
+  citations, "current conclusion" (derived by following supersession), and the
+  **project knowledge edges #9–11** (`selects`, `supersedes`, `cites`) as
+  `ProjectKnowledgeEdge`.
 - **Owned mutable state:** decision status and next actions while open; after a
   decision influences later work it is immutable.
 - **Owned invariants:**
   - Agent output is conversation until explicitly promoted into project knowledge.
   - A committed decision is never edited; it is superseded.
+  - Project knowledge edges are immutable and are archived **with** their
+    Decision/Evidence on Project tombstone — never kept as dangling global edges.
   - "Current scientific conclusion" is a derived query, not a mutable field.
 - **Public contracts:** decision draft → commit → supersede; cite evidence.
 - **Dependencies:** Evidence/Provenance, Project.
@@ -118,8 +129,11 @@ External systems own their capabilities and execution truth.
 ### 5. Provider / Capability Domain
 
 - **Purpose:** the boundary between Core and external execution/lookup/design.
-- **Owned concepts:** Provider, Driver, Capability, Tool (agent bridge), Credential,
-  credential presence, capability discovery, typed CapabilityError.
+- **Owned concepts:** Provider, Driver, Capability, capability discovery, typed
+  CapabilityError. **Not owned here:** `Tool` (the Agent Context domain owns the
+  agent-facing Tool projection), `ExternalProviderCredentialBinding` (the Identity /
+  Collaboration domain owns the non-secret binding), and secret material (the
+  Credential/Secret store owns it; see `PROVIDER_CAPABILITIES.md`).
 - **Owned mutable state:** in-process driver lifecycle (startup only), availability
   projections.
 - **Owned invariants:**
@@ -153,7 +167,7 @@ External systems own their capabilities and execution truth.
   executing, real authentication).
 - **Owned concepts:** AuthenticationIdentity, Actor (opaque UUID), Role
   (owner/member/viewer), **ProjectMembership** (single owning domain), ResourceOwnership,
-  ExternalProviderCredential.
+  ExternalProviderCredentialBinding.
 - **Owned mutable state:** memberships, roles, credential bindings.
 - **Owned invariants:** durable identity is an opaque UUID, not a path or auth
   username; sharing never copies data into another project; access is inherited

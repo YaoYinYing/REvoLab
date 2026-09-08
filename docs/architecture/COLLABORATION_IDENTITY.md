@@ -15,7 +15,7 @@ Role                     small enumerated set at Project level: owner · member 
 ProjectMembership        an Actor(role) within a Project; the security unit
 ProjectResourceLink      the set of global resources (objects/references) a Project's context includes + the visibility lens (see ADR-0008)
 ResourceOwnership        the creating Actor recorded as audit/provenance (no full ACL)
-ExternalProviderCredential  a per-(Actor, provider) binding authorizing a Driver
+ExternalProviderCredentialBinding  a per-(Actor, provider) non-secret binding row authorizing a Driver; the secret material lives in the Secret store
 ```
 
 **Decisions:**
@@ -41,10 +41,12 @@ PostgreSQL is the durable store. Do **not** treat SQLite as architecture truth.
 
 **Dedicated relational tables (indexed, FK integrity):**
 - projects, project_memberships, actors, authentication_identities,
-  external_provider_credentials
-- scientific_objects + per-type extension tables
-- relations (global provenance edges; physical shape + uniqueness deferred to the
-  Phase-1 spike — see `SCIENTIFIC_GRAPH.md`)
+  external_provider_credential_bindings
+- global_resource_registry (thin referential identity spine — see below)
+- scientific_object_series + scientific_object_revision + per-type extension tables
+- global provenance edges + project knowledge edges (ownership/lifecycle frozen;
+  physical shape + uniqueness deferred to the Phase-1 spike — see
+  `SCIENTIFIC_GRAPH.md`)
 - run_references, artifact_references, session_references, literature_references,
   external_references (neutral external identity cards)
 - evidence, decisions, decision_evidence (+ `cited_as`)
@@ -55,11 +57,12 @@ PostgreSQL is the durable store. Do **not** treat SQLite as architecture truth.
 - **Dangerous:** foreign keys, stable identity, provider/external refs, relation
   endpoints, or any field that becomes a query filter. JSON must never hold those.
 
-**Indexing:** index all FK columns. Global tables (ScientificObject series/revision,
-references, provenance Relations) index their own relation columns — **no
-`(project_id, relation_type)` composite**, because global Relations carry no
-`project_id`. Project-scoped tables (`project_resource_link`, `evidence`, `decision`)
-index their `project_id`. Index `authority + native_id` for external-reference lookup.
+**Indexing:** index all FK columns. Global records (ScientificObject series/revision,
+references, `GlobalProvenanceEdge` rows) index their own columns — **no
+`(project_id, relation_type)` composite**, because `GlobalProvenanceEdge` carries no
+`project_id`. Project-scoped records (`project_resource_link`, `ProjectKnowledgeEdge`,
+`evidence`, `decision`) index their `project_id`. Index `authority + native_id` for
+external-reference lookup.
 Use PostgreSQL enums or CHECK constraints, not free `String(50)` where the domain is
 closed.
 
@@ -73,36 +76,55 @@ everywhere).
 
 | Class | Records | Identity | Owned by | Project deletion |
 |---|---|---|---|---|
-| **Global resource** | ScientificObject (series + revision), RunReference, SessionReference, ArtifactReference, LiteratureReference, ExternalReference, and provenance Relation records | global UUID, project-independent | no single Project owns these; they may be referenced by many Projects | NOT deleted; a Project merely stops referencing them |
-| **Project-local context** | Project record, ProjectResourceLink, Project annotation/visibility | project-scoped | the Project | **Project record → tombstone** (`deleted_at`); ProjectResourceLink/annotation → hard-delete (they are links/perms) |
-| **Project-scoped scientific records** | Evidence, Decision, DecisionEvidence | project-scoped | authored in, and scoped to, one Project | **soft-archive** the Project's Evidence/Decisions/DecisionEvidence |
+| **Global resource** | ScientificObject (series + revision), RunReference, SessionReference, ArtifactReference, LiteratureReference, ExternalReference, and **global provenance edges** (`GlobalProvenanceEdge`, #1–8) | global UUID, project-independent | no single Project owns these; they may be referenced by many Projects | NOT deleted; a Project merely stops referencing them |
+| **Project-local context** | Project record, ProjectResourceLink (incl. its folder/container placement), Project annotation/visibility | project-scoped | the Project | **Project record → tombstone** (`deleted_at`); ProjectResourceLink/annotation → hard-delete (they are links/perms) |
+| **Project-scoped scientific records** | Evidence, Decision, DecisionEvidence, **project knowledge edges** (`ProjectKnowledgeEdge`, #9–11) | project-scoped | authored in, and scoped to, one Project | **soft-archive** the Project's Evidence/Decisions/DecisionEvidence/ProjectKnowledgeEdge |
 
 **Concrete relational mapping:**
 
-> This is the **logical** target. The exact physical table shape — notably whether
-> provenance `relations` is one polymorphic table or several edge-family tables, and
-> its uniqueness/supersession key — is **deliberately deferred to the Phase-1
-> executable spike** (see `SCIENTIFIC_GRAPH.md`), per the reviewer's finding that the
-> physical Relation design should not be frozen before an implementation fork. What is
-> fixed here is the *logical ownership*: global records are not project-owned.
+> This is the **logical** target with one frozen referential-integrity decision (the
+> `GlobalResourceRegistry` below). The exact physical table shape of *edges* — whether
+> `GlobalProvenanceEdge`/`ProjectKnowledgeEdge` share a table or are separate edge-family
+> tables, and their uniqueness/supersession key — is **deliberately deferred to the
+> Phase-1 executable spike** (see `SCIENTIFIC_GRAPH.md`). What is fixed here is the
+> *logical ownership* and the *referential identity spine*.
+
+**Referential identity spine (reviewer round 4): `GlobalResourceRegistry`.** A single
+relational column cannot FK polymorphically to six different global tables based on a
+`resource_kind` discriminator. Global resources therefore register their identity in one
+thin spine table:
+
+```text
+GlobalResourceRegistry(resource_id PK, resource_kind, created_at)
+    resource_kind ∈ scientific_object_series | scientific_object_revision
+                  | run_reference | session_reference | artifact_reference
+                  | literature_reference | external_reference
+```
+
+`resource_id` **is** the primary key of the concrete global row (the `series_id` /
+`revision_id` / reference id). Creating a global row inserts its registry row in the
+same transaction; the registry row is the **only** legal FK target for
+`ProjectResourceLink.resource_id`. The registry is referential identity only — it is
+**not** a God object and carries no scientific payload.
 
 - **Globally owned tables have NO `project_id` FK:**
-  `scientific_objects` (+ per-type tables), `run_references`, `session_references`,
-  `artifact_references`, `literature_references`, `external_references`, and the
-  provenance `relations` records. Their identity is a global UUID.
+  `global_resource_registry`, `scientific_object_series`/`scientific_object_revision`
+  (+ per-type tables),
+  `run_references`, `session_references`, `artifact_references`,
+  `literature_references`, `external_references`, and `GlobalProvenanceEdge` rows.
+  Their identity is a global UUID.
 - **Project membership of global resources is a separate join, not a column on the
   resource:** `project_resource_link (project_id, resource_id, resource_kind,
-  role?, annotation?)` where `resource_kind` constrains which global resource
-  categories a Project's context may include (`scientific_object_series`,
-  `scientific_object_revision`, `run_reference`,
-  `session_reference`, `artifact_reference`, `literature_reference`,
-  `external_reference`). A global resource belongs to a Project's context *because a
-  link row exists*, not because the resource row can only live in one Project. This
-  is what lets one object/reference sit in many Projects. **Series vs revision
-  (reviewer round 3):** linking a series exposes the series record but does **not**
-  auto-expose its revisions — a specific immutable revision is visible to a Project only
-  through a `scientific_object_revision` link, so a new private revision is never
-  auto-visible to a Project that only links the series (see ADR-0008).
+  role?, annotation?)` where `resource_id` FKs to
+  `global_resource_registry.resource_id` (a single-column FK to one real table) and
+  `resource_kind` mirrors the registry kind for validation/indexing convenience.
+  A global resource belongs to a Project's context *because a link row exists*, not
+  because the resource row can only live in one Project. This is what lets one
+  object/reference sit in many Projects. **Series vs revision (reviewer round 3):**
+  linking a series exposes the series record but does **not** auto-expose its
+  revisions — a specific immutable revision is visible to a Project only through a
+  `scientific_object_revision` link, so a new private revision is never auto-visible to
+  a Project that only links the series (see ADR-0008).
 - **Special case — `ProjectMembership` (the Actor-in-Project row)** is a separate
   join over `actors × projects` and is the security unit; `ProjectResourceLink` is the
   context/visibility lens over **global resources**. They are distinct and both live at
@@ -126,17 +148,19 @@ claims cite remain untouched and shared.
 1. **Tombstone** the Project row (`project.deleted_at != NULL`) so the
    `evidence.project_id` / `decision.project_id` FKs stay valid and the Project keeps
    its minimal identity/framing. **Never hard-delete the Project row.**
-2. **Hard-delete** active membership rows and `ProjectResourceLink` rows (access/context
-   state, safe to remove).
-3. **Soft-archive** the Project's Evidence, Decisions, and DecisionEvidence.
-4. **Global objects, references, and provenance relations are untouched** — they
+2. **Hard-delete** active membership rows and `ProjectResourceLink` rows (access/
+   context/placement state, safe to remove).
+3. **Soft-archive** the Project's Evidence, Decisions, DecisionEvidence, and
+   `ProjectKnowledgeEdge` rows.
+4. **Global objects, references, and `GlobalProvenanceEdge` rows are untouched** — they
    survive, may remain attached to other Projects, and their provenance stays
    traversable.
 
 **Referential integrity:** FKs from project-scoped tables → `projects`; from
 project-scoped Evidence/Decision → referenced global objects/references (never
-CASCADE to a global object). FKs from `ProjectResourceLink` → the global resource
-tables. **Blanket CASCADE to global resources is removed** (see Lifecycle).
+CASCADE to a global object). FKs from `ProjectResourceLink.resource_id` →
+`global_resource_registry.resource_id` (single-column FK, no polymorphic FK).
+**Blanket CASCADE to global resources is removed** (see Lifecycle).
 
 ### Authorization projection: global identity != global readability
 
@@ -191,33 +215,36 @@ project-scoped scientific record):
 
 | Entity | Class | Create | Update | Version | Archive | Delete |
 |---|---|---|---|---|---|---|
-| Project | project-local | yes | metadata/visibility | no | **tombstone** (`deleted_at`) | **never hard-delete the row**; delete active links/membership; archive its Evidence/Decision; global resources untouched |
-| ProjectResourceLink | project-local | yes | role/annotation | n/a | n/a | hard-delete safe (it is a context/access link) |
+| Project | project-local | yes | metadata/visibility | no | **tombstone** (`deleted_at`) | **never hard-delete the row**; delete active links/membership/placement; archive its Evidence/Decision/knowledge edges; global resources untouched |
+| ProjectResourceLink | project-local | yes | role/annotation/folder placement | n/a | n/a | hard-delete safe (context/access/placement link) |
 | ScientificObject | **global** | yes | label/metadata while draft | **yes — revision (see SCIENTIFIC_OBJECT_MODEL)** | soft (once referenced) | global object: blocked if referenced; else archived, never hard-deleted |
-| Relation (provenance) | **global** | yes | **never** | n/a | n/a | **never** — a provenance node; correct by superseding relation |
+| GlobalProvenanceEdge (#1–8) | **global** | yes | **never** | n/a | n/a | **never** — a provenance node; correct by superseding edge |
+| ProjectKnowledgeEdge (#9–11) | **project-scoped** | yes | **never** | n/a | soft-archive with its Decision/Evidence | archive with its Decision/Evidence on Project tombstone; never hard-delete the row |
 | Run/Artifact/Session/Lit/ExternalReference | **global** | once | **never** (identity immutable) | n/a | revoke (mark `revoked_at`/broken) | never — provenance stays traversable |
 | Evidence | project-scoped | yes | only interpretive fields (not identity/source/target) | n/a | soft | only if no citing Decision; else archive |
 | Decision | project-scoped | yes (draft) | status while draft | n/a | soft | **never** once committed — supersede |
 | Membership / credentials | project-local | yes | yes | n/a | n/a | hard-delete allowed |
 
 **Unique global resource rule:** Global resources (ScientificObject series/revision,
-all reference nodes, provenance Relations) have **no `project_id` owner**; they can be
-referenced by many Projects and are **never deleted by any Project** — only archived or
-revoked. They live as long as their global identity survives.
+all reference nodes, `GlobalProvenanceEdge` rows) have **no `project_id` owner**; they
+can be referenced by many Projects and are **never deleted by any Project** — only
+archived or revoked. They live as long as their global identity survives.
 
-**Unique project-scoped rule:** Evidence and Decision are authored in and scoped to one
-Project. Deleting a Project **soft-archives** its Evidence/Decisions/DecisionEvidence;
-it **never touches** the global objects/references they reference or the provenance
-relations linking them.
+**Unique project-scoped rule:** Evidence, Decision, and `ProjectKnowledgeEdge` rows are
+authored in and scoped to one Project. Deleting a Project **soft-archives** its
+Evidence/Decisions/DecisionEvidence/ProjectKnowledgeEdge; it **never touches** the
+global objects/references they reference or the global provenance edges linking them.
 
 **Deleting a Project (definitive sequence):**
 1. **Tombstone** the Project row (`deleted_at != NULL`) — never hard-delete it — so
    `project_id` FKs on Evidence/Decision stay valid and the minimal Project framing
    survives for audit.
-2. Hard-delete the Project's membership rows and `ProjectResourceLink` rows + annotation.
-3. Soft-archive the Project's Evidence, Decisions, and DecisionEvidence.
-4. Leave all global objects, references, and provenance Relations untouched — they
-   survive, may remain attached to other Projects, and their provenance stays
+2. Hard-delete the Project's membership rows and `ProjectResourceLink` rows (incl.
+   their folder/container placement annotation).
+3. Soft-archive the Project's Evidence, Decisions, DecisionEvidence, and
+   `ProjectKnowledgeEdge` rows.
+4. Leave all global objects, references, and `GlobalProvenanceEdge` rows untouched —
+   they survive, may remain attached to other Projects, and their provenance stays
    traversable.
 
 A Protein cannot be hard-deleted if Evidence references it (block → archive). A

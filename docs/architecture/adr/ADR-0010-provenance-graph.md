@@ -17,15 +17,24 @@ that the physical Relation schema not be frozen before an implementation fork.
   immutable identity cards carrying an **identity authority** (not a resolver/provider)
   + authority-native id + checksum/digest + size + version_ref.
 - **Evidence = source + target + claim**: a source (a reference/experiment/note being
-  interpreted), a target (a ScientificObject, Decision, or another Evidence), and
+  interpreted), a target (a ScientificObjectRevision, Decision, or another Evidence), and
   interpretation/polarity/scope. **`polarity` is a field on Evidence, not a graph
   edge**; `cited_as` on a Decision `cites` join carries per-citation polarity. This
   removes the prior double-expression of supports/contradicts.
 - **Single canonical edge matrix** defined in `SCIENTIFIC_GRAPH.md`: source kind →
-  `relation_type` → target kind, cardinality, immutability, with one fixed direction
-  (`Run/Session --produced--> Artifact`, `Artifact --imported_as--> ScientificObject`,
-  `ScientificObject --generated_by--> Run/Session`, `ScientificObject
-  --evaluates--> ScientificObject`, `Decision --selects/cites/supersedes--> ...`).
+  `relation_type` → target kind, cardinality, immutability, with one fixed direction.
+  Conceptual semantic edges address `ScientificObjectSeries`; content/provenance edges
+  address `ScientificObjectRevision` (`Run/Session --produced--> Artifact`,
+  `ArtifactReference | ExternalReference --imported_as--> ScientificObjectRevision`,
+  `ScientificObjectRevision --generated_by--> Run/Session`,
+  `ScientificObjectRevision --evaluates--> ScientificObjectRevision`);
+  `Decision --selects--> ScientificObjectSeries | ScientificObjectRevision` and
+  `Decision --supersedes/cites--> ...`.
+- **Edge ownership + lifecycle are frozen** (only the physical shape is deferred):
+  edges #1–8 are **`GlobalProvenanceEdge`** (owned by Evidence/Provenance, no
+  `project_id`, never archived by a Project tombstone); edges #9–11 are
+  **`ProjectKnowledgeEdge`** (owned by Knowledge/Decision, archived with their
+  Decision/Evidence).
 - **Edges are immutable once written**; corrections add a superseding edge, never
   rewrite.
 - **This is a LOGICAL graph contract only.** The physical Relation schema (one

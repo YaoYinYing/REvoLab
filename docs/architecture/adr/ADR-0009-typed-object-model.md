@@ -7,15 +7,18 @@ God-object / everything-is-JSON failure mode, and it conflates UI organization w
 scientific semantics.
 
 ## Decision
-- **Base record + typed extension tables.** A universal core `scientific_objects`
-  spine (id, type, label, description, timestamps, created_by, organization anchor)
-  plus one typed extension table per registered scientific type. No unvalidated JSON
-  payload for scientific metadata.
+- **Base record + typed extension tables.** A universal core `scientific_object_series`
+  spine (`series_id`, `object_type`, label, description, timestamps, created_by) plus
+  one typed extension table per registered scientific type. **No organization column
+  on the spine**: project-local placement is a folder/container annotation on
+  `project_resource_link`, owned by the Project domain. No unvalidated JSON payload
+  for scientific metadata.
 - **Core owns the type registry.** `object_type → {typed model, view schema,
   validator, versioned?}`. New types are deliberate Core schema decisions, not
   runtime plugins and not JSON blobs.
-- **Separate organization from scientific relation.** Folders/container-membership
-  carry navigation; typed `Relation` edges are the sole scientific-semantics carrier.
+- **Separate organization from scientific relation.** Project-local folders (the
+  `project_resource_link` folder/container annotation) carry navigation; typed
+  `Relation` edges are the sole scientific-semantics carrier.
 - **First-class `ExternalIdentity` registry (+ series↔external-identity mapping) and
   `Alias` registries.** Canonical internal identity is
   the `series_id`; **durable external identity is `(authority, native_id)`** with an

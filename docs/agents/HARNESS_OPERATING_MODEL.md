@@ -319,44 +319,46 @@ more dangerous mode and is never the default.
 
 ```text
 /repo/REvoLab/**                   read/write
-package install (NORMAL class)     install existing, locked / project-declared
-                                   dependencies exactly as declared
+package install (NORMAL class)     manifest/lockfile/build backend/install scripts
+                                   unchanged from an already-approved baseline
 tests, build, lint
 localhost API                      (read/test the running app)
 ```
 
-### Package install is split into two classes (reviewer finding #11)
+### Package install is split into two classes (reviewer finding #11, refined round 4)
 
-`package install` is **not one homogeneous operation**. It is split into a
-NORMAL class (no approval needed) and a REQUIRES-APPROVAL class, because adding
-or executing unreviewed code is a code-execution risk, not a workspace write:
+`package install` is **not one homogeneous operation**. The earlier rule split on
+"existing dep vs new dep", but that is misleading: `pip install -e '.[dev]'` on an
+existing dependency still executes the declared PEP 517 build backend, and `npm ci` on
+a locked tree still runs `install`/`postinstall` lifecycle scripts. "Locked" does not
+mean "runs no code". The boundary is therefore **whether the dependency manifest — and
+the install code it declares — matches an approved baseline**:
 
 ```text
 (a) NORMAL — no approval needed:
-    installing existing, locked / project-declared dependencies exactly as
-    declared, e.g. `pip install -r requirements.lock`, or restoring a
-    lockfile / vendored dependency state to what the project already declares.
+    the dependency manifest, lockfile, build backend, and install/lifecycle scripts
+    are UNCHANGED from an already-approved baseline, so the declared install path
+    may execute, e.g. `pip install -e '.[dev]'` or `npm ci` against the approved
+    manifest.
 
 (b) REQUIRES APPROVAL:
-    - adding or updating a dependency (changing versions / the lockfile),
-    - installing an arbitrary or unreviewed package,
-    - executing unreviewed install / post-install scripts.
+    - the agent changed the manifest / lockfile / build backend / install scripts
+      (adding, updating, or pinning dependencies; editing pyproject/npm scripts), or
+    - the baseline itself has not yet been approved once by a human, or
+    - installing an arbitrary / unreviewed package.
 ```
 
-Approval is required because install time is code-execution time, not just file
-writing. Two families of install-time scripts are explicit code-execution risks
-that require approval because they run arbitrary code from the package:
+Once a human has approved a baseline manifest, running its declared install path is a
+normal project operation; **any change to that manifest (or to the code the manifest
+will execute) re-arms approval**, because install time is code-execution time, not just
+file writing. Two families of install-time scripts are the exact code-execution risks
+the baseline approval covers:
 
 ```text
 npm lifecycle scripts    preinstall / install / postinstall
 Python build backends    PEP 517 / PEP 518 build-system, setup.py / egg_info,
                          and Python post-install steps
 ```
-
-The line between the classes is the same principle as the container-engine
-guardrail above: operating on an **existing, known, declared** artifact is a
-normal project operation; **introducing new or unreviewed executable content**
-into the environment is a privileged change that stops and asks.
 
 ### Container-engine operations are a privileged external capability (reviewer finding #8)
 
@@ -367,9 +369,25 @@ flags and thereby **bypass `workspace-write` file restrictions**. Therefore:
 - Container-engine access is **NOT an ordinary workspace write** — it is a privileged
   external capability that requires approval to invoke.
 - The only sanctioned container use is the **known `docker-compose.yml` at the repo
-  root** for `local postgres`, and even that must obey:
+  root** for `local postgres`. Because that file is itself editable by the agent, the
+  **filename is not the security boundary** — the *effective* configuration is. Before
+  any daemon invocation:
 
 ```text
+docker compose config                 (render the EFFECTIVE merged config,
+                                       not the checked-in file)
+    ↓
+machine/policy validation:
+    no --privileged
+    no host PID / IPC namespace sharing
+    no docker.sock mount
+    no bind-mount outside the approved workspace/data root
+    ↓
+approval
+```
+
+```text
+hard rules (unchanged):
 known project docker-compose file        (not an arbitrary image/container)
 no --privileged
 no host PID / IPC namespace sharing
@@ -377,6 +395,8 @@ no docker.sock mount into a container
 no bind-mount outside the approved workspace/data root
 approval required when invoking host Docker/Podman
 ```
+
+> **Policy must inspect the effective Compose configuration, not trust the filename.**
 
 - **Never treat a subagent or a sandbox as a safe proxy for Docker**: delegating a
   container command to a subagent does not isolate the daemon. See "Subagents are not

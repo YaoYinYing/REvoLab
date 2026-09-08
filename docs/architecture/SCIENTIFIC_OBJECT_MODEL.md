@@ -18,9 +18,12 @@ is the projection of a scientific entity REvoLab has decided to represent.
 - `object_type` — the type discriminator (a registry key)
 - `title`/`name` — human label (mutable, **not** identity)
 - `description`, `created_at`, `updated_at`, `created_by` (audit)
-- `organization_anchor` — placement in the workspace tree (see *Organization vs
-  relation*)
 - optional `version` (type-gated; most content types get it)
+
+**No organization column lives on the universal spine.** Where a global object sits
+in a workspace tree is *project-local* placement, recorded by the Project domain as a
+folder/container annotation on `ProjectResourceLink`, never as a column on the global
+ScientificObject (see *Organization vs scientific relation*).
 
 **Type-specific (the scientific payload — *never* a universal column and *never*
 an unvalidated JSON blob):**
@@ -102,7 +105,7 @@ IDs/aliases bind `series_id`; provenance edges reference `revision_id`).
   exactly which revision was used.
 
 **Mapping to the model:**
-- The core `scientific_objects` spine row carries the stable `series_id` (the
+- The core `scientific_object_series` spine row carries the stable `series_id` (the
   conceptual identity) and the *current* revision marker.
 - Each content revision is an independent immutable record with its own
   `revision_id`, immutable content, and content fingerprint (checksum). Revisions
@@ -118,8 +121,10 @@ governance/labeling spine (held on the series row, not revisions).
 
 - **Content mutation** → never in-place: create a **new revision** (same conceptual
   identity, new `revision_id`).
-- **Governance/label mutation** (rename, fix typo, re-parent, add alias) → in-place on
-  the series spine; not scientific content, not versioned.
+- **Governance/label mutation** (rename, fix typo, add alias) → in-place on
+  the series spine; not scientific content, not versioned. Re-parenting is **not** a
+  series mutation — it is a project-local organization move on the Project's
+  `ProjectResourceLink` (its folder/container annotation).
 
 **New revision vs new object:**
 - **New revision** when the change keeps the same conceptual identity (re-folded
@@ -204,26 +209,35 @@ structure. That encodes three false claims:
 3. One tree can express all science — it cannot (a Variant is scientifically a
    Variant-of a Protein but might be filed anywhere for organization).
 
-**Decision — two distinct mechanisms:**
+**Decision — two distinct mechanisms, one project-local and one global:**
 
-- **Organization** (navigation/folders): a clearly-labeled containment concept —
-  a `Folder`/container node or a `container_membership` model independent of
-  scientific edges. Reparenting a folder moves no science; deleting a container
-  deletes **only the container link**, never the contained objects (they become
-  "unfiled"). **No delete cascades from a container.**
-- **Scientific relation** (typed edges): the `Relation` concept is the **sole**
-  expression of scientific meaning. The complete `RelationType` closed enum is
-  defined canonically in `SCIENTIFIC_GRAPH.md` (Edges section) — including
-  `variant_of`, `derived_from`, `represents`, `generated_by`, `evaluates`,
-  `selects`, plus the provenance edges `consumed_as_input_by`,
-  `produced`, `imported_as`, `cites`, `supersedes`. (`supports`/`contradicts`
-  are **not** edges — they are Evidence `polarity` fields; see
-  `SCIENTIFIC_GRAPH.md`.) That single enum is generated into
-  the API/Agent/tool contracts. This is where science lives; the graph is assembled at
-  the application layer over relational tables (ADR-0003).
+- **Organization** (navigation/folders) is **project-local placement, not a property
+  of the global object.** It is recorded by the Project domain as a folder/container
+  annotation on `ProjectResourceLink` — never as a column on the global series/revision
+  row. The same link row carries both "this resource is in this Project's context" and
+  "it is filed here in this Project's tree". Reparenting within one Project moves only
+  that Project's linkage; another Project can file the same global object anywhere else
+  simultaneously. Deleting a folder/container clears **only that Project-local
+  annotation**, never the contained objects (they become "unfiled" in that Project) and
+  never the object in other Projects. **No delete cascades from organization.**
+- **Scientific relation** (typed edges): the typed edge matrix in
+  `SCIENTIFIC_GRAPH.md` — global provenance edges (#1–8) plus project-scoped
+  knowledge edges (#9–11) — is the **sole** expression of scientific meaning. The
+  complete `RelationType` closed enum is defined canonically there (Edges section):
+  #1–8 `variant_of`, `derived_from`, `represents`, `evaluates`,
+  `consumed_as_input_by`, `produced`, `imported_as`, `generated_by`; #9–11
+  `selects`, `supersedes`, `cites`. (`supports`/`contradicts` are **not** edges —
+  they are Evidence `polarity` fields; see `SCIENTIFIC_GRAPH.md`.) That single enum is
+  generated into the API/Agent/tool contracts. This is where science lives; the graph
+  is assembled at the application layer over relational tables (ADR-0003).
+
+So the same global object can be filed at `Targets/T5alphaH` in Project A and at
+`Previous work/P450s` in Project B: two project-local placements over one global
+scientific identity.
 
 This satisfies the invariant: *UI navigation hierarchy must not automatically imply
-scientific semantics or destructive ownership.*
+scientific semantics or destructive ownership; Project organization is not scientific
+semantics.*
 
 ---
 

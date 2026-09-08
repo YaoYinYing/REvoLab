@@ -183,8 +183,10 @@ categories (see `SCIENTIFIC_GRAPH.md` and `EVIDENCE_PROVENANCE.md`):
 ```mermaid
 flowchart LR
     Proj["Project"]
-    Obj["ScientificObject"]
+    Ser["ScientificObjectSeries"]
+    Rev["ScientificObjectRevision"]
     RunR["RunReference"]
+    SesR["SessionReference"]
     ArtR["ArtifactReference"]
     LitR["LiteratureReference"]
     ExtR["ExternalReference"]
@@ -193,29 +195,46 @@ flowchart LR
 
     Proj -- scopes --> Dec
     Proj -- scopes --> Ev
+    Ser -- variant_of / represents --> Ser
+    Rev -- derived_from --> Rev
+    Rev -- evaluates --> Rev
+    Rev -- consumed_as_input_by --> RunR
+    Rev -- consumed_as_input_by --> SesR
     RunR -- produced --> ArtR
-    Obj -- consumed_as_input_by --> RunR
-    ArtR -- imported_as --> Obj
-    Obj -- generated_by --> RunR
+    SesR -- produced --> ArtR
+    ArtR -- imported_as --> Rev
+    ExtR -- imported_as --> Rev
+    Rev -- generated_by --> RunR
+    Rev -- generated_by --> SesR
     LitR -- source of --> Ev
     ExtR -- source of --> Ev
-    Ev -- target --> Obj
+    Ev -- target --> Rev
+    Dec -- selects --> Ser
+    Dec -- selects --> Rev
     Dec -- cites (DecisionEvidence) --> Ev
     Dec -- supersedes --> Dec
 ```
 
-Directions derive from the single canonical edge matrix in `SCIENTIFIC_GRAPH.md`.
+Directions and endpoints derive from the single canonical edge matrix in
+`SCIENTIFIC_GRAPH.md`. **Conceptual semantic edges address Series; content/provenance
+edges address Revision; a Decision targets a Series or a Revision explicitly.**
 `supports`/`contradicts` are **fields** on Evidence (and `cited_as` on a Decision
 `cites` join), not graph edges.
 
-- **ScientificObject** is global context for one concrete scientific thing.
+- **ScientificObjectSeries** is the global conceptual identity of one scientific
+  thing; **ScientificObjectRevision** is its immutable content version.
 - **RunReference / SessionReference / ArtifactReference / LiteratureReference /
   ExternalReference** are *immutable identity cards* pointing at external work. They
   are **facts**, not claims.
 - **Evidence** is the durable, interpreted *claim*: a source (a reference/experiment/
-  note) + a target (an object/Decision) + polarity/scope. See `SCIENTIFIC_GRAPH.md`.
-- **Decision** is the durable project conclusion that *cites* Evidence and can be
-  superseded — never rewritten.
+  note) + a target (a ScientificObjectRevision/Decision/Evidence) + polarity/scope.
+  See `SCIENTIFIC_GRAPH.md`.
+- **Decision** is the durable project conclusion that *cites* Evidence, *selects* a
+  Series/Revision, and can be superseded — never rewritten.
+
+(Evidence `source` may also be a Run/Session/ArtifactReference or a
+ScientificObjectRevision; those edges are omitted from the diagram for brevity — the
+frozen legal source/target sets live in `SCIENTIFIC_GRAPH.md`.)
 
 ---
 

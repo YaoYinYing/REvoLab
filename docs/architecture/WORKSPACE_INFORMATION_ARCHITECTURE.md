@@ -75,8 +75,8 @@ GET/POST            /api/projects
 GET                 /api/projects/{id}                → project METADATA (not the whole graph)
 GET/POST            /api/projects/{id}/objects        → paginated list / create (creates a draft object)
 GET/PATCH/DELETE    /api/objects/{id}                 → object-detail aggregate / edit series spine / archive
-POST                /api/projects/{id}/relations      → create an immutable provenance edge
-GET                 /api/relations/{id}               → read only (relations are immutable once written)
+POST                /api/projects/{id}/relations      → create an immutable edge: `GlobalProvenanceEdge` (#1–8) or `ProjectKnowledgeEdge` (#9–11) per the matrix
+GET                 /api/relations/{id}               → read only (edges are immutable once written)
 POST                /api/projects/{id}/evidence       → create an evidence claim
 GET/PATCH/DELETE    /api/evidence/{id}                → PATCH updates interpretive fields ONLY (kind/role/interpretation/polarity/confidence/scope); source+target+identity are immutable
 POST                /api/projects/{id}/decisions      → create a Decision as DRAFT
@@ -103,8 +103,10 @@ POST /api/objects/{id}/links/evidence   → typed link
 - **Decision status** is exactly `draft | committed` (+ derived `superseded`); there is
   no `open`/`proposed`/`concluded` stored status. `POST .../decisions` always creates a
   draft; only `commit` (authorized) promotes; `supersede` links a successor.
-- **Relations** are immutable after creation; there is no `PATCH /relations/{id}`.
-  Correcting an edge is `supersede` (or a new edge), see the graph contract.
+- **Edges** are immutable after creation; there is no `PATCH /relations/{id}`.
+  `GlobalProvenanceEdge` (#1–8) carries no `project_id`; `ProjectKnowledgeEdge` (#9–11)
+  is scoped to its Decision/Evidence's Project. Correcting an edge is `supersede` (or a
+  new edge), see the graph contract.
 - **Evidence** `PATCH` is limited to interpretive fields; `source`/`target`/identity
   are immutable.
 
