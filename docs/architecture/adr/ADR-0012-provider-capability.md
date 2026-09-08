@@ -10,9 +10,11 @@ is available.
 ## Decision
 - **Five concepts:** Provider (stable slug key), Driver (realizes capabilities),
   Capability (Core-owned kind + protocol), Tool (agent-facing bridge), Credential
-  (owned by the credential store). `CredentialBinding` is **not** introduced (a
-  `has_credential` presence lookup suffices). `ExternalReference` is a stored data
-  shape in the Evidence domain, not a driver concept.
+  (owned by the credential store). `ExternalProviderCredentialBinding`
+  (actor_id, provider_key, kind, secret_ref) is the **Identity-owned non-secret**
+  record whose secret **material** lives in the Secret store; `has_credential` is a
+  derived query over that binding set, never stored material. `ExternalReference` is
+  a stored data shape in the Evidence domain, not a driver concept.
 - **Distinct capability Protocols:** `ComputeCapability` (batch), `SearchCapability`
   (literature + biological lookup), `ArtifactResolutionCapability` (pure read),
   `DesignCapability` (export half) + `InteractiveHandoffCapability` (interactive
