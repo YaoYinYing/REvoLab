@@ -28,13 +28,14 @@ that the physical Relation schema not be frozen before an implementation fork.
   Conceptual semantic edges address `ScientificObjectSeries`; content/provenance edges
   address `ScientificObjectRevision` (`Run/Session --produced--> Artifact`,
   `ArtifactReference | ExternalReference --imported_as--> ScientificObjectRevision`,
-  `ScientificObjectRevision --generated_by--> Run/Session`,
   `ScientificObjectRevision --evaluates--> ScientificObjectRevision`);
   `Decision --selects--> ScientificObjectSeries | ScientificObjectRevision` and
-  `Decision --supersedes/cites--> ...`.
+  `Decision --supersedes/cites--> ...`. **`generated_by` is NOT a persisted
+  `RelationType`** — it is the derived traversal
+  `Revision ←imported_as← Artifact ←produced← Run/Session`.
 - **Edge ownership + lifecycle are frozen** (only the physical shape is deferred):
-  edges #1–8 are **`GlobalProvenanceEdge`** (owned by Evidence/Provenance, no
-  `project_id`, never archived by a Project tombstone); edges #9–11 are
+  edges #1–7 are **`GlobalProvenanceEdge`** (owned by Evidence/Provenance, no
+  `project_id`, never archived by a Project tombstone); edges #8–10 are
   **`ProjectKnowledgeEdge`** (owned by Knowledge/Decision, archived with their
   Decision/Evidence).
 - **Edges are immutable once written**; corrections add a superseding edge, never

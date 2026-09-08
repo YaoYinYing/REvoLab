@@ -20,11 +20,11 @@ Use **global/stable resource identity + project-scoped reference/membership** �
 **Scope split (definitive):** `ScientificObjectSeries`/`ScientificObjectRevision`, all
 reference nodes (`RunReference`, `SessionReference`, `ArtifactReference`,
 `LiteratureReference`, `ExternalReference`), and **global provenance edges**
-(`GlobalProvenanceEdge`, #1–8) are **global** (no `project_id` owner, held across many
+(`GlobalProvenanceEdge`, #1–7) are **global** (no `project_id` owner, held across many
 Projects). `Evidence`, `Decision`, and **project knowledge edges** (`ProjectKnowledgeEdge`,
-#9–11) are **project-scoped** (authored in and owned by one Project). `Project`,
-membership, organization placement, and annotation are project-local. Nothing is owned
-by a Project through a cascade.
+#8–10) are **project-scoped** (authored in and owned by one Project). `Project`,
+membership, organization placement, stewardship grants, and annotation are
+project-local. Nothing is owned by a Project through a cascade.
 
 **`ProjectResourceLink` renames `ProjectObjectMembership`** — the global resources linked
 into a Project's context are not only ScientificObjects; references are global too. A
@@ -32,20 +32,32 @@ into a Project's context are not only ScientificObjects; references are global t
 
 ```text
 ProjectResourceLink(project_id, resource_id FK → GlobalResourceRegistry.resource_id,
-                    role?, folder?, annotation?)
+                    role?, folder?, preferred_revision_id?, annotation?)
 ```
 
 `ProjectResourceLink` **does not store `resource_kind`** — `resource_id` already
 globally identifies the row, and the kind is obtained by joining the registry (a second
-`resource_kind` column would be a denormalized copy of the same truth). `resource_id`
-FKs to a thin `GlobalResourceRegistry(resource_id PK, resource_kind)` spine that every
-global resource row registers into (the concrete row's own primary key, inserted in the
-same transaction), and every concrete global table's primary key is **both PK and FK**
-to that registry row — so a registry row can never exist without its concrete row. A
-single relational column cannot FK polymorphically to seven tables, so the registry
-provides one real referential identity target. `ProjectResourceLink` is **not** a
-per-object ACL; it is the statement "this Project's context includes these global
-resources."
+`resource_kind` column would be a denormalized copy of the same truth). `preferred_revision_id`
+is the **project-local pin** of the preferred Revision (it must point at a revision
+already visible through this Project's links; there is **no** `current_revision_id` on
+the global series). `resource_id` FKs to a thin `GlobalResourceRegistry(resource_id PK,
+resource_kind)` spine that every global resource row registers into (the concrete row's
+own primary key, inserted in the same transaction), and every concrete global table's
+primary key is **both PK and FK** to that registry row. That FK guarantees *concrete row
+⇒ registry row exists*; the reverse (registry row ⇒ exactly one concrete subtype, and
+`resource_kind` matching it) is a **domain-service invariant**, optionally reinforced by
+a composite discriminator/CHECK/trigger — not claimed as DB-guaranteed. A single
+relational column cannot FK polymorphically to seven tables, so the registry provides
+one real referential identity target. `ProjectResourceLink` is **not** a per-object ACL;
+it is the statement "this Project's context includes these global resources."
+
+**`ResourceStewardship` (round 5) — write authority is separate from visibility.** A
+`ProjectResourceLink` grants **read/context** visibility only. Mutating a global
+resource (append revision, rename, add external identity, archive, or create a global
+provenance edge about it) requires a separate `ResourceStewardship` grant naming the
+steward Project. A non-steward Project's link is read-only by default. Deleting the
+steward Project does **not** delete the resource: the grant is transferred or the
+resource is frozen until transferred. **Visibility is not stewardship.**
 
 **Series vs revision visibility (reviewer round 3) + the round-5 closure:**
 `scientific_object_revision` and `scientific_object_series` are **distinct** link kinds.
@@ -89,8 +101,9 @@ authorization projection (computed per query, never stored):
   of that Project). A partially-privileged edge is **not** shown — no partial leak.
 
 This resolves the leak example: Project B can see the shared object `X`, but the edge
-`X --generated_by--> Y` (where `Y` is a private RunReference not linked into Project B)
-is **not** projected for Project B's users, because endpoint `Y` is not visible to them.
+`X --consumed_as_input_by--> Y` (where `Y` is a private RunReference not linked into
+Project B) is **not** projected for Project B's users, because endpoint `Y` is not
+visible to them. (The derived `generated_by` traversal is projected the same way.)
 
 **Immutability of who-may-see:** the durable storage graph never changes for
 authorization reasons; visibility is a projection computed at read time from current
@@ -118,6 +131,8 @@ soft-delete (tombstone) the Project row      -> project.deleted_at != NULL
 hard-delete active sharing links/membership rows
 +
 archive Evidence / Decision / DecisionEvidence / `ProjectKnowledgeEdge` (deleted_at on the project-scoped rows)
++
+for any resource this Project stewards: transfer ResourceStewardship or freeze it
 +
 leave all global resources and their provenance untouched
 ```

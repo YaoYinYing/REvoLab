@@ -33,11 +33,11 @@ semantic-index pipeline, no generic AgentGateway, no always-on skill encyclopedi
 ## What enters context automatically vs explicitly
 
 - **Automatic (small, structural, safe):** project identity/name + membership
-  context; the scientific-object *tree skeleton* (IDs + labels + types + parent
-  links only, no metadata blobs); the active object subtree (a bounded
-  ContextSelection); **reference headers** for large artifacts (id, type, authority,
-  external id, checksum, size, content-type, version, originating run) — **never
-  artifact bytes**; the few skills for the task.
+  context; the scientific-object **series skeleton** (series labels + `object_type`,
+  no organization/parent links — placement lives on `ProjectResourceLink`); the listed
+  **revision refs** (a bounded ContextSelection); **reference headers** for large
+  artifacts (resource id, authority, external id, checksum, size, content-type,
+  derived originating run) — **never artifact bytes**; the few skills for the task.
 - **Explicit (only when the Agent asks or the user does):** full metadata of a
   specific object; the *content* of a large artifact via an `inspect_artifact`
   tool call through the owning provider driver (returns a bounded preview, not a
@@ -51,17 +51,23 @@ tool.
 
 ## Representing objects / evidence / decisions to the Agent
 
-As **typed, addressable references**, not prose dumps:
+As **typed, addressable references**, not prose dumps, and **not a third domain model**:
 
 ```text
-ObjectRef   {type, id, authority?, native_id?, label}
-EvidenceRef {id, kind, authority, native_id, role/polarity}
-DecisionRef {id, status, superseded_by? (derived reverse of the `supersedes` edge),
-            evidence_ids[]}
+SeriesRef      {series_id, object_type, label}
+RevisionRef    {revision_id, series_id, object_type, revision_seq, schema_version}
+ArtifactRef    {artifact_id, authority, native_id?, checksum, size, content_type}
+ReferenceRef   {resource_id, kind}          # run/session/lit/external ref through GlobalResourceRegistry
+EvidenceRef    {evidence_id, kind, source_ref?, target_ref, role/polarity}
+DecisionRef    {decision_id, status, superseded_by? (derived reverse of `supersedes`),
+                selects_refs[], evidence_ids[]}
 ```
 
-(External identity is `(authority, native_id)`, never the access provider — see
-`PROVIDER_CAPABILITIES.md`.)
+A reference addresses `series_id` or `revision_id` explicitly (never the ambiguous
+`object id`); Evidence's source/target are **reference associations**, not
+`authority`/`native_id` of its own (that pair belongs to `ExternalIdentity`, see
+`SCIENTIFIC_OBJECT_MODEL.md`). External identity is `(authority, native_id)`, never the
+access provider — see `PROVIDER_CAPABILITIES.md`.
 
 The Agent reasons over IDs and addresses its own proposed writes back to the same
 IDs. Tool schemas derive from the OpenAPI/domain schema; skills point at the schema
@@ -141,8 +147,8 @@ Six operation classes, each with an autonomy level:
 
 | Operation class | Agent autonomy | Gate |
 |---|---|---|
-| **Agent proposal** (emit typed tool call, draft a Note/Decision, reason) | Automatic | none — conversation only, never persisted truth by itself |
-| **Domain mutation** (create/update a Note draft, attach evidence, create an object, **record a Decision as a draft**, link a Relation) | Automatic OR project-policy | typed domain command + domain validation (ownership, project-belonging, schema) |
+| **Agent proposal** (emit typed tool call, draft a Decision, reason) | Automatic | none — conversation only, never persisted truth by itself |
+| **Domain mutation** (attach evidence, create an object/revision, **record a Decision as a draft**, create a typed edge via its domain command) | Automatic OR project-policy | typed domain command + domain validation (stewardship where a global resource is mutated, project-belonging, schema) |
 | **Knowledge commitment (promotion)** — `Decision draft → committed` | Approval (authorized actor) | the promotion gate (ADR-0011); a distinct, higher-authority operation — never automatic for an Agent |
 | **External compute submission** (submit an expensive REvoCompute job) | Explicit tool action / policy | must name task + cost/capability; can require approval above a threshold; fails closed on uncertainty |
 | **External data write** (write to provider/artifact store) | Highly restricted | explicit agreement that the write is intended; never silent |

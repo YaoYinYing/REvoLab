@@ -44,45 +44,52 @@ Each type has its own *schema* (its own column set).
 
 ## How is scientific typing extended?
 
-**Decision: base record + typed extension tables (recommendation C), with a strict
-no-unvalidated-JSON policy for the scientific payload.**
+**Frozen semantic contract, physical representation deferred (round 5).** What is fixed
+in PR1 is the *contract*: the typed scientific payload hangs **on the revision**, has one
+Core-owned `object_type` discriminator, and is validated against a per-type schema —
+**no un-validated JSON**. The physical representation of the typed payload — **typed
+`JSONB` + `schema_version` + generated/indexed high-frequency columns** versus **joined
+per-type extension tables** — is deferred to the **Phase-1 executable spike**, exactly
+like the physical Relation schema:
 
 ```text
-scientific_object_series (identity spine — universal fields + object_type, current_revision_id)
-    │ 1:*
-scientific_object_revision (revision_id, series_id, revision_seq, checksum, immutable content refs)
-    │ 1:1
-    ├── protein_revision      (revision_id FK — per-type typed columns)
-    ├── variant_revision
-    ├── structure_revision
-    ├── ...
-    └── (no typed table for OTHER / generic — allowed but carries almost nothing)
+semantic contract (frozen):
+    scientific_object_series (series_id, object_type, labels/audit)  — no current_revision_id
+        │ 1:*
+    scientific_object_revision (revision_id, series_id, revision_seq, checksum,
+                                object_type, schema_version)
+        └── typed payload  (per-type schema, validated; physical shape is the spike's call)
+
+physical candidates (Phase-1 spike):
+    (a) per-type extension tables keyed by revision_id   — real columns, real indexes
+    (b) typed JSONB payload + Pydantic/JSON-Schema validation + generated columns
 ```
 
-The **typed scientific payload hangs on the revision, not the series** (reviewer round
-3): each immutable `scientific_object_revision` row (own `revision_id`, `revision_seq`,
-`checksum`) carries exactly the typed columns for its content version in a sibling
-`*_revision` table keyed by `revision_id`. The series row is only the identity/governance
-spine (label, `object_type`, `current_revision_id`) — it never carries scientific payload
-columns.
+The **core identity/governance spine remains the same either way**: the series row is
+only identity/governance (label, `object_type` — no `current_revision_id`), never
+scientific payload.
 
 - **Core owns the type registry** — a single Core module mapping
   `object_type → {typed model, view schema, validator, versioned?}`. This is the
-  extension mechanism.
-- **Runtime plugins do not own columns.** A new typed scientific concept is a
-  durable schema decision and is a deliberate, reviewed Core migration — not a hot
-  extension point. This avoids the plugin-driven column-migration hazard.
-- `object_type` remains on the core row as the discriminator. `OTHER` is an
-  explicit fallback for genuinely untyped things, not a dumping ground.
+  extension mechanism and the validation authority regardless of physical shape.
+- **Runtime plugins do not own columns/payload.** A new typed scientific concept is a
+  durable, reviewed Core schema decision — not a hot extension point. This avoids the
+  plugin-driven migration hazard.
+- `object_type` remains on the revision as the discriminator. `OTHER` is an explicit
+  fallback for genuinely untyped things, not a dumping ground.
 
 ### Alternative shapes considered
 
 | Option | Verdict |
 |---|---|
-| A. enum + typed JSON | Rejected — weakly typed, unqueryable scientific payload, JSON schema-versioning burden |
-| B. registry-driven object types | Rejected for columns — a plugin can't own physical storage without migrations; fragile base class |
-| C. base record + typed extension tables | **Adopted** — real columns, real indexes, real validation, no God-object |
-| D. hybrid (typed + fallback JSON) | Rejected — two silent storage mechanisms |
+| A. enum + untyped JSON | Rejected — un-validated JSON payload |
+| B. registry-driven runtime object types | Rejected — a plugin can't own physical storage without migrations; fragile base class |
+| C. typed JSONB + schema_version + generated columns | **Deferred candidate** — validated, versioned, extendable without a migration per field |
+| D. joined per-type extension tables | **Deferred candidate** — real columns/indexes; one table per type |
+| E. hybrid (typed + fallback JSON) | Rejected — two silent storage mechanisms |
+
+The semantic contract above is compatible with either (C) or (D); the Phase-1 spike
+picks one against a real implementation. PR1 does **not** freeze the physical choice.
 
 ---
 
@@ -109,10 +116,20 @@ IDs/aliases bind `series_id`; provenance edges reference `revision_id`).
 
 **Mapping to the model:**
 - The core `scientific_object_series` spine row carries the stable `series_id` (the
-  conceptual identity) and the *current* revision marker.
+  conceptual identity). **It carries NO `current_revision_id`** (round 5): a global
+  "current" would leak the existence of revisions a Project cannot see and would be a
+  second, derivable version pointer.
 - Each content revision is an independent immutable record with its own
   `revision_id`, immutable content, and content fingerprint (checksum). Revisions
   are ordered by a monotonic `revision_seq` within the series.
+
+**"Current revision" is derived, never stored:**
+
+```text
+latest global revision        = max(revision_seq) over the series
+current visible revision in P = max(revision_seq) over P's visible revisions,
+                                or P's ProjectResourceLink.preferred_revision_id pin
+```
 - **Content/provenance edges reference `revision_id`, never `series_id`** (the
   conceptual semantic edges `variant_of`/`represents` address `series_id`). "Which
   Structure revision did this Run consume?" resolves unambiguously.
@@ -182,25 +199,23 @@ aliases              → search synonyms used to find, never to cite
   `external_identity_id` FK plus resolver/cache metadata (see `EVIDENCE_PROVENANCE.md`
   / `SCIENTIFIC_GRAPH.md`).
 
-- **Series ↔ external identity mapping:** a **separate, non-global-1:1** join table
-  links a series to one or more external identities. This mapping is **not** forced to
-  be globally 1:1 — it is a normal many-to-many join between series and external
-  identities, carrying an optional `qualifier`/`role` (which aspect of the object the
-  identifier means) and the `is_canonical` preference **on the mapping** (which
-  external identity is the preferred one *for that series*), not on the
-  `ExternalIdentity` row:
+- **Series ↔ external identity mapping is a GLOBAL assertion, not a project opinion.**
+  A join table links a series to an external identity, carrying a `qualifier` (which
+  aspect of the object the identifier means, e.g. `sequence` vs `structure`) and the
+  `is_canonical` preference **on the mapping**:
 
   ```
   ScientificObjectExternalIdentity(series_id, external_identity_id,
-                                   qualifier/role, is_canonical)
+                                   qualifier, is_canonical)
+      UNIQUE(external_identity_id, qualifier)   -- one semantic target per qualifier
   ```
 
-  An external identity maps at the **series level** (conceptual identity), never at
-  the revision level — a revision sample is always identified through its owning
-  series. Unless a project deliberately asserts otherwise, an authority ID points at
-  one REvoLab series; but if a project chooses, the *same* external identity can be
-  asserted against (mapped to) multiple series, driven by this mapping table rather
-  than by a forced global uniqueness on the object.
+  The same external identity may map to **one** series per `qualifier` — the canonical
+  global assertion ("UniProt:P12345 as a sequence **is** this Protein series"). It is
+  **not** a free many-to-many and it carries no `project_id`. A Project that wants to
+  assert a different interpretation does **not** edit the global mapping — it records
+  that interpretation as an `ExternalReference` + `Evidence` (project-scoped), leaving
+  the global identity assertion stable and shared (see `EVIDENCE_PROVENANCE.md`).
 - **Aliases:** a separate, search-oriented, mutable, non-unique list (bound to the
   series).
 
@@ -234,15 +249,16 @@ structure. That encodes three false claims:
   annotation**, never the contained objects (they become "unfiled" in that Project) and
   never the object in other Projects. **No delete cascades from organization.**
 - **Scientific relation** (typed edges): the typed edge matrix in
-  `SCIENTIFIC_GRAPH.md` — global provenance edges (#1–8) plus project-scoped
-  knowledge edges (#9–11) — is the **sole** expression of scientific meaning. The
+  `SCIENTIFIC_GRAPH.md` — global provenance edges (#1–7) plus project-scoped
+  knowledge edges (#8–10) — is the **sole** expression of scientific meaning. The
   complete `RelationType` closed enum is defined canonically there (Edges section):
-  #1–8 `variant_of`, `derived_from`, `represents`, `evaluates`,
-  `consumed_as_input_by`, `produced`, `imported_as`, `generated_by`; #9–11
-  `selects`, `supersedes`, `cites`. (`supports`/`contradicts` are **not** edges —
-  they are Evidence `polarity` fields; see `SCIENTIFIC_GRAPH.md`.) That single enum is
-  generated into the API/Agent/tool contracts. This is where science lives; the graph
-  is assembled at the application layer over relational tables (ADR-0003).
+  #1–7 `variant_of`, `derived_from`, `represents`, `evaluates`,
+  `consumed_as_input_by`, `produced`, `imported_as`; #8–10
+  `selects`, `supersedes`, `cites`. (`generated_by` is a derived traversal, never a
+  persisted enum member; `supports`/`contradicts` are **not** edges — they are Evidence
+  `polarity` fields; see `SCIENTIFIC_GRAPH.md`.) That single enum is generated into the
+  API/Agent/tool contracts. This is where science lives; the graph is assembled at the
+  application layer over relational tables (ADR-0003).
 
 So the same global object can be filed at `Targets/T5alphaH` in Project A and at
 `Previous work/P450s` in Project B: two project-local placements over one global

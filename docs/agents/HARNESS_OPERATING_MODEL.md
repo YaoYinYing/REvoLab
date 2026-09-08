@@ -95,9 +95,10 @@ and ask the human rather than push forward:
     retrying a broken gate is not productive)
 (c) a request to expand scope                   (goes beyond the declared Non-goals)
 (d) a request to expand permissions             (exceeds the Permission ceiling)
-(e) any decision that is an architecture-authority call — a design decision better
-    made by a human (e.g. ownership, the smallest-durable-abstraction choice on a
-    fork, a promotion policy that changes what becomes project truth)
+(e) a CONSTITUTIONAL architecture change — a decision that changes accepted domain
+    ownership, an accepted ADR/invariant, the product boundary, or the safety/approval
+    authority. (An implementation-architecture decision WITHIN already-accepted
+    ADRs/invariants is **not** a stop trigger — that is the Primary Integrator's job.)
 ```
 
 When a trigger fires, the agent stops and reports to the human with the round
@@ -171,10 +172,33 @@ subagents read/analyze/report"** model:
 - **BOUNDED CONCURRENCY.** The parent starts a bounded, pre-declared number of
   parallel subagents and reconciles their reports itself; it does not let fan-out
   grow without limit.
-- **NO PERMISSION-INHERITANCE EXPANSION.** A subagent's permissions never exceed
-  its parent's — there is no transitive escalation through the delegation tree.
-  Whatever a subagent may do, the parent already may do; a subagent can never
-  gain scope or permission its parent lacks.
+- **CHILD AUTHORITY ≤ PARENT AUTHORITY is policy, and must be *enforced by the
+  selected subagent provider* — not assumed.** "Child permissions never exceed the
+  parent's" is an intention, not an automatic property of every subagent runtime. A
+  reuse of the parent's conversation seed does not by itself inherit the parent's
+  sandbox/tool/authority; different providers (in-process DSH child, Codex, Claude
+  Code) map DSH's grant to different native mechanisms. So every delegation carries an
+  explicit grant, and the parent may use a provider only when that provider can
+  **provably map** the grant to its own permission profile:
+
+  ```text
+  SubagentGrant {
+      provider
+      cwd
+      allowed_paths
+      tool_allowlist
+      sandbox_mode            (e.g. workspace-write)
+      approval_policy
+      max_depth
+      max_children
+  }
+  ```
+
+  Enforcement rule: **policy intent ≠ enforcement boundary.** For the in-process DSH
+  child, use its scope mechanism; for Codex / Claude Code, map each field to that
+  provider's native permission profile. A provider that cannot prove/map the grant runs
+  **read-only + tool-denied**, or is **not used** for that delegation. There is no
+  transitive escalation through the delegation tree.
 
 ### Loop 4 — Ralph (final independent convergence / certification loop)
 
@@ -231,6 +255,24 @@ Who owns this knowledge?
 What is the smallest durable abstraction?
 What does the current vertical slice require?
 ```
+
+**Two-layer architecture authority (round 5) — never conflate the two:**
+
+```text
+Implementation architecture decision
+    within already-accepted ADRs/invariants (choose the smallest durable
+    abstraction, the physical schema detail, a phase-slice decomposition)
+        → the PRIMARY INTEGRATOR decides autonomously.
+
+Constitutional architecture change
+    changes domain ownership, an accepted ADR/invariant, the product boundary,
+    or the safety/approval authority
+        → HUMAN only (the STOP-AND-ASK-HUMAN trigger).
+```
+
+The runaway guard's trigger (e) therefore fires only for the **constitutional** layer —
+exactly when the agent must not proceed on its own. The daily implementation forks are
+what the Primary's intelligence is for.
 
 ---
 

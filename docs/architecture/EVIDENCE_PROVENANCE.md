@@ -37,6 +37,32 @@ A ninth table is premature ELN ontology.
 
 ---
 
+## Byte ownership boundary — `ContentStore`
+
+REvoLab needs to own **bytes that do not come from an external engine**: an uploaded
+PDB/FASTA/CSV/trajectory/assay result. Those files are still ArtifactReference nodes, but
+with `authority = revolab` and an **internal** resolver: the `ContentStore`.
+
+```text
+ContentStore  (put/get immutable bytes; fsspec backend:
+               local | S3 | future)
+    put(bytes) -> { checksum, size, content_type, store_handle }
+    get(store_handle) -> bytes  (read-only, content-addressed)
+
+ArtifactReference
+    authority = revolab     → resolver = ContentStore
+    authority = revocompute → resolver = REvoComputeDriver
+```
+
+- The same scientific-artifact abstraction covers **both** internal uploads and
+  external compute outputs: one ArtifactReference + one ArtifactResolution capability
+  shape; only the resolver differs.
+- This is a **byte ownership boundary**, not a file server or a snapshot store: bytes
+  are immutable and content-addressed (`checksum`), resolved on demand, and sized/
+  typed at `put` time.
+- `ContentStore` is a **Core shared storage primitive**; the owning domain for the
+  *artifact record + provenance* remains Evidence/Provenance (see `DOMAIN_BOUNDARIES.md`).
+
 ## Reference = fact, Evidence = interpreted claim
 
 - **Is a RunReference itself Evidence?** **No.** A run record is the provenance
@@ -158,7 +184,7 @@ the old one.
 ## Minimal provenance graph (the four questions)
 
 ```text
-Why does this object exist?          → derived_from chains (Revision → Revision) + imported_as (ArtifactReference | ExternalReference → Revision) + generated_by back to producing runs + citing Decisions
+Why does this object exist?          → derived_from chains (Revision → Revision) + imported_as (ArtifactReference | ExternalReference → Revision) + the derived `generated_by` traversal back to producing runs + citing Decisions
 Where did this structure come from?  → RunReference --produced--> ArtifactReference --imported_as--> StructureRevision
 Which run produced this artifact?    → RunReference --produced--> ArtifactReference (single owning edge; direction run→artifact)
 Which evidence caused which decision?→ Decision --cites--> Evidence, then Evidence.target (polarity is an Evidence field / cited_as)

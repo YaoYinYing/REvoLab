@@ -98,13 +98,17 @@ class Capability(Protocol):            # base
     provider_key: str
     kind: CapabilityKind               # COMPUTE | SEARCH | ARTIFACT_RESOLUTION | DESIGN | INTERACTIVE_HANDOFF
 
+class Capability(Protocol):            # base
+    provider_key: str
+    kind: CapabilityKind               # COMPUTE | SEARCH | ARTIFACT_RESOLUTION | DESIGN | INTERACTIVE_HANDOFF
+
 class ComputeCapability(Capability, Protocol):            # REvoCompute (batch)
-    def list_task_kinds(self, credential) -> list[TaskKindRef]: ...
+    def list_task_kinds(self, credentials: CredentialLease) -> list[TaskKindRef]: ...
     def task_kind_schema(self, kind_id) -> JsonSchema: ...   # schema-as-data
     def submit(self, kind_id, inputs: list[InputBinding],
-               params: dict, credential) -> RunHandle: ...
-    def get_run(self, run_id, credential) -> RunView: ...
-    def cancel(self, run_id, credential) -> None: ...
+               params: dict, credentials: CredentialLease) -> RunHandle: ...
+    def get_run(self, run_id, credentials: CredentialLease) -> RunView: ...
+    def cancel(self, run_id, credentials: CredentialLease) -> None: ...
 
 class InputBinding:                                       # REvoLab-neutral resource ref
     kind: ScientificObjectRevision | ArtifactReference    # Canonical graph edge #5
@@ -112,20 +116,20 @@ class InputBinding:                                       # REvoLab-neutral reso
     role: str | None                                       # provider schema names the role
 
 class ArtifactResolutionCapability(Capability, Protocol):  # pure read
-    def resolve(self, ext_ref, rev=None, credential) -> ArtifactHandle: ...
+    def resolve(self, ext_ref, rev=None, credentials: CredentialLease) -> ArtifactHandle: ...
 
 class SearchCapability(Capability, Protocol):              # OpenBio / knowledge lookup
-    def search(self, query, filters=None, credential) -> list[ExternalHit]: ...
+    def search(self, query, filters=None, credentials: CredentialLease) -> list[ExternalHit]: ...
     def hit_schema(self) -> JsonSchema: ...
 
 class DesignCapability(Capability, Protocol):              # durable export half
-    def open_design(self, object_ref, credential) -> DesignSession: ...
-    def export(self, session_id, credential) -> list[ArtifactHandle]: ...
-    def list_sessions(self, credential) -> list[DesignSession]: ...
+    def open_design(self, object_ref, credentials: CredentialLease) -> DesignSession: ...
+    def export(self, session_id, credentials: CredentialLease) -> list[ArtifactHandle]: ...
+    def list_sessions(self, credentials: CredentialLease) -> list[DesignSession]: ...
 
 class InteractiveHandoffCapability(Capability, Protocol):  # deep-link / interactive half
-    def create_handoff(self, object_ref, return_callback, credential) -> HandoffRef: ...
-    def on_return(self, handoff_id) -> HandoffResult: ...
+    def create_handoff(self, object_ref, return_callback, credentials: CredentialLease) -> HandoffRef: ...
+    def on_return(self, handoff_id, credentials: CredentialLease) -> HandoffResult: ...
 ```
 
 **Naming decisions (from the review):**
@@ -158,11 +162,27 @@ class InteractiveHandoffCapability(Capability, Protocol):  # deep-link / interac
   material** it points at is owned by the **Credential / Secret store**: opaque to
   Core, never read back as plaintext. Credentials are **Actor-scoped** (per
   `COLLABORATION_IDENTITY.md`), not Project-owned.
-- Every capability method takes a `credential` **opaque handle** (the binding's
-  `secret_ref`) for the **calling actor**. The Provider domain treats the handle as
-  opaque — it never owns or materializes the secret itself; it retrieves material
-  **on-demand through the Secret store**. No secret transits Core services or persists
-  in the project graph.
+- **Last-mile materialization is an explicit lease (round 5), never a raw `secret_ref`
+  or raw bytes in the Driver's hands by default.** The flow:
+
+  ```text
+  Capability call
+      ↓
+  InvocationContext(actor_id, project_id)
+      ↓
+  Provider invocation layer  →  builds an ephemeral CredentialLease / SecretAccessor
+      ↓                          (no secret_ref, no secret bytes leave the layer)
+  Driver transport            →  reads ONE credential per kind via:
+                                  credentials.get("api_key")
+                                  credentials.get("organization_token")
+  ```
+
+  The lease supports the provider's **plural** `required_credential_kinds`; it is
+  **ephemeral** — in-memory for the call, never persisted, never logged, never
+  returned to Core. Application/Core code never sees `secret_ref` or secret bytes.
+  (If a provider *must* stay fully secret-transparent, the Secret store would have to
+  do request signing/proxying itself; that is a different architecture — the chosen
+  model here is the ephemeral lease, not the signing proxy.)
 - **Availability is Actor-contextual** — not a single Project-wide boolean. Members
   of one Project may have different permissions for the same provider (e.g. only one
   member has an OpenBio commercial key or a REvoCompute privileged-runner grant). It
@@ -182,10 +202,13 @@ availability with **no migration**.
 Both read the **same read-only Provider Catalog, evaluated for the current Actor**:
 
 ```
-GET /api/providers            -> [{key, name, capabilities:[{kind, describe() schema}],
-                                   credential_status(mine) }]      (actor-scoped)
-GET /api/providers/{key}/schema/{capability_kind} -> JSON Schema
+GET /api/projects/{project_id}/providers            -> [{key, name, capabilities:[{kind, describe() schema}],
+                                                        credential_status(mine) }]  (Actor + Project lens)
+GET /api/projects/{project_id}/providers/{key}/schema/{capability_kind} -> JSON Schema
 ```
+
+Bare `/api/providers` exists only as an internal/admin canonical surface; the ordinary
+workspace surface is project-scoped (see `WORKSPACE_INFORMATION_ARCHITECTURE.md`).
 
 - **Frontend** renders the catalog through the current Actor's lens (shows only what
   the signed-in user can call); generic JSON Schema forms; no capability knowledge in

@@ -24,8 +24,13 @@ is available.
 - **Schema-as-data:** capability methods declare input/output JSON Schema; Core
   validates against the provider's own schema and assigns no meaning to its fields.
 - **Credentials:** owned by the credential store, **scoped per Actor**
-  (`(actor_id, provider_key, kind)`); every capability call takes a `credential`
-  handle for the calling actor; **availability is a derived, Actor-contextual probe** —
+  (`(actor_id, provider_key, kind)`). A capability call flows
+  `InvocationContext(actor_id, project_id)` → the provider invocation layer → an
+  **ephemeral `CredentialLease`/`SecretAccessor`** → the driver transport. The lease
+  resolves the provider's plural `required_credential_kinds` via
+  `credentials.get(kind)`, is in-memory for the call only, and is never persisted,
+  logged, or returned to Core; Core/Application code never sees `secret_ref` or secret
+  bytes. **Availability is a derived, Actor-contextual probe** —
   `available(actor, provider, project) = driver READY AND required credential kinds
   present for the actor AND project policy permits` — never stored.
 - **Runtime health and availability are separate coeffects (reviewer finding #6):**

@@ -12,11 +12,14 @@ so domain enums are never duplicated between backend and frontend.
   generated output differs from a fresh regeneration.
 - **Split the bootstrap `GET /projects/{id}` whole-graph payload** into project
   metadata + paginated collections + an explicit bounded graph-traversal query.
-- **Object-detail aggregate** served by a dedicated `GET /api/objects/{id}` endpoint
-  (object + provenance + evidence + decisions) assembled by the backend domain service
-  in one query batch; `?mode=summary` for list views.
-- **Separate CRUD from domain commands** (e.g. `POST /decisions/{id}/commit`,
-  `/supersede`, `POST /runs/{id}/refresh`).
+- **Project-scoped workspace surface** — the ordinary, generated client calls a
+  Project lens: `GET /api/projects/{project_id}/objects/{series_id}` (series +
+  visible revisions + provenance + evidence + decisions), `.../resources/{id}`,
+  `.../providers`. Bare global-address endpoints are an internal/admin surface, not part
+  of the user client.
+- **Separate CRUD from domain commands** (e.g.
+  `POST /api/projects/{project_id}/decisions/{id}/commit`, `.../supersede`,
+  `.../runs/{id}/refresh`).
 - **Pagination** on every collection; **ETag/If-Match** for optimistic concurrency on
   mutable resources.
 

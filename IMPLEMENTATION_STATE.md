@@ -49,7 +49,8 @@ Produced:
   and cross-document consistency. The review found 16 failure modes (15 RESOLVED,
   1 PARTIAL at the time) and 6 internal-consistency contradictions; the integrator
   resolved all six (decision promotion verb → `commit`; canonical `RelationType`
-  closed enum incl. `generated_by`/`evaluates`/`selects`; generic-Relation polymorphic
+  closed enum incl. `evaluates`/`selects` — `generated_by` is now a derived traversal,
+  not an enum member; generic-Relation polymorphic
   target; added `hypothesis` evidence role; OpenBio cache defined as identity +
   validated metadata with no snapshot copy; SessionReference/ExternalReference added
   to the canonical node set and import unified on the `imported_as` edge with no
@@ -88,8 +89,8 @@ longer carries `organization_anchor`; placement is a folder/container annotation
 `ProjectResourceLink`, owned by the Project domain; (2) `ProjectResourceLink`
 referential identity is realizable — a thin `GlobalResourceRegistry(resource_id PK,
 resource_kind)` spine provides the single-column FK target (no polymorphic FK);
-(3) graph edge ownership/lifecycle is fixed — `GlobalProvenanceEdge` (#1–8, owned by
-Evidence/Provenance, never Project-archived) vs `ProjectKnowledgeEdge` (#9–11, owned by
+(3) graph edge ownership/lifecycle is fixed — `GlobalProvenanceEdge` (#1–7, owned by
+Evidence/Provenance, never Project-archived) vs `ProjectKnowledgeEdge` (#8–10, owned by
 Knowledge/Decision, archived with Decision/Evidence); (4) the canonical edge matrix
 freezes Series vs Revision endpoints — conceptual semantic edges address Series,
 content/provenance edges address Revision, Decision targets are explicitly typed.
@@ -123,6 +124,32 @@ spine, and the approved dependency baseline is defined as a digest (future polic
 A fresh independent architecture review found all seven CLOSED with **no new P0/P1**.
 Status remains **PROPOSED — pending human review**.
 
+### 2026-09-08 — Human review round 5 (PR #1), resource authority / provenance single-truth / harness enforcement; PROPOSED pending human review
+
+The fifth review (9.5/10, REQUEST CHANGES) found the design had matured enough to expose
+second-layer governance issues, and asked for a narrow convergence: resource authority,
+provenance single-truth, and harness enforcement boundaries. Landed on this branch: (1)
+**write authority** — `ResourceStewardship` (Identity-owned) separates mutation from
+read visibility; `ProjectResourceLink` is read-only context, and global provenance edges
+are created **only** by typed authoritative domain operations (no generic global relation
+writer); (2) **`current_revision_id` removed** from the series — "current" is derived
+(`max(revision_seq)`, per-Project over visible revisions, with an optional
+`preferred_revision_id` pin on `ProjectResourceLink`); (3) **`generated_by` demoted to a
+derived traversal** (`Revision ←imported_as← Artifact ←produced← Run/Session`), and the
+matrix renumbered to `GlobalProvenanceEdge` #1–7 + `ProjectKnowledgeEdge` #8–10; (4)
+**Harness** — two-layer architecture authority (implementation decisions within accepted
+ADRs = Primary; constitutional changes = human) and an explicit `SubagentGrant` that must
+be mapped by the subagent provider (read-only/reject otherwise); (5) **project-scoped
+API lens** as the ordinary workspace surface; (6) **CredentialLease/InvocationContext**
+last-mile secret model (ephemeral lease, plural credential kinds); (7) **`ContentStore`**
+byte-ownership boundary (fsspec; internal artifacts = `authority=revolab`);
+(8) `GlobalResourceRegistry` declared a Core shared identity primitive with honest
+subtype-integrity wording. P2s: ScientificObject physical storage deferred to the Phase-1
+spike (typed JSONB vs joined tables), ExternalIdentity mapping is a global assertion vs
+project interpretation, AGENT_CONTEXT converged to SeriesRef/RevisionRef, ledger/PR body
+swept to 7 phases. A fresh independent review follows. Status remains **PROPOSED —
+pending human review**.
+
 ---
 
 A second human review again returned **REQUEST CHANGES** (still "don't merge yet",
@@ -152,7 +179,7 @@ and full hosted-CI moved to verified (GHA green); (12) the five superseded point
 files deleted. A fresh independent architecture review follows. Status remains
 **PROPOSED — pending human review**.
 
-Deliberately NOT implemented (deferred by the design: Phases 1–6 in
+Deliberately NOT implemented (deferred by the design: Phases 1–7 in
 IMPLEMENTATION_ROADMAP): real auth/identity tables, real REvoCompute/REvoDesign/
 OpenBio drivers, agent chat UI, typed-object migration of the backend, generated
 TypeScript client. Backend tests (pytest) and frontend typecheck/test/build still
@@ -167,7 +194,7 @@ roadmap). No new subsystem or concept was added — the round only removed contr
 so each concept has one canonical answer. Zero P0 and eight P1 findings were closed,
 plus the cheap P2s:
 
-- `supersedes` is an edge (`ProjectKnowledgeEdge` #10), not a stored `supersedes_id`
+- `supersedes` is an edge (`ProjectKnowledgeEdge` #9), not a stored `supersedes_id`
   self-FK; `superseded` is a derived status (COLLABORATION_IDENTITY).
 - Series vs Revision endpoint wording: conceptual semantic relations address
   `series_id`, content/provenance relations address `revision_id`; an observation maps

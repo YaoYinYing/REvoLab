@@ -48,7 +48,7 @@ inside object detail, not a page people browse top-down.
   next?" (committed decisions, open decision, next-actions, recent evidence, provider
   availability)
 - **Scientific Object Detail** — "Why does this object exist, what is it, and how is
-  it connected?" (inbound `derived_from`/`generated_by`, linked run/artifact
+  it connected?" (inbound `derived_from`/`imported_as`, linked run/artifact
   evidence, outbound relations, cited-by decisions)
 - **Evidence Detail** — "Is this piece of evidence trustworthy, and what does it
   support/tell us?" (kind, durable reference, interpretation, polarity, role, which
@@ -72,30 +72,32 @@ drift check); no manually duplicated enums. The current `App.tsx` hardcodes
 
 ```text
 GET/POST            /api/projects
-GET                 /api/projects/{id}                → project METADATA (not the whole graph)
-GET/POST            /api/projects/{id}/objects        → paginated list / create (creates a draft object)
-GET/PATCH/DELETE    /api/objects/{id}                 → object-detail aggregate / edit series spine / archive
-POST                /api/projects/{id}/relations      → create an immutable edge: `GlobalProvenanceEdge` (#1–8) or `ProjectKnowledgeEdge` (#9–11) per the matrix
-GET                 /api/relations/{id}               → read only (edges are immutable once written)
-POST                /api/projects/{id}/evidence       → create an evidence claim
-GET/PATCH/DELETE    /api/evidence/{id}                → PATCH updates interpretive fields ONLY (kind/role/interpretation/polarity/confidence/scope); source+target+identity are immutable
-POST                /api/projects/{id}/decisions      → create a Decision as DRAFT
-GET/PATCH/DELETE    /api/decisions/{id}               → PATCH allowed only while draft (status, next_actions); committed is immutable
-GET                 /api/projects/{id}/runs           → aggregated Run/Artifact references
-GET                 /api/runs/{id} / /api/artifacts/{id}
-GET                 /api/providers                    → capability discovery (Actor-scoped)
-GET                 /api/providers/{key}/schema/{capability_kind}
+GET                 /api/projects/{project_id}                 → project METADATA (not the whole graph)
+GET/POST            /api/projects/{project_id}/objects         → paginated list / create (draft object; create requires stewardship)
+GET                 /api/projects/{project_id}/objects/{series_id}               → object-detail aggregate (series + visible revisions + provenance + evidence + decisions)
+GET/PATCH/DELETE    /api/projects/{project_id}/objects/{series_id}               → PATCH series spine / archive — gated by ResourceStewardship
+POST                /api/projects/{project_id}/objects/{series_id}/revisions     → append an immutable revision (stewardship)
+GET                 /api/projects/{project_id}/resources/{resource_id}           → any global resource through this Project's lens
+GET                 /api/projects/{project_id}/providers        → capability discovery (Actor + Project lens)
+GET                 /api/projects/{project_id}/providers/{key}/schema/{capability_kind}
 ```
+
+**Project lens is the ordinary workspace surface (round 5).** A user-facing call that
+names a global resource must do so *through a Project* — the endpoint carries
+`project_id` and the backend applies the Project's `ProjectResourceLink` projection.
+Bare global-address endpoints (`/api/objects/{series_id}`, `/api/relations/{id}`,
+`/api/providers`, …) exist only as an **internal / admin / canonical-resource surface**,
+not as the ordinary workspace API; they never appear in the generated user client.
 
 ### Domain commands (verbs, separate from CRUD; the lifecycle command model)
 
 ```text
-POST /api/decisions/{id}/commit         → draft → committed (the ONLY promotion; authorized actor)
-POST /api/decisions/{id}/supersede      → point a superseding Decision (close one, keep history)
-POST /api/relations/{id}/supersede      → add a superseding/corrected edge (relations are never edited)
-POST /api/runs/{id}/refresh             → re-resolve provider reference (never mutate stored provenance)
-GET  /api/context?scope=...             → assembled context slice (mirrors the context inspector)
-POST /api/objects/{id}/links/evidence   → typed link
+POST /api/projects/{project_id}/decisions/{id}/commit   → draft → committed (the ONLY promotion; authorized actor)
+POST /api/projects/{project_id}/decisions/{id}/supersede→ point a superseding Decision (close one, keep history)
+POST /api/projects/{project_id}/objects/{series_id}/import → create a new Revision on the series + its `imported_as` edge (the typed import command)
+POST /api/projects/{project_id}/runs/{id}/refresh       → re-resolve provider reference (never mutate stored provenance)
+GET  /api/projects/{project_id}/context?scope=...       → assembled context slice (mirrors the context inspector)
+POST /api/projects/{project_id}/objects/{series_id}/links/evidence → typed link
 ```
 
 **Lifecycle command model (single source — see `SCIENTIFIC_GRAPH.md`, `EVIDENCE_PROVENANCE.md`,
@@ -103,10 +105,13 @@ POST /api/objects/{id}/links/evidence   → typed link
 - **Decision status** is exactly `draft | committed` (+ derived `superseded`); there is
   no `open`/`proposed`/`concluded` stored status. `POST .../decisions` always creates a
   draft; only `commit` (authorized) promotes; `supersede` links a successor.
-- **Edges** are immutable after creation; there is no `PATCH /relations/{id}`.
-  `GlobalProvenanceEdge` (#1–8) carries no `project_id`; `ProjectKnowledgeEdge` (#9–11)
-  is scoped to its Decision/Evidence's Project. Correcting an edge is `supersede` (or a
-  new edge), see the graph contract.
+- **Global provenance edges have no generic writer.** `GlobalProvenanceEdge` (#1–7) is
+  created only by its typed domain operation (run import → `produced`; import command →
+  `imported_as`; task submission → `consumed_as_input_by`; object commands →
+  `variant_of`/`represents`/`derived_from`/`evaluates`). `ProjectKnowledgeEdge` (#8–10)
+  is created only through Decision domain commands and is scoped to its
+  Decision/Evidence's Project. Edges are immutable after creation; there is no
+  `PATCH /relations/{id}`; correcting an edge is `supersede` (or a new edge).
 - **Evidence** `PATCH` is limited to interpretive fields; `source`/`target`/identity
   are immutable.
 
@@ -124,9 +129,9 @@ reads.
 ### Object-detail aggregate
 
 ```text
-GET /api/objects/{id}
-→ { object, provenance: {inbound/outbound relations, creation evidence chain, importing refs},
-    evidence, decisions }
+GET /api/projects/{project_id}/objects/{series_id}
+→ { series, visible_revisions, provenance: {inbound/outbound relations, creation
+    evidence chain, importing refs}, evidence, decisions }
 ```
 
 A dedicated first-class read endpoint assembled by the backend domain service in one

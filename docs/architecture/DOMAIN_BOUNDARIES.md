@@ -46,7 +46,8 @@ External systems own their capabilities and execution truth.
   - A Project is a namespace *and* a security/permission boundary, but **not** the
     scientific-identity boundary.
   - Project deletion removes **links and membership**, never the underlying global
-    scientific objects or their provenance.
+    scientific objects or their provenance; any `ResourceStewardship` this Project
+    holds is **transferred or frozen** (owned by Identity), never cascaded.
   - Organization (folders) is not scientific semantics.
 - **Public contracts:** project CRUD, project-scoped read and write entry points.
 - **Dependencies:** Identity/Collaboration (membership, roles), Scientific Object
@@ -76,10 +77,15 @@ External systems own their capabilities and execution truth.
   - Project-local organization (folders/placement) is separate from global
     scientific relations; a global object may be filed differently in each Project.
   - Durable identity is the stable UUID, never a path or a username.
-- **Public contracts:** object create/read/version operations via the domain service.
+  - **Mutation requires stewardship:** append revision, rename, add external identity,
+    archive — all require an Identity-owned `ResourceStewardship` grant over the
+    object; a `ProjectResourceLink` alone is read-only visibility.
+- **Public contracts:** object create/read/version operations via the domain service
+  (create/version commands are executed under an injected `ResourceStewardship` check).
 - **Dependencies:** none in Core — Scientific Object is a **global leaf**; it is
   bound into Project contexts through `ProjectResourceLink` (owned by the consuming
-  Project domain), not by depending on Project.
+  Project domain) and mutated under an injected stewardship check (the domain model
+  itself imports neither Project nor Identity).
 - **Non-responsibilities:** expressing scientific relationships (that is the
   graph domain's job); owning external execution state.
 
@@ -91,11 +97,14 @@ External systems own their capabilities and execution truth.
   LiteratureReference, ExternalReference (an `external_identity_id` FK + resolver/cache
   metadata — it does **not** re-store `authority`/`native_id`; the Scientific Object
   domain owns the `ExternalIdentity` registry), Evidence (interpreted claim) and its
-  source/target associations, and the **global provenance edges #1–8**
+  source/target associations, the **global provenance edges #1–7**
   (`variant_of`, `derived_from`, `represents`, `evaluates`,
-  `consumed_as_input_by`, `produced`, `imported_as`, `generated_by`) as
-  `GlobalProvenanceEdge`. (`supports`/`contradicts` are Evidence `polarity` fields,
-  not edges — see `SCIENTIFIC_GRAPH.md`.)
+  `consumed_as_input_by`, `produced`, `imported_as`) as
+  `GlobalProvenanceEdge`, and the **`ContentStore` byte boundary** for internal
+  artifact bytes (`authority = revolab`; immutable, content-addressed, fsspec
+  backend). (`generated_by` is a derived aggregation over
+  `produced`+`imported_as`, never persisted; `supports`/`contradicts` are Evidence
+  `polarity` fields, not edges — see `SCIENTIFIC_GRAPH.md`.)
 - **Owned mutable state:** evidence interpretive fields (summary, confidence,
   scope); reference *status* (refreshable, resolved via the provider — never copied).
 - **Owned invariants:**
@@ -103,6 +112,10 @@ External systems own their capabilities and execution truth.
     **fact**, Evidence is an **interpreted claim**.
   - Contradiction coexists; a Decision settles it.
   - Provenance must remain traversable after external systems change.
+  - **Global edges have no generic writer:** `produced` is created by run import,
+    `imported_as` by the import command, `consumed_as_input_by` by task submission,
+    `variant_of`/`represents`/`derived_from`/`evaluates` by object commands — each
+    gated by `ResourceStewardship` where it touches a global resource.
   - **Project-context write-time invariant:** a project-scoped Evidence (or its
     source/target) may only reference global endpoints already visible through that
     Project's `ProjectResourceLink` set — never ghost knowledge (same write-time rule
@@ -118,7 +131,7 @@ External systems own their capabilities and execution truth.
   accepted project truth.
 - **Owned concepts:** Decision (with status and supersession), DecisionEvidence
   citations, "current conclusion" (derived by following supersession), and the
-  **project knowledge edges #9–11** (`selects`, `supersedes`, `cites`) as
+  **project knowledge edges #8–10** (`selects`, `supersedes`, `cites`) as
   `ProjectKnowledgeEdge`.
 - **Owned mutable state:** decision status and next actions while open; after a
   decision influences later work it is immutable.
@@ -177,12 +190,14 @@ External systems own their capabilities and execution truth.
 - **Purpose:** ownership, membership, and sharing boundaries (built for, but not
   executing, real authentication).
 - **Owned concepts:** AuthenticationIdentity, Actor (opaque UUID), Role
-  (owner/member/viewer), **ProjectMembership** (single owning domain), ResourceOwnership,
-  ExternalProviderCredentialBinding.
-- **Owned mutable state:** memberships, roles, credential bindings.
+  (owner/member/viewer), **ProjectMembership** (single owning domain),
+  **ResourceStewardship** (the mutation-authority grant over a global resource —
+  visibility is not stewardship), ResourceOwnership, ExternalProviderCredentialBinding.
+- **Owned mutable state:** memberships, roles, stewardship grants, credential bindings.
 - **Owned invariants:** durable identity is an opaque UUID, not a path or auth
   username; sharing never copies data into another project; access is inherited
-  from project membership.
+  from project membership; **read visibility (`ProjectResourceLink`) never grants
+  mutation** — only `ResourceStewardship` does.
 - **Public contracts:** membership/role operations (Project consumes this contract);
   the ownership boundary for the domain and agent authority model.
 - **Dependencies:** none in Core — this domain **owns ProjectMembership** and treats

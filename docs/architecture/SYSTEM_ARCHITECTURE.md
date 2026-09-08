@@ -206,8 +206,6 @@ flowchart LR
     SesR -- produced --> ArtR
     ArtR -- imported_as --> Rev
     ExtR -- imported_as --> Rev
-    Rev -- generated_by --> RunR
-    Rev -- generated_by --> SesR
     LitR -- source of --> Ev
     ExtR -- source of --> Ev
     Ev -- target --> Rev
@@ -222,8 +220,10 @@ in `SCIENTIFIC_GRAPH.md`; the diagram additionally shows the Project `scopes`
 relationship and Evidence's own `source`/`target` associations, which are **not**
 `RelationType` edges. **Conceptual semantic edges address Series; content/provenance
 edges address Revision; a Decision targets a Series or a Revision explicitly.**
-`supports`/`contradicts` are **fields** on Evidence (and `cited_as` on a Decision
-`cites` join), not graph edges.
+`generated_by` is deliberately **absent** — it is the derived two-edge traversal
+`Revision ←imported_as← Artifact ←produced← Run/Session`, returned as an aggregate,
+never persisted. `supports`/`contradicts` are **fields** on Evidence (and
+`cited_as` on a Decision `cites` join), not graph edges.
 
 - **ScientificObjectSeries** is the global conceptual identity of one scientific
   thing; **ScientificObjectRevision** is its immutable content version.

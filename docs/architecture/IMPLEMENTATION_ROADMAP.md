@@ -73,7 +73,7 @@ reason and the phase that resolves it:
 | Generated API/frontend contract | **Decided** (ADR-0014) | Phase 2 |
 | **RelationType closed enum** | **Decided** — canonical list in `SCIENTIFIC_GRAPH.md` | Phase 1 |
 | **Edge endpoint semantics (Series vs Revision)** | **Decided** — conceptual semantic edges address Series; content/provenance edges address Revision; Decision targets are explicitly typed (`SCIENTIFIC_GRAPH.md`) | Phase 1 |
-| **Edge ownership & lifecycle** | **Decided** — `GlobalProvenanceEdge` (#1–8, Evidence/Provenance-owned, never Project-archived) vs `ProjectKnowledgeEdge` (#9–11, Knowledge/Decision-owned, archived with Decision/Evidence) (`SCIENTIFIC_GRAPH.md`) | Phase 1 |
+| **Edge ownership & lifecycle** | **Decided** — `GlobalProvenanceEdge` (#1–7, Evidence/Provenance-owned, never Project-archived) vs `ProjectKnowledgeEdge` (#8–10, Knowledge/Decision-owned, archived with Decision/Evidence); `generated_by` is derived, not persisted (`SCIENTIFIC_GRAPH.md`) | Phase 1 |
 | **ProjectResourceLink referential identity** | **Decided** — thin `GlobalResourceRegistry(resource_id PK, resource_kind)` spine; `ProjectResourceLink.resource_id` FKs to it and **does not store `resource_kind`**; every concrete global table PK is both PK and FK to the registry (single-column FK, no polymorphic FK) (`COLLABORATION_IDENTITY.md`, ADR-0008) | Phase 1 |
 | **Relation physical schema** (one table shared by the two edge kinds vs edge-family tables; uniqueness/supersession key) | **Deferred to the Phase-1 executable spike** — see `SCIENTIFIC_GRAPH.md` (the single source for the logical graph contract; do NOT freeze the physical shape in PR1 — ownership/lifecycle are already frozen) | Phase 1 |
 | **Evidence kind/role enums** (incl. `hypothesis` role) | **Decided** — in `EVIDENCE_PROVENANCE.md` | Phase 1 |
@@ -103,11 +103,13 @@ collaboration/sharing and the agent.
 - **Owned domains:** Project, Scientific Object, Evidence/Provenance, Knowledge (
   Core), Identity (ownership boundary only).
 - **Vertical slice:** models + migrations + domain services + domain-command API for
-  objects/relations/evidence/decisions/promotion, with the object-detail aggregate and
-  bounded graph query.
+  objects/relations/evidence/decisions/promotion, the object-detail aggregate, bounded
+  graph query, and a minimal `ContentStore` (fsspec local backend) so uploaded
+  artifacts (`authority = revolab`) share the ArtifactReference abstraction.
 - **Acceptance evidence:** Alembic drift on SQLite + PG; tests for: no blanket CASCADE
   (deleting a Project preserves objects), object revisioning, decision draft→commit,
-  relationship immutability, typed object extension.
+  relationship immutability, typed object extension, and `ContentStore.put/get` returns
+  `checksum`/`size`/`content_type` and never mutates stored bytes.
 - **Non-goals:** auth, providers, agent.
 
 ### Phase 2 — Real frontend/API vertical slice
@@ -224,9 +226,12 @@ These are derived from the whole design; they are the concisely load-bearing rul
 >    superseding record, never in-place.**
 > 8. **A Project is a namespace and membership boundary, not the owner of objects;**
 >    deleting a Project removes links, never the underlying objects or their
->    provenance. ScientificObjects/references and the global provenance edges (#1–8)
->    are global; the project knowledge edges (#9–11) and Evidence/Decision are
->    project-scoped.
+>    provenance. ScientificObjects/references and the global provenance edges (#1–7)
+>    are global; the project knowledge edges (#8–10) and Evidence/Decision are
+>    project-scoped. Read visibility is not mutation authority: `ProjectResourceLink`
+>    grants the read lens; `ResourceStewardship` alone authorizes mutation of a global
+>    resource, and global provenance edges are created only by typed authoritative
+>    domain operations (never a generic writer).
 > 9. **The Agent is a consumer, not an owner — read context → reason → propose →
 >    typed tool → domain validation → persisted truth.**
 > 10. **Credentials are owned by the credential store; a provider is callable iff its
