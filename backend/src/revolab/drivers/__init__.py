@@ -161,6 +161,17 @@ class DriverRegistry:
             if capability is not None:
                 yield name, capability
 
+    def driver_for_authority(self, authority: str) -> str | None:
+        """Resolve the durable external identity authority to the READY driver
+        that declares it. The authority is the identity namespace, never a
+        resolver/provider; a driver opts in via its `authorities` tuple."""
+        for name, handle in self._drivers.items():
+            if handle.state is not DriverState.READY:
+                continue
+            if authority in getattr(handle.driver, "authorities", ()):
+                return name
+        return None
+
     def health(self, name: str) -> ProviderRuntimeHealth:
         """Lazily probe, then cache, per-provider runtime health.
 

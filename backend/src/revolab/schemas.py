@@ -408,3 +408,89 @@ class CredentialBindingRead(BaseModel):
 
     provider_key: str
     kind: str
+
+
+# ---------------------------------------------------------------------------
+# Compute (Phase 4) — provider-neutral request/response models
+# ---------------------------------------------------------------------------
+
+
+class ComputeTaskKindRead(BaseModel):
+    """One discoverable task kind. All fields are provider data."""
+
+    kind_id: str
+    display_name: str
+    description: str | None = None
+    category: str | None = None
+
+
+class ComputeInputSpecRead(BaseModel):
+    label: str | None = None
+    required: bool = False
+    multiple: bool = False
+    max_files: int | None = None
+    accepted_extensions: list[str] = Field(default_factory=list)
+
+
+class ComputeTaskKindSchemaRead(BaseModel):
+    """Schema-as-data for one task kind (parameters + input contract)."""
+
+    kind_id: str
+    display_name: str
+    description: str | None = None
+    parameter_schema: dict[str, Any]
+    input_spec: ComputeInputSpecRead
+
+
+class ComputeInputCreate(BaseModel):
+    kind: ResourceKind
+    resource_id: UUID
+    role: str | None = None
+
+    @model_validator(mode="after")
+    def _legal_input_kind(self) -> ComputeInputCreate:
+        if self.kind not in {
+            ResourceKind.SCIENTIFIC_OBJECT_REVISION,
+            ResourceKind.ARTIFACT_REFERENCE,
+        }:
+            raise ValueError("compute input kind must be a revision or an artifact reference")
+        return self
+
+
+class ComputeSubmissionCreate(BaseModel):
+    provider_key: str = Field(pattern=PROVIDER_KEY_PATTERN)
+    task_kind: str = Field(min_length=1, max_length=300)
+    inputs: list[ComputeInputCreate] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class ComputeSubmissionRead(BaseModel):
+    run_resource_id: UUID
+    authority: str
+    native_id: str
+    task_type: str | None = None
+    consumed_edges: list[UUID] = Field(default_factory=list)
+
+
+class ComputeRunStatusRead(BaseModel):
+    """Live, on-demand run state. `available=False` is the honest representation
+    of a provider that is currently unreachable; the stored RunReference is
+    never invalidated by a transient outage."""
+
+    run_resource_id: UUID
+    authority: str
+    native_id: str
+    available: bool
+    status: str | None = None  # provider status string as opaque data
+    detail: str | None = None
+
+
+class ComputeArtifactRead(BaseModel):
+    resource_id: UUID
+    authority: str
+    native_id: str
+    content_type: str | None = None
+    size: int | None = None
+    checksum: str | None = None
+    version_id: str | None = None
+    revoked_at: datetime | None = None

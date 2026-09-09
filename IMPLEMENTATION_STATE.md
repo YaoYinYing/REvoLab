@@ -293,18 +293,155 @@ claimed: a production deployment must supply a production-grade secret backend
 Actor/binding/Provider/Driver/capability/availability contracts unchanged when
 one is introduced.
 
+## Implemented (Phase 4)
+
+- **Provider-neutral capability protocols** (`revolab/capabilities.py`, a leaf
+  importing only `enums`/`credentials`): `ComputeCapability`
+  (`list_task_kinds` / `task_kind_schema` / `submit` / `get_run` /
+  `list_artifacts`) and `ArtifactResolutionCapability` (`resolve`) plus the
+  neutral value objects `InputBinding`, `ResolvedInput`, `ExternalArtifactRef`,
+  `RunHandle`, `RunView`, `ArtifactHandle`, `TaskKindRef`, `TaskKindSchema`,
+  `InputSpec`. No REvoCompute vocabulary exists in Core: `TaskKindRef.kind_id`
+  and `TaskKindSchema.parameter_schema` are rendered/consumed as opaque data.
+- **Core-owned failure vocabulary** (`CapabilityErrorKind` in `revolab.enums`,
+  `CapabilityError` in `revolab.capabilities`): `AUTH / NOT_FOUND / INVALID_PARAM
+  / PROVIDER_UNAVAILABLE / NETWORK / UNKNOWN`; mapped at the FastAPI boundary
+  (`api.py`) to a `{"detail": "<sanitized string>"}` envelope. `str`/`repr` of
+  `CapabilityError` and `CredentialLease` never carry secret material.
+- **Provider/Capability-domain invocation** (`revolab/domain/compute.py`):
+  the single code path that composes `READY driver → project policy permits →
+  required credentials present → ephemeral `CredentialLease` → capability
+  method`, translating `SecretMissingError` to `CapabilityError(AUTH)` at the
+  invocation boundary. Every capability call goes through it.
+- **REvoCompute driver** (`revolab/drivers/revocompute.py`, the only module that
+  knows REvoCompute HTTP vocabulary): realizes `COMPUTE` +
+  `ARTIFACT_RESOLUTION` over the public HTTP API, `authority = "revocompute"`,
+  one long-lived credential kind `"api_key"` presented as `X-API-Key`. It
+  translates the flat `params[]` descriptor into a Draft 2020-12 JSON Schema
+  inside the driver, follows the submission 302 redirect to extract the task
+  id, discriminates `failed` (404-with-status-body) from `not_found`, maps
+  same-authority ArtifactReferences back to REvoCompute's `@<md5sum>/<path>`
+  reference grammar, and never imports REvoCompute internals or reads its
+  database/filesystem. Durable authority→driver resolution is explicit: drivers
+  declare an `authorities` tuple and `DriverRegistry.driver_for_authority` is
+  the only resolver — Core never assumes `authority == provider_key`.
+- **Bootstrap & lifecycle** (`revolab/bootstrap.py`, `revolab/main.py`):
+  explicit, deterministic FastAPI lifespan installs the REvoCompute driver only
+  when `REVOLAB_REVOCOMPUTE_BASE_URL` is configured (otherwise the catalog stays
+  the honest empty set), and an opt-in in-process provider-neutral fake
+  (`REVOLAB_E2E_FAKE_COMPUTE=1`, `revolab/testing/fake_compute.py`) for the
+  browser vertical slice. `start_all`/`stop_all` own the lifecycle; a broken
+  configured driver fails startup loudly. No global import side effects.
+- **Input resolution & typed persistence** (`revolab/services.py`):
+  `resolve_compute_input` materializes a ScientificObjectRevision's typed JSON
+  payload (checksum-verified) or an internal `revolab` artifact's ContentStore
+  bytes, and passes external artifacts as identity-only references;
+  `compute_submit` validates every precondition (policy, credential, input
+  visibility/kind) before the external side effect, then performs the driver
+  call and persists a durable `RunReference` + `consumed_as_input_by` edges;
+  `compute_refresh_artifacts` live-enumerates artifacts and persists
+  `ArtifactReference` cards + `produced` edges. No REvoCompute status/history is
+  ever stored in Core.
+- **Project-scoped compute API** (`api.py` + `schemas.py`):
+  `GET /projects/{id}/providers/{key}/compute/task-kinds`,
+  `GET .../task-kinds/{kind_id}/schema`,
+  `POST /projects/{id}/compute/submissions`,
+  `GET /projects/{id}/runs/{run_id}/status`,
+  `POST /projects/{id}/runs/{run_id}/artifacts`,
+  `GET /projects/{id}/artifacts/{artifact_id}/resolve` (live external access,
+  not implicit ingestion). Run status returns `available=false` honestly on a
+  transient outage — the stored RunReference is never invalidated.
+- **Frontend vertical slice** (`views/Compute.tsx`, wired into `App.tsx` and
+  launched from Object Detail): provider/task-kind selection, a small
+  schema-driven parameter form (no JSON-schema form dependency added), one
+  project-resource input, submit → RunReference → live status → discover
+  artifacts → resolve bytes. Provider vocabulary renders only as data; the
+  `Compute.test.tsx` regression asserts no `revocompute`/Runner names appear.
+- **Upstream contract gaps recorded** in
+  `docs/integrations/REVOCOMPUTE_CONTRACT_GAPS.md`: cross-Actor sharing is the
+  one **blocking** gap and remains an upstream dependency (Phase 4 is
+  single-Actor for it); JSON-schema exposure, run-list discovery, the
+  redirect/failed-404 handshake quirk, and failed-run artifact reuse are
+  recorded as non-blocking with their smallest upstream change.
+
+## Independent review (Phase 4)
+
+A fresh read-only architecture/security review was run over the full working-tree
+diff. Two material blockers were found and resolved:
+
+1. **Skipped project-policy gate.** The four compute read endpoints originally
+   passed `permitted=True`; they now derive `permitted` from
+   `services.project_policy_permits` (`COMPUTE` for task/run views,
+   `ARTIFACT_RESOLUTION` for the pure read), so a viewer no longer reaches
+   action capability methods.
+2. **Authority/provider conflation.** Run status / artifact refresh / artifact
+   resolve originally passed `run.authority`/`artifact.authority` straight into
+   the registry lookup. They now resolve the authority through the explicit
+   `DriverRegistry.driver_for_authority` (drivers declare an `authorities`
+   tuple), so `(authority, native_id)` identity is never assumed to equal a
+   resolver/provider key.
+
+Non-blocking findings were also addressed: provenance-edge idempotency guards
+(duplicate refresh no longer accumulates duplicate edges), executable tests for
+the production-fake-refusal and missing-base-url startup guards, and the run
+status endpoint now reports `available=false` only for
+`PROVIDER_UNAVAILABLE`/`NETWORK` (authorization/credential failures keep their
+own typed status). The `revocompute_*` settings in `revolab.config` are the
+sanctioned bootstrap-configuration surface explicitly permitted by TODO.md for
+concrete driver installation.
+
+## Verified evidence (Phase 4)
+
+- Backend: `ruff check backend` and strict `mypy` pass (31 source files).
+  `pytest` passes with **158 passed, 3 skipped** (the three skips are the opt-in
+  PostgreSQL acceptance file). New tests cover: the REvoCompute driver against
+  an HTTP fake at the network boundary (discovery/schema translation, submit
+  redirect + multipart + artifact-reference input, failed-on-404 run state,
+  artifact identity encoding, resolve, auth/not-found/invalid-param/
+  unavailable/network/malformed error mapping, and the sentinel
+  only-in-X-API-Key assertion), Core/domain compute with a provider-neutral fake
+  (submit → RunReference + consumed input, artifact discovery + produced edge,
+  resolve bytes, provider-disappearance leaves references intact, and
+  invalid-input-kind / missing-credential / not-authorized / input-not-visible
+  all fail before the external side effect), the project-scoped compute HTTP
+  surface, and the bootstrap/lifecycle + explicit authority-resolution guards
+  (production refuses the fake provider; the real driver requires a base URL).
+- Migrations: no Phase-4 schema change is required (RunReference/ArtifactReference
+  and the two provenance edges already exist). `alembic upgrade head` +
+  `alembic check` report **no drift** on SQLite and on a fresh PostgreSQL 16
+  database (`revolab_p4`); the Phase-4 compute submit→provenance→artifact
+  vertical slice passes on PostgreSQL (`test_postgres_integration.py`: 3 passed).
+- Frontend: `npm run typecheck`, `npm run test` (10 tests — contract boundary,
+  project shell, providers, and the new compute view with no-provider-vocabulary
+  regression), and `npm run build` pass. `openapi.json` / `schema.d.ts` were
+  regenerated; `enums.generated.ts` is unchanged (the Core capability-failure
+  enum is not exposed on the wire).
+- Browser smoke (`npm run test:e2e`, Playwright Chromium): the Phase-2 slice
+  still passes, and the new compute vertical slice passes over a real
+  uvicorn/SQLite backend with the opt-in in-process fake provider
+  (task-kind select → submit → RunReference → live `finished` status →
+  discovered artifact), and the Providers catalog now renders the derived fake
+  provider instead of the empty state.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
-- Real REvoCompute / REvoDesign / OpenBio drivers and the per-kind Capability
-  method protocols (Phase 4). Phase 3 defines only the closed `CapabilityKind`
-  vocabulary and the base `Capability(provider_key, kind)` shape.
+- Live end-to-end acceptance against an authorized REvoCompute instance is
+  external evidence: no authorized instance is configured in this development
+  environment. The driver is built and tested against the documented public
+  REvoCompute HTTP contract (read-only inspection) and an HTTP fake at the
+  network boundary; live acceptance is not fabricated. Cross-Actor
+  run/artifact sharing is an upstream REvoCompute gap (see
+  `docs/integrations/REVOCOMPUTE_CONTRACT_GAPS.md`).
+- REvoDesign / OpenBio drivers remain Phase-5+ (not expanded here).
 - Production secret-manager integration: the Secret store remains the
   non-production in-memory adapter (see disclosure above); a production-grade
   backend is deferred until explicitly configured.
 
 ## Working set
 
-- Added dependencies: `fsspec` (ContentStore), `python-multipart` (artifact upload).
+- Added dependency: `httpx` moved from dev to runtime for the provider transport
+  (`fsspec` (ContentStore), `python-multipart` (artifact upload) were added in
+  earlier phases).
 - Frontend: `openapi-fetch` (typed client), `openapi-typescript` (contract
   generation, dev), `@playwright/test` (browser smoke, dev), `@types/node` (dev).

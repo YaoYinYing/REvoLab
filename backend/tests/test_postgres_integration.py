@@ -13,7 +13,7 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 import pytest
-from sqlalchemy import Engine, create_engine, inspect
+from sqlalchemy import Engine, create_engine, inspect, select
 from sqlalchemy.orm import Session
 
 from revolab import services
@@ -130,3 +130,70 @@ def test_credential_availability_vertical_slice_on_postgres(pg_session: Session)
         permitted=services.project_policy_permits(pg_session, actor, project.id, CapabilityKind.COMPUTE),
     )
     assert availability is CapabilityAvailability.CREDENTIAL_MISSING
+
+
+def test_phase4_compute_vertical_slice_on_postgres(pg_session: Session, tmp_path) -> None:
+    """Phase-4 compute submit -> RunReference -> input provenance -> produced
+    artifact, over the migrated PostgreSQL schema, with the provider-neutral
+    in-process fake capability."""
+    from revolab.capabilities import InputBinding
+    from revolab.content_store import ContentStore
+    from revolab.enums import RelationType, ResourceKind
+    from revolab.models import GlobalProvenanceEdge, ScientificObjectRevision
+    from revolab.testing.fake_compute import FakeComputeDriver
+
+    registry = DriverRegistry()
+    driver = FakeComputeDriver()
+    registry.register(driver)
+    driver_context = DriverContext(environment="test", settings=MappingProxyType({}))
+    registry.start_all(driver_context)
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Compute Acceptance")
+    series_id = services.create_object(pg_session, actor, project.id, "sequence", "seq", payload={"sequence": "MEEP"})
+    revision_id = pg_session.scalar(
+        select(ScientificObjectRevision.revision_id)
+        .where(ScientificObjectRevision.series_id == series_id)
+        .order_by(ScientificObjectRevision.revision_seq)
+        .limit(1)
+    )
+
+    submitted = services.compute_submit(
+        pg_session,
+        registry,
+        InMemorySecretStore(),
+        ContentStore(tmp_path),
+        actor,
+        project.id,
+        "fakecompute",
+        "echo",
+        [InputBinding(kind=ResourceKind.SCIENTIFIC_OBJECT_REVISION, resource_id=revision_id)],
+        {},
+    )
+
+    consumed = pg_session.scalar(
+        select(GlobalProvenanceEdge).where(
+            GlobalProvenanceEdge.relation_type == RelationType.CONSUMED_AS_INPUT_BY.value,
+            GlobalProvenanceEdge.target_id == submitted["run_resource_id"],
+        )
+    )
+    assert consumed is not None
+
+    artifacts = services.compute_refresh_artifacts(
+        pg_session,
+        registry,
+        InMemorySecretStore(),
+        actor,
+        project.id,
+        "fakecompute",
+        submitted["run_resource_id"],
+        submitted["native_id"],
+    )
+    assert artifacts
+    produced = pg_session.scalar(
+        select(GlobalProvenanceEdge).where(
+            GlobalProvenanceEdge.relation_type == RelationType.PRODUCED.value,
+            GlobalProvenanceEdge.source_id == submitted["run_resource_id"],
+        )
+    )
+    assert produced is not None

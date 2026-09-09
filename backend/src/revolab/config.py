@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     content_root: str = ".revolab-content"
     # Comma-separated CORS origins (configurable, not a hardcoded asset host).
     cors_origins: str = "http://localhost:5173"
+    # Phase-4 REvoCompute driver configuration. A driver is installed only when
+    # `revocompute_base_url` is set; otherwise the Provider Catalog remains the
+    # honest empty set.
+    revocompute_base_url: str | None = None
+    revocompute_timeout_seconds: float = 30.0
+    # Opt-in in-process fake COMPUTE provider for the browser/e2e vertical slice.
+    # Default OFF in production; never enables any real external credential flow.
+    e2e_fake_compute: bool = False
 
 
 @lru_cache

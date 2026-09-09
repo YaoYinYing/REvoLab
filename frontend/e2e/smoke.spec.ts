@@ -72,8 +72,23 @@ test('scientific vertical slice commits a decision to durable project truth', as
   await expect(page.locator('.list-row', { hasText: decisionTitle }).getByText('committed', { exact: true })).toBeVisible()
 
   // Providers tab consumes the real project-scoped catalog over the live API.
-  // With zero configured providers the honest empty state — not fixture data —
-  // must render.
+  // The e2e backend installs the opt-in in-process fake compute provider, so the
+  // catalog must render it (derived availability), never fixture data.
   await navigation.getByRole('button', { name: 'Providers' }).click()
-  await expect(page.getByText('No providers configured for this project.')).toBeVisible()
+  await expect(page.getByText('Fake Compute (in-process)')).toBeVisible()
+
+  // Compute vertical slice: task list is schema-driven, submission produces a
+  // RunReference, live status is resolved on demand, and the artifact appears as
+  // an ArtifactReference — all through the project-scoped API.
+  await navigation.getByRole('button', { name: 'Compute' }).click()
+  await expect(page.getByRole('heading', { name: 'Compute', level: 1 })).toBeVisible()
+  // The first option is the empty placeholder; the created object is the first
+  // real entry in this single-object project.
+  await page.getByLabel('Scientific object (latest revision)').selectOption({ index: 1 })
+  await page.getByRole('button', { name: 'Submit' }).click()
+  await expect(page.getByText('Run reference')).toBeVisible()
+  await page.getByRole('button', { name: 'Refresh status' }).click()
+  await expect(page.getByText('finished', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Discover artifacts' }).click()
+  await expect(page.getByText('Artifacts (1)')).toBeVisible()
 })

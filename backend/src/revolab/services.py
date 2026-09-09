@@ -14,6 +14,8 @@ The acting Actor participates as an opaque UUID handed in by the API layer
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -22,7 +24,15 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from revolab.capabilities import (
+    ArtifactHandle,
+    ExternalArtifactRef,
+    InputBinding,
+    ResolvedInput,
+    RunHandle,
+)
 from revolab.content_store import ContentStore
+from revolab.domain import compute as compute_domain
 from revolab.domain import knowledge, persistence, provenance, scientific_object
 from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from revolab.domain.identity import (
@@ -42,6 +52,7 @@ from revolab.drivers import DriverRegistry
 from revolab.enums import CapabilityKind, RelationType, ResourceKind, Role
 from revolab.models import (
     Actor,
+    ArtifactReference,
     Decision,
     DecisionTarget,
     Evidence,
@@ -703,6 +714,245 @@ def create_internal_artifact(
         size=result["size"],
         checksum=result["checksum"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Compute invocation (Phase 4): neutral InputBinding resolution + typed
+# RunReference/ArtifactReference persistence over the existing graph semantics.
+# The external side effect (the provider call) is performed by the
+# Provider/Capability domain (`revolab.domain.compute`); this module owns the
+# REvoLab-side scientific context produced from it.
+# ---------------------------------------------------------------------------
+
+
+_LEGAL_COMPUTE_INPUT_KINDS = frozenset(
+    {ResourceKind.SCIENTIFIC_OBJECT_REVISION, ResourceKind.ARTIFACT_REFERENCE}
+)
+
+
+def resolve_compute_input(
+    session: Session,
+    project_id: UUID,
+    binding: InputBinding,
+    *,
+    store: ContentStore,
+) -> ResolvedInput:
+    """Resolve one neutral InputBinding into provider-neutral material.
+
+    A ScientificObjectRevision contributes its typed JSON payload serialized as
+    bytes (verified against its stored checksum); an internal `revolab` artifact
+    contributes its ContentStore bytes; an external artifact contributes only its
+    immutable identity card — its bytes remain owned by the external provider
+    (the driver decides whether to reference or re-resolve them).
+    """
+    if binding.kind not in _LEGAL_COMPUTE_INPUT_KINDS:
+        raise ValidationError("compute input kind must be a revision or an artifact reference")
+    persistence.require_visible(session, project_id, binding.resource_id)
+
+    if binding.kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        revision = session.get(ScientificObjectRevision, binding.resource_id)
+        if revision is None:
+            raise NotFoundError("revision not found")
+        payload = revision.payload or {}
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        if hashlib.sha256(raw).hexdigest() != revision.checksum:
+            raise ConflictError("revision payload failed its integrity check")
+        return ResolvedInput(
+            role=binding.role,
+            filename=f"revision-{revision.series_id.hex[:8]}-r{revision.revision_seq}.json",
+            content_type="application/json",
+            data=raw,
+        )
+
+    artifact = session.get(ArtifactReference, binding.resource_id)
+    if artifact is None:
+        raise NotFoundError("artifact reference not found")
+    if artifact.authority == "revolab":
+        return ResolvedInput(
+            role=binding.role,
+            filename=f"artifact-{artifact.native_id[:12]}.bin",
+            content_type=artifact.content_type or "application/octet-stream",
+            data=store.get(artifact.native_id),
+        )
+    return ResolvedInput(
+        role=binding.role,
+        filename=f"{artifact.authority}-{artifact.native_id[:12]}",
+        content_type=artifact.content_type,
+        external=ExternalArtifactRef(
+            authority=artifact.authority,
+            native_id=artifact.native_id,
+            version_id=artifact.version_id,
+            content_type=artifact.content_type,
+            size=artifact.size,
+            checksum=artifact.checksum,
+        ),
+    )
+
+
+def _edge_exists(
+    session: Session, relation_type: RelationType, source_id: UUID, target_id: UUID
+) -> bool:
+    return (
+        session.scalar(
+            select(GlobalProvenanceEdge.edge_id)
+            .where(
+                GlobalProvenanceEdge.relation_type == relation_type.value,
+                GlobalProvenanceEdge.source_id == source_id,
+                GlobalProvenanceEdge.target_id == target_id,
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
+def record_compute_run(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    handle: RunHandle,
+    *,
+    inputs: list[UUID],
+) -> dict[str, Any]:
+    """Persist the immutable RunReference identity card plus the
+    `consumed_as_input_by` edges for the external run. This stores only
+    reference identity + scientific provenance — never REvoCompute mutable
+    execution state."""
+    run = create_run_reference(
+        session,
+        actor_id,
+        project_id,
+        handle.authority,
+        handle.native_id,
+        task_type=handle.task_type,
+    )
+    edges = []
+    for source_id in inputs:
+        if _edge_exists(session, RelationType.CONSUMED_AS_INPUT_BY, source_id, run.run_id):
+            continue
+        edges.append(add_consumed_input(session, actor_id, project_id, source_id, run.run_id))
+    return {
+        "run_resource_id": run.run_id,
+        "authority": run.authority,
+        "native_id": run.native_id,
+        "task_type": run.task_type,
+        "consumed_edges": [edge.edge_id for edge in edges],
+    }
+
+
+def record_compute_artifacts(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    run_resource_id: UUID,
+    *,
+    artifacts: list[ArtifactHandle],
+) -> list[dict[str, Any]]:
+    """Persist immutable ArtifactReference identity cards + `produced` edges for
+    an external run's results. Byte identity facts (checksum/size/content type)
+    are recorded only when REvoCompute provides them."""
+    recorded: list[dict[str, Any]] = []
+    for handle in artifacts:
+        artifact = create_artifact_reference(
+            session,
+            actor_id,
+            project_id,
+            handle.authority,
+            handle.native_id,
+            content_type=handle.content_type,
+            size=handle.size,
+            checksum=handle.checksum,
+            version_id=handle.version_id,
+        )
+        if not _edge_exists(session, RelationType.PRODUCED, run_resource_id, artifact.artifact_id):
+            record_produced(session, actor_id, project_id, run_resource_id, artifact.artifact_id)
+        recorded.append(_reference_identity(artifact.artifact_id, artifact))
+    return recorded
+
+
+def compute_submit(
+    session: Session,
+    registry: DriverRegistry,
+    secret_store: SecretStore,
+    content_store: ContentStore,
+    actor_id: UUID,
+    project_id: UUID,
+    provider_key: str,
+    task_kind: str,
+    bindings: list[InputBinding],
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """One real compute submission: every precondition is validated BEFORE the
+    external side effect, then the live provider call, then REvoLab-side
+    RunReference + input provenance."""
+    permitted = project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE)
+    resolved_inputs = [
+        resolve_compute_input(session, project_id, binding, store=content_store)
+        for binding in bindings
+    ]
+    handle = compute_domain.submit_compute(
+        session,
+        registry,
+        secret_store,
+        actor_id,
+        provider_key,
+        task_kind,
+        resolved_inputs,
+        params,
+        permitted=permitted,
+    )
+    return record_compute_run(
+        session,
+        actor_id,
+        project_id,
+        handle,
+        inputs=[binding.resource_id for binding in bindings],
+    )
+
+
+def compute_refresh_artifacts(
+    session: Session,
+    registry: DriverRegistry,
+    secret_store: SecretStore,
+    actor_id: UUID,
+    project_id: UUID,
+    provider_key: str,
+    run_resource_id: UUID,
+    run_native_id: str,
+) -> list[dict[str, Any]]:
+    """Live-enumerate an external run's artifacts and persist durable
+    ArtifactReferences + `produced` edges. Provider outage raises a typed
+    CapabilityError; stored references are never rewritten."""
+    permitted = project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE)
+    handles = compute_domain.list_artifacts(
+        session,
+        registry,
+        secret_store,
+        actor_id,
+        provider_key,
+        run_native_id,
+        permitted=permitted,
+    )
+    return record_compute_artifacts(
+        session,
+        actor_id,
+        project_id,
+        run_resource_id,
+        artifacts=handles,
+    )
+
+
+def _reference_identity(resource_id: UUID, row: Any) -> dict[str, Any]:
+    return {
+        "resource_id": resource_id,
+        "authority": getattr(row, "authority", None),
+        "native_id": getattr(row, "native_id", None),
+        "content_type": getattr(row, "content_type", None),
+        "size": getattr(row, "size", None),
+        "checksum": getattr(row, "checksum", None),
+        "version_id": getattr(row, "version_id", None),
+        "revoked_at": getattr(row, "revoked_at", None),
+    }
 
 
 # ---------------------------------------------------------------------------

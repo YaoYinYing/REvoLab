@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Boxes, FileText, GitBranch, Plus } from 'lucide-react'
+import { ArrowLeft, Boxes, FileText, GitBranch, Play, Plus } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
 import type {
@@ -241,6 +241,7 @@ export function ObjectDetailView({
   error,
   onBack,
   onChanged,
+  onCompute,
 }: {
   actorId: string
   projectId: string
@@ -249,6 +250,7 @@ export function ObjectDetailView({
   error: string | null
   onBack: () => void
   onChanged: () => void
+  onCompute: (revisionId: string) => void
 }) {
   const [showEvidenceForm, setShowEvidenceForm] = useState(false)
   const [showDecisionForm, setShowDecisionForm] = useState(false)
@@ -299,7 +301,14 @@ export function ObjectDetailView({
       </section>
 
       {latest ? (
-        <Section title={`Revision #${latest.revision_seq} (visible)`}>
+        <Section
+          title={`Revision #${latest.revision_seq} (visible)`}
+          actions={
+            <button type="button" className="quiet-button" onClick={() => onCompute(latest.revision_id)}>
+              <Play size={14} /> Run computation
+            </button>
+          }
+        >
           <dl className="identity-grid">
             <div>
               <dt>Checksum</dt>

@@ -79,6 +79,369 @@
         "title": "CitedAs",
         "type": "string"
       },
+      "ComputeArtifactRead": {
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checksum"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "resource_id": {
+            "format": "uuid",
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "resource_id",
+          "authority",
+          "native_id"
+        ],
+        "title": "ComputeArtifactRead",
+        "type": "object"
+      },
+      "ComputeInputCreate": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ResourceKind"
+          },
+          "resource_id": {
+            "format": "uuid",
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "kind",
+          "resource_id"
+        ],
+        "title": "ComputeInputCreate",
+        "type": "object"
+      },
+      "ComputeInputSpecRead": {
+        "properties": {
+          "accepted_extensions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Accepted Extensions",
+            "type": "array"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "max_files": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Files"
+          },
+          "multiple": {
+            "default": false,
+            "title": "Multiple",
+            "type": "boolean"
+          },
+          "required": {
+            "default": false,
+            "title": "Required",
+            "type": "boolean"
+          }
+        },
+        "title": "ComputeInputSpecRead",
+        "type": "object"
+      },
+      "ComputeRunStatusRead": {
+        "description": "Live, on-demand run state. `available=False` is the honest representation\nof a provider that is currently unreachable; the stored RunReference is\nnever invalidated by a transient outage.",
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "run_resource_id": {
+            "format": "uuid",
+            "title": "Run Resource Id",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "run_resource_id",
+          "authority",
+          "native_id",
+          "available"
+        ],
+        "title": "ComputeRunStatusRead",
+        "type": "object"
+      },
+      "ComputeSubmissionCreate": {
+        "properties": {
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ComputeInputCreate"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "provider_key": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+            "title": "Provider Key",
+            "type": "string"
+          },
+          "task_kind": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Task Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_key",
+          "task_kind"
+        ],
+        "title": "ComputeSubmissionCreate",
+        "type": "object"
+      },
+      "ComputeSubmissionRead": {
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "consumed_edges": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Consumed Edges",
+            "type": "array"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "run_resource_id": {
+            "format": "uuid",
+            "title": "Run Resource Id",
+            "type": "string"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type"
+          }
+        },
+        "required": [
+          "run_resource_id",
+          "authority",
+          "native_id"
+        ],
+        "title": "ComputeSubmissionRead",
+        "type": "object"
+      },
+      "ComputeTaskKindRead": {
+        "description": "One discoverable task kind. All fields are provider data.",
+        "properties": {
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "kind_id": {
+            "title": "Kind Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind_id",
+          "display_name"
+        ],
+        "title": "ComputeTaskKindRead",
+        "type": "object"
+      },
+      "ComputeTaskKindSchemaRead": {
+        "description": "Schema-as-data for one task kind (parameters + input contract).",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "input_spec": {
+            "$ref": "#/components/schemas/ComputeInputSpecRead"
+          },
+          "kind_id": {
+            "title": "Kind Id",
+            "type": "string"
+          },
+          "parameter_schema": {
+            "additionalProperties": true,
+            "title": "Parameter Schema",
+            "type": "object"
+          }
+        },
+        "required": [
+          "kind_id",
+          "display_name",
+          "parameter_schema",
+          "input_spec"
+        ],
+        "title": "ComputeTaskKindSchemaRead",
+        "type": "object"
+      },
       "Confidence": {
         "enum": [
           "low",
@@ -2547,6 +2910,137 @@
         "summary": "Resolve Artifact Content"
       }
     },
+    "/api/projects/{project_id}/artifacts/{artifact_id}/resolve": {
+      "get": {
+        "description": "Live, on-demand external artifact access. Resolving bytes is NOT implicit\ningestion: nothing is copied into REvoLab ContentStore here.",
+        "operationId": "resolve_compute_artifact_api_projects__project_id__artifacts__artifact_id__resolve_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resolve Compute Artifact"
+      }
+    },
+    "/api/projects/{project_id}/compute/submissions": {
+      "post": {
+        "operationId": "create_compute_submission_api_projects__project_id__compute_submissions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputeSubmissionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeSubmissionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Compute Submission"
+      }
+    },
     "/api/projects/{project_id}/decisions": {
       "get": {
         "operationId": "list_decisions_api_projects__project_id__decisions_get",
@@ -4184,6 +4678,153 @@
         "summary": "List Project Providers"
       }
     },
+    "/api/projects/{project_id}/providers/{provider_key}/compute/task-kinds": {
+      "get": {
+        "operationId": "list_compute_task_kinds_api_projects__project_id__providers__provider_key__compute_task_kinds_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Provider Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ComputeTaskKindRead"
+                  },
+                  "title": "Response List Compute Task Kinds Api Projects  Project Id  Providers  Provider Key  Compute Task Kinds Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Compute Task Kinds"
+      }
+    },
+    "/api/projects/{project_id}/providers/{provider_key}/compute/task-kinds/{kind_id}/schema": {
+      "get": {
+        "operationId": "get_compute_task_kind_schema_api_projects__project_id__providers__provider_key__compute_task_kinds__kind_id__schema_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "provider_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Provider Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind_id",
+            "required": true,
+            "schema": {
+              "maxLength": 300,
+              "minLength": 1,
+              "title": "Kind Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeTaskKindSchemaRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Compute Task Kind Schema"
+      }
+    },
     "/api/projects/{project_id}/relations/consumed_as_input_by": {
       "post": {
         "operationId": "consumed_as_input_by_api_projects__project_id__relations_consumed_as_input_by_post",
@@ -4823,6 +5464,142 @@
           }
         },
         "summary": "Create Run"
+      }
+    },
+    "/api/projects/{project_id}/runs/{run_id}/artifacts": {
+      "post": {
+        "operationId": "refresh_compute_run_artifacts_api_projects__project_id__runs__run_id__artifacts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ComputeArtifactRead"
+                  },
+                  "title": "Response Refresh Compute Run Artifacts Api Projects  Project Id  Runs  Run Id  Artifacts Post",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refresh Compute Run Artifacts"
+      }
+    },
+    "/api/projects/{project_id}/runs/{run_id}/status": {
+      "get": {
+        "operationId": "get_compute_run_status_api_projects__project_id__runs__run_id__status_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputeRunStatusRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Compute Run Status"
       }
     },
     "/api/projects/{project_id}/sessions": {

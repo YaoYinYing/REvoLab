@@ -1,6 +1,11 @@
 import { projectApi, type ProjectApi } from './backend'
 import { apiErrorMessage } from './client'
 import type {
+  ComputeArtifactRead,
+  ComputeRunStatusRead,
+  ComputeSubmissionRead,
+  ComputeTaskKindRead,
+  ComputeTaskKindSchemaRead,
   DecisionRead,
   EvidenceRead,
   ObjectDetailRead,
@@ -123,5 +128,38 @@ export function useProviders(actorId: string | null, projectId: string | null): 
             .then((res) => value<ProviderRead[]>(res as ApiResult<ProviderRead[]>))
         : Promise.resolve([]),
     [actorId, projectId],
+  )
+}
+
+export function useComputeTaskKinds(
+  actorId: string | null,
+  projectId: string | null,
+  providerKey: string | null,
+): AsyncState<ComputeTaskKindRead[]> {
+  return useAsync(
+    () =>
+      actorId && projectId && providerKey
+        ? projectApi(actorId)
+            .listComputeTaskKinds(projectId, providerKey)
+            .then((res) => value<ComputeTaskKindRead[]>(res as ApiResult<ComputeTaskKindRead[]>))
+        : Promise.resolve([]),
+    [actorId, projectId, providerKey],
+  )
+}
+
+export function useComputeTaskKindSchema(
+  actorId: string | null,
+  projectId: string | null,
+  providerKey: string | null,
+  kindId: string | null,
+): AsyncState<ComputeTaskKindSchemaRead | null> {
+  return useAsync(
+    () =>
+      actorId && projectId && providerKey && kindId
+        ? projectApi(actorId)
+            .getComputeTaskKindSchema(projectId, providerKey, kindId)
+            .then((res) => value<ComputeTaskKindSchemaRead>(res as ApiResult<ComputeTaskKindSchemaRead>))
+        : Promise.resolve(null),
+    [actorId, projectId, providerKey, kindId],
   )
 }

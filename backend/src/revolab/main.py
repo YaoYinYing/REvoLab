@@ -1,12 +1,31 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from revolab import __version__
 from revolab.api import install_exception_handlers, router
+from revolab.bootstrap import build_driver_context, install_drivers
 from revolab.config import get_settings
+from revolab.drivers import default_registry
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version=__version__)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Explicit, deterministic startup: install configured drivers, then start
+    # them. A broken configured driver fails startup loudly (no silent fallback).
+    install_drivers(default_registry, build_driver_context(settings), settings)
+    default_registry.start_all(build_driver_context(settings))
+    try:
+        yield
+    finally:
+        default_registry.stop_all()
+
+
+app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
 if settings.cors_origins:
     app.add_middleware(
         CORSMiddleware,

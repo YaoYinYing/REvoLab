@@ -37,3 +37,18 @@ export type CapabilityAvailability = components['schemas']['CapabilityAvailabili
 
 export type ProviderRead =
   paths['/api/projects/{project_id}/providers']['get']['responses']['200']['content']['application/json'][number]
+
+export type ComputeTaskKindRead =
+  paths['/api/projects/{project_id}/providers/{provider_key}/compute/task-kinds']['get']['responses']['200']['content']['application/json'][number]
+
+export type ComputeTaskKindSchemaRead =
+  paths['/api/projects/{project_id}/providers/{provider_key}/compute/task-kinds/{kind_id}/schema']['get']['responses']['200']['content']['application/json']
+
+export type ComputeSubmissionRead =
+  paths['/api/projects/{project_id}/compute/submissions']['post']['responses']['201']['content']['application/json']
+
+export type ComputeRunStatusRead =
+  paths['/api/projects/{project_id}/runs/{run_id}/status']['get']['responses']['200']['content']['application/json']
+
+export type ComputeArtifactRead =
+  paths['/api/projects/{project_id}/runs/{run_id}/artifacts']['post']['responses']['201']['content']['application/json'][number]

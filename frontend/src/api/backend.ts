@@ -6,8 +6,9 @@ type EvidenceCreate = paths['/api/projects/{project_id}/evidence']['post']['requ
 type DecisionCreate = paths['/api/projects/{project_id}/decisions']['post']['requestBody']['content']['application/json']
 type DecisionPatch = paths['/api/projects/{project_id}/decisions/{decision_id}']['patch']['requestBody']['content']['application/json']
 type ProjectCreate = paths['/api/projects']['post']['requestBody']['content']['application/json']
+type ComputeSubmissionCreate = paths['/api/projects/{project_id}/compute/submissions']['post']['requestBody']['content']['application/json']
 
-export type { ObjectCreate, EvidenceCreate, DecisionCreate, DecisionPatch, ProjectCreate }
+export type { ObjectCreate, EvidenceCreate, DecisionCreate, DecisionPatch, ProjectCreate, ComputeSubmissionCreate }
 
 /**
  * Project-scoped API facade: every call names resources through a Project and
@@ -99,6 +100,44 @@ export function projectApi(actorId: string) {
       api.GET('/api/projects/{project_id}/providers', {
         headers,
         params: { path: { project_id: projectId } },
+      }),
+
+    listComputeTaskKinds: (projectId: string, providerKey: string) =>
+      api.GET('/api/projects/{project_id}/providers/{provider_key}/compute/task-kinds', {
+        headers,
+        params: { path: { project_id: projectId, provider_key: providerKey } },
+      }),
+
+    getComputeTaskKindSchema: (projectId: string, providerKey: string, kindId: string) =>
+      api.GET('/api/projects/{project_id}/providers/{provider_key}/compute/task-kinds/{kind_id}/schema', {
+        headers,
+        params: { path: { project_id: projectId, provider_key: providerKey, kind_id: kindId } },
+      }),
+
+    createComputeSubmission: (projectId: string, body: ComputeSubmissionCreate) =>
+      api.POST('/api/projects/{project_id}/compute/submissions', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    getComputeRunStatus: (projectId: string, runId: string) =>
+      api.GET('/api/projects/{project_id}/runs/{run_id}/status', {
+        headers,
+        params: { path: { project_id: projectId, run_id: runId } },
+      }),
+
+    refreshComputeArtifacts: (projectId: string, runId: string) =>
+      api.POST('/api/projects/{project_id}/runs/{run_id}/artifacts', {
+        headers,
+        params: { path: { project_id: projectId, run_id: runId } },
+      }),
+
+    resolveComputeArtifact: (projectId: string, artifactId: string) =>
+      api.GET('/api/projects/{project_id}/artifacts/{artifact_id}/resolve', {
+        headers,
+        params: { path: { project_id: projectId, artifact_id: artifactId } },
+        parseAs: 'text',
       }),
   }
 }

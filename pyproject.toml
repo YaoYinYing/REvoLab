@@ -14,6 +14,7 @@ dependencies = [
   "alembic>=1.14,<2",
   "fastapi>=0.115,<1",
   "fsspec>=2024.6,<2027",
+  "httpx>=0.28,<1",
   "psycopg[binary]>=3.2,<4",
   "pydantic-settings>=2.7,<3",
   "python-multipart>=0.0.12,<1",
@@ -23,7 +24,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "httpx>=0.28,<1",
   "mypy>=1.14,<2",
   "pytest>=8.3,<9",
   "pytest-cov>=6,<7",

@@ -37,6 +37,8 @@ export default defineConfig({
         REVOLAB_DATABASE_URL: process.env.REVOLAB_DATABASE_URL ?? `sqlite:///./.playsmoke.db`,
         REVOLAB_CONTENT_ROOT: process.env.REVOLAB_CONTENT_ROOT ?? './.playsmoke-content',
         REVOLAB_CORS_ORIGINS: frontendUrl,
+        // Opt-in in-process fake compute provider for the browser vertical slice.
+        REVOLAB_E2E_FAKE_COMPUTE: '1',
       },
     },
     {
