@@ -193,9 +193,9 @@ External systems own their capabilities and execution truth.
   artifacts instead of embedding them; the agent never raw-writes.
 - **Public contracts:** context assembly, typed tool calls (via the shared
   ToolCatalog), skill loading.
-- **Dependencies:** Project, Evidence/Provenance, Knowledge/Decision, Project Tool
-  Harness (for tools), Identity/Collaboration (authority). The Agent is a consumer
-  of these.
+- **Dependencies:** Project, Evidence/Provenance, Knowledge/Decision, Provider /
+  Capability (capability discovery for context), Project Tool Harness (for tools),
+  Identity/Collaboration (authority). The Agent is a consumer of these.
 - **Non-responsibilities:** owning the database; being the persistence layer; RAG.
 
 ### 7. Identity / Collaboration Domain
@@ -324,7 +324,9 @@ never depend on the Agent or the Project Tool Harness, and no domain depends on 
 downstream sibling in a cycle. `PJ --> IC` (Project consumes the Identity membership
 contract) is one direction only — Identity owns membership and depends on nothing in
 Core, so there is no cycle. `Tool` has exactly one owner (Project Tool Harness);
-`Presentation` and `Agent Context` only consume its `ToolCatalog`.
+`Presentation` and `Agent Context` consume its public Tool contracts
+(`build_tool_catalog`, `LocalToolRuntime.invoke`, and the `ToolCatalog` read they
+both render) — they never own Tool.
 
 ---
 
