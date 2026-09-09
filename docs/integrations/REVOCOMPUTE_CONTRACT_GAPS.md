@@ -89,8 +89,12 @@ duplicates of REvoCompute execution truth.
 - **Smallest upstream change:** return `200`/`201` with the JSON task id on a new
   submission, and return `failed` with a machine-readable code on a non-404
   status.
-- **Phase 4 impact:** **non-blocking.** The driver follows the redirect, extracts
-  the task id, and discriminates `failed` from `not_found` by response body keys.
+- **Phase 4 impact:** **non-blocking.** The driver does not follow redirects
+  automatically (so the credential is never replayed cross-origin); it reads the
+  `Location` itself — resolving the relative
+  `redirect(f"/compute/api/running/{md5sum}")` against the configured base URL
+  and trusting only same-origin targets — then discriminates `failed` from
+  `not_found` by response body keys.
 
 ## 5. Referencing partially useful outputs of a failed run
 

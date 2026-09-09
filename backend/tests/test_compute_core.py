@@ -388,27 +388,40 @@ def test_repeated_artifact_refresh_does_not_duplicate_edges(session, secret_stor
     assert len(edges) == 1
 
 
-def test_input_not_stewarded_fails_before_execution(session, secret_store, tmp_path) -> None:
+def test_shared_visible_input_is_submittable_without_source_stewardship(
+    session, secret_store, tmp_path
+) -> None:
+    """Project B can read a revision stewarded by Project A and submit it as a
+    compute input without gaining source stewardship: the #5 authority is
+    task-submission + read(input), not steward(source)."""
     state = _State()
     registry = _started(state)
     actor_a = _actor(session)
     actor_b = _actor(session)
     project_a = _project(session, actor_a)
     project_b = _project(session, actor_b)
-    series = services.create_object(session, actor_a, project_a, "sequence", "obj", payload={})
+
+    series = services.create_object(session, actor_a, project_a, "sequence", "shared", payload={"sequence": "MEEP"})
     revision = session.scalar(
         select(ScientificObjectRevision.revision_id)
         .where(ScientificObjectRevision.series_id == series)
         .limit(1)
     )
-    # Make the revision readable through B (read lens) without transferring its
-    # series stewardship away from A.
     persistence.link(session, project_b, revision)
     session.commit()
 
-    with pytest.raises(AuthorizationError):
-        services.compute_submit(
-            session, registry, secret_store, ContentStore(tmp_path), actor_b, project_b, "fakecompute", "echo",
-            [InputBinding(kind=ResourceKind.SCIENTIFIC_OBJECT_REVISION, resource_id=revision)], {},
+    submitted = services.compute_submit(
+        session, registry, secret_store, ContentStore(tmp_path), actor_b, project_b,
+        "fakecompute", "echo",
+        [InputBinding(kind=ResourceKind.SCIENTIFIC_OBJECT_REVISION, resource_id=revision)],
+        {},
+    )
+    assert state.submit_calls == 1
+    edge = session.scalar(
+        select(GlobalProvenanceEdge).where(
+            GlobalProvenanceEdge.relation_type == RelationType.CONSUMED_AS_INPUT_BY.value,
+            GlobalProvenanceEdge.target_id == submitted["run_resource_id"],
         )
-    assert state.submit_calls == 0
+    )
+    assert edge is not None
+    assert edge.source_id == revision

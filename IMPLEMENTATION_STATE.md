@@ -424,10 +424,33 @@ contracts) plus the PR's Codex review were reconciled; findings were resolved:
   driver/API security test gaps (submit error mapping, cross-origin, path
   traversal, viewer read policy, compute 422 no-echo, mapping pin) were added.
 
+### Merge-blocking review round
+
+Two semantics were corrected after the above:
+
+1. **`consumed_as_input_by` authority (#5).** The Phase-1 stand-in of
+   "steward(source) + read(target)" (recorded in ADR-0015 as a placeholder
+   until a real provider landed) was replaced with the frozen contract from
+   `SCIENTIFIC_GRAPH.md`: **task-submission authority + read(input)**. The
+   typed `provenance.add_consumed_input` no longer consumes a source
+   `MutationGrant`; the command boundary requires a mutation-capable membership
+   in the acting Project and readability of both endpoints. A shared/visible
+   input stewarded by another Project may now be submitted as input without
+   transferring source stewardship (regression: `test_shared_visible_input_...`
+   in `test_compute_core.py`, and the leaf authority test in
+   `test_grant_authority.py`). The preflight-before-external-side-effect
+   property is preserved with the corrected authority.
+2. **Relative REvoCompute success redirect.** The real submission handler
+   returns `redirect(f"/compute/api/running/{md5sum}")` — a RELATIVE `Location`.
+   `_extract_task_id` now resolves the `Location` against the configured base
+   URL (`urljoin`) before the same-origin check and md5sum extraction, keeping
+   the no-cross-origin-credential invariant (contract test:
+   `test_submit_accepts_relative_same_origin_redirect`).
+
 ## Verified evidence (Phase 4)
 
 - Backend: `ruff check backend` and strict `mypy` pass (31 source files).
-  `pytest` passes with **173 passed, 3 skipped** (the three skips are the opt-in
+  `pytest` passes with **174 passed, 3 skipped** (the three skips are the opt-in
   PostgreSQL acceptance file). New tests cover: the REvoCompute driver against
   an HTTP fake at the network boundary (discovery/schema translation, submit
   redirect + multipart + artifact-reference input, failed-on-404 run state,

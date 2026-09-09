@@ -568,14 +568,11 @@ def add_evaluates(
 def add_consumed_input(
     session: Session, actor_id: UUID, project_id: UUID, source_id: UUID, target_id: UUID
 ) -> GlobalProvenanceEdge:
-    source_kind = persistence.resource_kind(session, source_id)
-    anchor = (
-        persistence.revision_series_id(session, source_id)
-        if source_kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION
-        else source_id
-    )
-    grant = can_mutate(session, actor_id, project_id, anchor, purpose="consumed_as_input_by")
-    return provenance.add_consumed_input(session, grant, project_id, source_id, target_id)
+    """The frozen #5 creator authority (SCIENTIFIC_GRAPH.md): task-submission
+    authority + read(input). A shared/visible input is consumable by another
+    Project without transferring mutation authority over its source."""
+    mutation_capable_membership(session, actor_id, project_id)
+    return provenance.add_consumed_input(session, actor_id, project_id, source_id, target_id)
 
 
 def record_produced(
@@ -724,15 +721,6 @@ def create_internal_artifact(
 # Provider/Capability domain (`revolab.domain.compute`); this module owns the
 # REvoLab-side scientific context produced from it.
 # ---------------------------------------------------------------------------
-
-
-def _compute_input_anchor(session: Session, binding: InputBinding) -> UUID:
-    """The resource whose stewardship authorizes the consumed_as_input_by edge
-    for this binding: the owning series for a revision, the artifact row itself
-    for an artifact reference."""
-    if binding.kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
-        return persistence.revision_series_id(session, binding.resource_id)
-    return binding.resource_id
 
 
 def resolve_compute_input(
@@ -891,17 +879,13 @@ def compute_submit(
     external side effect, then the live provider call, then REvoLab-side
     RunReference + input provenance."""
     permitted = project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE)
-    # Validate the per-input stewardship requirement for the consumed_as_input_by
-    # edge UP FRONT. Doing it after the driver call would allow an external run
-    # to be created while REvoLab cannot persist its input provenance.
+    # Preflight the accepted #5 authority BEFORE any external side effect:
+    # task-submission authority (mutation-capable membership) + read(input).
+    # Stewardship over the input source is NOT required — a shared, visible
+    # input must be consumable without transferring mutation authority.
+    mutation_capable_membership(session, actor_id, project_id)
     for binding in bindings:
-        can_mutate(
-            session,
-            actor_id,
-            project_id,
-            _compute_input_anchor(session, binding),
-            purpose="consumed_as_input_by",
-        )
+        persistence.require_visible(session, project_id, binding.resource_id)
     resolved_inputs = [
         resolve_compute_input(session, project_id, binding, store=content_store)
         for binding in bindings

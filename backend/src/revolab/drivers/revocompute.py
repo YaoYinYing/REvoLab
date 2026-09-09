@@ -16,7 +16,7 @@ import json
 import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urljoin, urlsplit
 
 import httpx
 
@@ -420,16 +420,17 @@ class REvoComputeComputeCapability:
             if normalized:
                 return normalized
         # The success/finished path redirects to /compute/api/running/<md5sum>.
-        path = str(response.url.path)
-        if "/running/" in path:
-            normalized = _sanitize_task_id(path.rsplit("/running/", 1)[-1])
-            if normalized:
-                return normalized
+        # The Location may be RELATIVE (REvoCompute emits exactly
+        # `redirect(f"/compute/api/running/{md5sum}")`); resolve it against the
+        # configured base URL, then only trust same-origin targets so the
+        # credential-bearing client never follows another host.
         location = response.headers.get("Location")
-        if location and "/running/" in location and _same_origin(self._base_url, location):
-            normalized = _sanitize_task_id(location.rsplit("/running/", 1)[-1])
-            if normalized:
-                return normalized
+        if location:
+            resolved = urljoin(self._base_url, location)
+            if "/running/" in resolved and _same_origin(self._base_url, resolved):
+                normalized = _sanitize_task_id(resolved.rsplit("/running/", 1)[-1])
+                if normalized:
+                    return normalized
         return None
 
 

@@ -196,6 +196,30 @@ def test_submit_follows_redirect_and_extracts_task_id() -> None:
     assert handle.task_type == "echo"
 
 
+def test_submit_accepts_relative_same_origin_redirect() -> None:
+    """REvoCompute emits exactly `redirect(f"/compute/api/running/{md5sum}")`:
+    the Location is RELATIVE to the request origin."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        _assert_sentinel_only_in_api_key(request)
+        if request.url.path == "/compute/api/types/echo":
+            return httpx.Response(200, json=_schema_payload())
+        if request.url.path == "/compute/api/post":
+            return httpx.Response(
+                302, headers={"Location": f"/compute/api/running/{TASK_ID}"}
+            )
+        return httpx.Response(404)
+
+    driver = _driver(handler)
+    handle = _compute(driver).submit(
+        "echo",
+        [ResolvedInput(role=None, filename="input.fasta", content_type="text/plain", data=b">x\nAC")],
+        {},
+        _lease(),
+    )
+    assert handle.native_id == TASK_ID
+
+
 def test_submit_references_prior_artifact_without_uploading_bytes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         _assert_sentinel_only_in_api_key(request)

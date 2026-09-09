@@ -60,13 +60,33 @@ def test_conceptual_edge_leaf_requires_source_grant(session):
         provenance.add_conceptual_edge(session, wrong, RelationType.VARIANT_OF, source, target)
 
 
-def test_consumed_input_leaf_validates_source_series_grant(session):
-    actor, project, series = _setup(session)
-    revision = services.append_revision(session, actor, project.id, series, {"organism": None})
-    run = services.create_run_reference(session, actor, project.id, "revocompute", "run-1")
-    wrong = _grant(run.run_id, project.id, actor, "consumed_as_input_by")
+def test_consumed_input_authority_is_submission_plus_read_not_stewardship(session):
+    """The frozen #5 authority (task-submission + read(input)): a Project that
+    can read a source stewarded elsewhere may still consume it as an input —
+    visibility is not stewardship, and the source's mutation authority is never
+    transferred."""
+    actor_a = services.create_actor(session)
+    actor_b = services.create_actor(session)
+    project_a = services.create_project(session, actor_a, "A")
+    project_b = services.create_project(session, actor_b, "B")
+
+    series = services.create_object(session, actor_a, project_a.id, "protein", "X", payload={})
+    revision = services.append_revision(session, actor_a, project_a.id, series, {"chain": "B"})
+    # Make the revision readable through B (read lens) WITHOUT transferring its
+    # series stewardship away from A.
+    persistence.link(session, project_b.id, revision.revision_id)
+    session.commit()
+
+    run = services.create_run_reference(session, actor_b, project_b.id, "revocompute", "run-1")
+    edge = provenance.add_consumed_input(
+        session, actor_b, project_b.id, revision.revision_id, run.run_id
+    )
+    assert edge.relation_type == "consumed_as_input_by"
+
+    # A source that is NOT readable through the acting project is still rejected.
+    invisible = services.create_object(session, actor_a, project_a.id, "protein", "Y", payload={})
     with pytest.raises(AuthorizationError):
-        provenance.add_consumed_input(session, wrong, project.id, revision.revision_id, run.run_id)
+        provenance.add_consumed_input(session, actor_b, project_b.id, invisible, run.run_id)
 
 
 def test_insert_edge_sink_cross_checks_registry_kind(session):
