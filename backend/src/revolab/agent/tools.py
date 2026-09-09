@@ -7,9 +7,12 @@ Tools derive from exactly two existing sources (TODO.md section 6):
    `catalog_entries`, only when the Actor's derived availability is AVAILABLE).
 
 Input/output JSON Schemas are derived from the canonical Pydantic domain/OpenAPI
-models — never hand-copied. No raw SQL, arbitrary HTTP, shell, credential CRUD,
-secret-store, generic relation writer, or generic database update is ever
-projected. The catalog is a read-only projection: it does not invoke anything.
+models (`model_json_schema`) or from small mechanical fragments for scalar
+identity/opaque-string inputs (`_uuid_input` / `_string_input`) — never by copying
+an enum or a full parameter list by hand. No raw SQL, arbitrary HTTP, shell,
+credential CRUD, secret-store, generic relation writer, or generic database
+update is ever projected. The catalog is a read-only projection: it does not
+invoke anything.
 """
 
 from __future__ import annotations
@@ -32,7 +35,6 @@ from revolab.enums import (
     ToolSource,
 )
 from revolab.schemas import (
-    AgentProposalCreate,
     ArtifactInspectRead,
     ComputeArtifactRead,
     ComputeRunStatusRead,
@@ -41,6 +43,7 @@ from revolab.schemas import (
     ComputeTaskKindRead,
     ComputeTaskKindSchemaRead,
     ContextSelectionCreate,
+    DecisionCreate,
     DecisionRead,
     EvidenceCreate,
     EvidenceRead,
@@ -60,10 +63,21 @@ _BINARY_SCHEMA: dict[str, Any] = {"type": "string", "format": "binary"}
 
 def _uuid_input(field: str) -> dict[str, Any]:
     """A scalar opaque-UUID input schema for a tool whose only argument is one
-    durable identity. Identity is an opaque UUID, never a path."""
+    durable REvoLab identity. Identity is an opaque UUID, never a path."""
     return {
         "type": "object",
         "properties": {field: {"type": "string", "format": "uuid"}},
+        "required": [field],
+        "additionalProperties": False,
+    }
+
+
+def _string_input(field: str, *, min_length: int = 1, max_length: int = 300) -> dict[str, Any]:
+    """A scalar opaque-string input schema (provider-native identity, e.g. a task
+    `kind_id`) for a tool whose only argument is one provider-typed string."""
+    return {
+        "type": "object",
+        "properties": {field: {"type": "string", "minLength": min_length, "maxLength": max_length}},
         "required": [field],
         "additionalProperties": False,
     }
@@ -194,7 +208,7 @@ def _domain_tools(can_mutate: bool) -> list[ToolDescriptorRead]:
             autonomy=AgentToolAutonomy.POLICY,
             available=can_mutate,
             availability_reason=write_reason,
-            input_schema=_schema(AgentProposalCreate),
+            input_schema=_schema(DecisionCreate),
             output_schema=_schema(DecisionRead),
         ),
         _descriptor(
@@ -284,7 +298,7 @@ def _compute_tools(provider_key: str, display_name: str) -> list[ToolDescriptorR
             autonomy=AgentToolAutonomy.AUTOMATIC,
             available=True,
             availability_reason=None,
-            input_schema=_uuid_input("kind_id"),
+            input_schema=_string_input("kind_id", min_length=1, max_length=300),
             output_schema=_schema(ComputeTaskKindSchemaRead),
             source=ToolSource.PROVIDER,
             provider_key=provider_key,
@@ -309,7 +323,11 @@ def _compute_tools(provider_key: str, display_name: str) -> list[ToolDescriptorR
         _descriptor(
             id=f"{provider_key}.compute.run_status",
             name=f"{display_name}: run status",
-            description="Resolve live run state on demand (never copied into Core).",
+            description=(
+                "Resolve live run state on demand (never copied into Core). "
+                "`run_id` is the REvoLab RunReference resource UUID, resolved to "
+                "the provider-native run id by the existing run-status path."
+            ),
             autonomy=AgentToolAutonomy.AUTOMATIC,
             available=True,
             availability_reason=None,
@@ -322,7 +340,11 @@ def _compute_tools(provider_key: str, display_name: str) -> list[ToolDescriptorR
         _descriptor(
             id=f"{provider_key}.compute.list_artifacts",
             name=f"{display_name}: list artifacts",
-            description="Enumerate a run's ArtifactReference cards + provenance edges.",
+            description=(
+                "Enumerate a run's ArtifactReference cards + provenance edges. "
+                "`run_id` is the REvoLab RunReference resource UUID, resolved to "
+                "the provider-native run id by the existing run-artifact path."
+            ),
             autonomy=AgentToolAutonomy.POLICY,
             available=True,
             availability_reason=None,

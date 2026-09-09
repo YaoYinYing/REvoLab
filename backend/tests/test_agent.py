@@ -10,12 +10,13 @@ Safety regressions prove the Agent is a consumer, never an owner:
 
 from __future__ import annotations
 
+import json
 from types import MappingProxyType
 from typing import ClassVar
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from revolab import services
 from revolab.agent import (
@@ -26,6 +27,7 @@ from revolab.agent import (
     record_proposal,
 )
 from revolab.agent.session import AgentSession
+from revolab.capabilities import ArtifactHandle, ExternalArtifactRef
 from revolab.content_store import ContentStore
 from revolab.domain.errors import AuthorizationError
 from revolab.drivers import DriverContext, DriverRegistry
@@ -65,6 +67,18 @@ def _revision(session, actor, project, series_id, payload):
     return services.append_revision(session, actor, project.id, series_id, payload)
 
 
+def _headers(actor_id: str) -> dict[str, str]:
+    return {"X-Actor-Id": actor_id}
+
+
+def _http_actor(client) -> str:
+    return client.post("/api/actors").json()["actor_id"]
+
+
+def _http_project(client, actor_id: str, name: str = "Agent P") -> dict:
+    return client.post("/api/projects", json={"name": name}, headers=_headers(actor_id)).json()
+
+
 def _evidence(session, actor, project, revision_id, target=None):
     target_id = target if target is not None else revision_id
     return services.create_evidence(
@@ -102,6 +116,42 @@ class _CredentialDriver:
     required_credential_kinds = ("api_key",)
     authorities = ("credprov",)
     capabilities: ClassVar[dict[CapabilityKind, object]] = {CapabilityKind.COMPUTE: _Capability()}
+
+    def start(self, context: DriverContext) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def probe_health(self) -> ProviderRuntimeHealth:
+        return ProviderRuntimeHealth.READY
+
+
+class _ArtifactCapability:
+    provider_key = "credartifact"
+    kind = CapabilityKind.ARTIFACT_RESOLUTION
+
+    def resolve(self, artifact: ExternalArtifactRef, credentials: object) -> ArtifactHandle:
+        return ArtifactHandle(
+            authority="credartifact",
+            native_id=artifact.native_id,
+            version_id="",
+            content_type="text/plain",
+            size=None,
+            checksum=None,
+            data=b"external-artifact-body",
+        )
+
+
+class _CredentialedArtifactDriver:
+    name = "credartifact"
+    display_name = "Credentialed Artifact Provider"
+    description = "synthetic artifact-resolution driver requiring a credential"
+    required_credential_kinds = ("api_key",)
+    authorities = ("credartifact",)
+    capabilities: ClassVar[dict[CapabilityKind, object]] = {
+        CapabilityKind.ARTIFACT_RESOLUTION: _ArtifactCapability()
+    }
 
     def start(self, context: DriverContext) -> None:
         pass
@@ -302,12 +352,13 @@ def test_inspect_internal_artifact_returns_bounded_preview(session, tmp_path):
         preview_limit=8,
     )
     assert result.preview == "ACGTACGT"
+    assert result.preview_size == 8
     assert result.truncated is True
     assert result.binary is False
     assert result.authority == "revolab"
-    # No secret material may ever surface in an inspection result.
-    assert "secret" not in result.preview.lower()
-    assert "api_key" not in result.preview.lower()
+    # Faithful head slice: preview is exactly the first `preview_limit` bytes,
+    # never a fabricated summary.
+    assert result.preview == (b"ACGT" * 100)[:8].decode("utf-8")
 
 
 def test_inspect_artifact_requires_project_visibility(session, tmp_path):
@@ -330,6 +381,34 @@ def test_inspect_artifact_requires_project_visibility(session, tmp_path):
         )
 
 
+def test_external_artifact_inspect_never_leaks_credential(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _registry(_CredentialedArtifactDriver())
+    store = InMemorySecretStore()
+    sentinel = "SENTINEL-external-inspect-credential"
+
+    services.provision_credential(session, store, registry, actor, "credartifact", "api_key", sentinel)
+    artifact = services.create_artifact_reference(
+        session, actor, project.id, "credartifact", "a1", content_type="text/plain"
+    )
+
+    result = inspect_artifact(
+        session,
+        registry,
+        store,
+        ContentStore(tmp_path),
+        actor,
+        project.id,
+        artifact.artifact_id,
+        preview_limit=64,
+    )
+    assert result.authority == "credartifact"
+    assert result.preview == b"external-artifact-body"[:64].decode("utf-8")
+    assert sentinel not in result.preview
+    assert "api_key" not in result.preview
+
+
 # ---------------------------------------------------------------------------
 # ToolCatalog projection
 # ---------------------------------------------------------------------------
@@ -339,11 +418,26 @@ def _tool_ids(catalog) -> set[str]:
     return {tool.id for tool in catalog.tools}
 
 
+DOMAIN_TOOL_IDS = frozenset(
+    {
+        "context.build",
+        "artifact.inspect",
+        "evidence.create",
+        "decision.record_draft",
+        "decision.commit",
+    }
+)
+
+
 def test_domain_tools_authority_matrix(session):
     owner = _actor(session)
     project = _project(session, owner)
     catalog = build_tool_catalog(session, owner, project.id, _registry())
     by_id = {tool.id: tool for tool in catalog.tools}
+
+    # The closed domain-tool set is exactly the Phase-6 minimal slice — pin it so
+    # a raw-write/credential/membership tool can never slip in while tests pass.
+    assert _tool_ids(catalog) == DOMAIN_TOOL_IDS
 
     assert by_id["context.build"].autonomy is AgentToolAutonomy.AUTOMATIC
     assert by_id["artifact.inspect"].autonomy is AgentToolAutonomy.AUTOMATIC
@@ -352,14 +446,30 @@ def test_domain_tools_authority_matrix(session):
     assert by_id["decision.commit"].autonomy is AgentToolAutonomy.EXPLICIT_ACTION
 
     # Credentials, secret store, raw-write and sharing changes are NEVER tools.
-    for tool_id in _tool_ids(catalog):
-        assert "credential" not in tool_id
-        assert "secret" not in tool_id
-        assert "share" not in tool_id
-        assert "membership" not in tool_id
-        assert "sql" not in tool_id
-        assert "http" not in tool_id
-    assert "decision.commit" in _tool_ids(catalog)
+    for tool in catalog.tools:
+        for banned in ("credential", "secret", "share", "membership", "sql", "http"):
+            assert banned not in tool.id
+            assert banned not in repr(tool.input_schema)
+
+
+def test_build_tool_catalog_is_read_only(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    statements: list[str] = []
+    engine = session.get_bind()
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _executemany):  # type: ignore[no-untyped-def]
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        build_tool_catalog(session, actor, project.id, _registry())
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    write_prefixes = ("INSERT", "UPDATE", "DELETE")
+    assert statements, "expected catalog projection to issue read statements"
+    assert not any(statement.lstrip().upper().startswith(write_prefixes) for statement in statements)
 
 
 def test_provider_tools_only_available_capabilities(session):
@@ -376,6 +486,45 @@ def test_provider_tools_only_available_capabilities(session):
     # A credential-missing provider disappears from the executable catalog.
     missing = build_tool_catalog(session, actor, project.id, _registry(_CredentialDriver()))
     assert not any(tool.provider_key == "credprov" for tool in missing.tools)
+
+
+def test_other_actor_credential_is_never_projected(session):
+    owner = _actor(session)
+    other = services.create_actor(session)
+    project = _project(session, owner)
+    services.add_membership(session, owner, project.id, other, Role.MEMBER.value)
+    registry = _registry(_CredentialDriver())
+    store = InMemorySecretStore()
+    sentinel = "SENTINEL-other-actor-credential"
+
+    services.provision_credential(session, store, registry, owner, "credprov", "api_key", sentinel)
+
+    # The owner sees the capability as an executable tool; another member sees
+    # CREDENTIAL_MISSING and therefore NO executable tool for the same provider.
+    owner_tools = build_tool_catalog(session, owner, project.id, registry)
+    assert any(tool.provider_key == "credprov" for tool in owner_tools.tools)
+
+    other_tools = build_tool_catalog(session, other, project.id, registry)
+    assert not any(tool.provider_key == "credprov" for tool in other_tools.tools)
+
+    # The serialized provider-capability summary for the other actor never
+    # contains the owner's secret value or any secret-material field.
+    context = build_context(
+        session,
+        other,
+        project.id,
+        registry,
+        ContextSelectionCreate(include_provider_capabilities=True),
+    )
+    serialized = json.dumps(
+        [entry.model_dump() for entry in context.provider_capabilities], sort_keys=True
+    )
+    assert sentinel not in serialized
+    assert "secret_ref" not in serialized
+    credprov = next(entry for entry in context.provider_capabilities if entry.key == "credprov")
+    assert {presence.kind: presence.present for presence in credprov.credential_presence} == {
+        "api_key": False
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +556,6 @@ def test_agent_proposal_is_draft_then_explicit_commit(session):
     assert session.scalars(select(DecisionTarget)).all() == []
 
     # A draft is visible as a draft, not as committed Knowledge truth.
-    assert services.create_decision is not None
     documents = session.scalars(select(Decision)).all()
     assert [d.status for d in documents] == [DecisionStatus.DRAFT.value]
 
@@ -511,3 +659,76 @@ def test_agent_api_vertical_slice(client, tmp_path):
     )
     assert committed.status_code == 200
     assert committed.json()["status"] == "committed"
+
+
+def test_agent_tools_api_projects_available_provider_capabilities(client):
+    from revolab import api
+    from revolab.main import app
+
+    actor_id = _http_actor(client)
+    pid = _http_project(client, actor_id, "Agent Tools API")["id"]
+    registry = _registry(FakeComputeDriver())
+    app.dependency_overrides[api.get_driver_registry] = lambda: registry
+    try:
+        tools = client.get(f"/api/projects/{pid}/agent/tools", headers=_headers(actor_id))
+        assert tools.status_code == 200
+        tool_ids = {tool["id"] for tool in tools.json()["tools"]}
+        assert "fakecompute.compute.submit" in tool_ids
+        assert "fakecompute.artifact.resolve" in tool_ids
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_inspect_artifact_api_returns_bounded_preview(client):
+    actor_id = _http_actor(client)
+    pid = _http_project(client, actor_id, "Inspect API")["id"]
+    files = {"file": ("x.txt", b"ACGT" * 64, "text/plain")}
+    uploaded = client.post(
+        f"/api/projects/{pid}/artifacts", headers=_headers(actor_id), files=files
+    )
+    assert uploaded.status_code == 201
+    artifact_id = uploaded.json()["resource_id"]
+
+    inspected = client.get(
+        f"/api/projects/{pid}/artifacts/{artifact_id}/inspect",
+        headers=_headers(actor_id),
+        params={"preview_limit": 8},
+    )
+    assert inspected.status_code == 200
+    body = inspected.json()
+    assert body["preview"] == "ACGTACGT"
+    assert body["preview_size"] == 8
+    assert body["truncated"] is True
+    assert body["binary"] is False
+
+
+def test_agent_http_viewer_is_read_only(client):
+    owner_id = _http_actor(client)
+    viewer_id = _http_actor(client)
+    pid = _http_project(client, owner_id, "Agent Viewer")["id"]
+
+    added = client.post(
+        f"/api/projects/{pid}/members",
+        json={"actor_id": viewer_id, "role": "viewer"},
+        headers=_headers(owner_id),
+    )
+    assert added.status_code == 201
+
+    # Reads succeed; mutation tools are reported unavailable; the mutation path
+    # itself fails closed (403).
+    context = client.post(f"/api/projects/{pid}/context", json={}, headers=_headers(viewer_id))
+    assert context.status_code == 200
+
+    tools = client.get(f"/api/projects/{pid}/agent/tools", headers=_headers(viewer_id))
+    assert tools.status_code == 200
+    by_id = {tool["id"]: tool for tool in tools.json()["tools"]}
+    assert by_id["decision.record_draft"]["available"] is False
+    assert by_id["decision.commit"]["available"] is False
+    assert by_id["context.build"]["available"] is True
+
+    proposal = client.post(
+        f"/api/projects/{pid}/agent/proposals",
+        json={"title": "X", "statement": "not allowed for viewer"},
+        headers=_headers(viewer_id),
+    )
+    assert proposal.status_code == 403

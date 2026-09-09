@@ -11,24 +11,33 @@ Decision creation service — never committed truth.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
 from revolab import services
 from revolab.domain.errors import ValidationError
+from revolab.enums import CitedAs, ResourceKind
 from revolab.models import Decision
-from revolab.schemas import ContextSelectionCreate, ProjectContextRead, ToolCatalogRead
+from revolab.schemas import (
+    CitationCreate,
+    ContextSelectionCreate,
+    ProjectContextRead,
+    SelectTargetCreate,
+    ToolCatalogRead,
+)
 
 
 @dataclass(frozen=True)
 class AgentProposal:
+    """A typed proposal value over the canonical wire models (ADR-0007/0014:
+    single source of truth, never a duplicated parameter list)."""
+
     title: str
     statement: str
     next_actions: list[str]
-    cites: list[dict[str, Any]]
-    selects: list[dict[str, Any]]
+    cites: list[CitationCreate]
+    selects: list[SelectTargetCreate]
 
 
 @dataclass
@@ -57,17 +66,17 @@ def propose_selection(
         raise ValidationError("cannot propose without an object in project context")
     if context.revisions:
         selects = [
-            {
-                "target_id": context.revisions[0].revision_id,
-                "target_kind": "scientific_object_revision",
-            }
+            SelectTargetCreate(
+                target_id=context.revisions[0].revision_id,
+                target_kind=ResourceKind.SCIENTIFIC_OBJECT_REVISION,
+            )
         ]
     else:
         selects = [
-            {
-                "target_id": context.series[0].series_id,
-                "target_kind": "scientific_object_series",
-            }
+            SelectTargetCreate(
+                target_id=context.series[0].series_id,
+                target_kind=ResourceKind.SCIENTIFIC_OBJECT_SERIES,
+            )
         ]
     series = context.series[0]
     return AgentProposal(
@@ -75,7 +84,7 @@ def propose_selection(
         statement=f"Select {series.name} for experimental validation.",
         next_actions=["validate experimentally"],
         cites=[
-            {"evidence_id": evidence.evidence_id, "cited_as": "supports"}
+            CitationCreate(evidence_id=evidence.evidence_id, cited_as=CitedAs.SUPPORTS)
             for evidence in context.evidence
         ],
         selects=selects,
@@ -98,6 +107,12 @@ def record_proposal(
         title=proposal.title,
         statement=proposal.statement,
         next_actions=proposal.next_actions,
-        cites=proposal.cites,
-        selects=proposal.selects,
+        cites=[
+            {"evidence_id": citation.evidence_id, "cited_as": citation.cited_as.value}
+            for citation in proposal.cites
+        ],
+        selects=[
+            {"target_id": select.target_id, "target_kind": select.target_kind.value}
+            for select in proposal.selects
+        ],
     )

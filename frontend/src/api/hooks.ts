@@ -196,7 +196,6 @@ export function useProjectContext(
         : Promise.resolve(null),
     // `selectionKey` is a stable structural dependency so an inline object
     // literal does not retrigger the effect on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [actorId, projectId, selectionKey],
   )
 }

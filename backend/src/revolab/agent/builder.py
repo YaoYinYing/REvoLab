@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from revolab import queries, services
@@ -348,11 +348,22 @@ def _visible_revisions(
 
 
 def _visible_edges(session: Session, visible: dict[UUID, ResourceKind]) -> list[GlobalProvenanceEdge]:
-    return [
-        edge
-        for edge in session.scalars(select(GlobalProvenanceEdge))
-        if edge.source_id in visible and edge.target_id in visible
-    ]
+    """Global provenance edges whose BOTH endpoints are visible through this
+    Project's link lens. The double-endpoint filter is pushed into SQL so the
+    assembler never loads the whole global edge table into Python."""
+    resource_ids = list(visible.keys())
+    if not resource_ids:
+        return []
+    return list(
+        session.scalars(
+            select(GlobalProvenanceEdge).where(
+                and_(
+                    GlobalProvenanceEdge.source_id.in_(resource_ids),
+                    GlobalProvenanceEdge.target_id.in_(resource_ids),
+                )
+            )
+        )
+    )
 
 
 def _reachable(

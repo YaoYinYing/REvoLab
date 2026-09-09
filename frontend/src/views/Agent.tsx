@@ -15,6 +15,7 @@ import {
   DEFAULT_SELECT_TARGET_KIND,
   ROLE_MEMBER,
   ROLE_OWNER,
+  TOOL_SOURCE_PROVIDER,
 } from '../contracts/enums'
 
 function autonomyTone(autonomy: string): 'neutral' | 'good' | 'warn' {
@@ -29,14 +30,15 @@ function ToolRow({ tool }: { tool: ToolDescriptorRead }) {
     <div className="list-row" key={tool.id}>
       <div className="list-row-head">
         <Bot size={15} />
-        <strong>{tool.id}</strong>
+        <strong>{tool.name}</strong>
+        <small className="mono">{tool.id}</small>
+        <Badge tone={tool.source === TOOL_SOURCE_PROVIDER ? 'neutral' : 'good'}>{tool.source}</Badge>
         <Badge tone={autonomyTone(tool.autonomy)}>{tool.autonomy}</Badge>
         {tool.available ? <Badge tone="good">available</Badge> : <Badge tone="warn">unavailable</Badge>}
       </div>
       <p>{tool.description}</p>
       <small className="mono">
-        {tool.source}
-        {tool.provider_key ? ` · ${tool.provider_key}` : ''}
+        {tool.provider_key ? `${tool.source} · ${tool.provider_key}` : tool.source}
         {tool.availability_reason ? ` · ${tool.availability_reason}` : ''}
       </small>
     </div>

@@ -54,7 +54,7 @@ tool.
 As **typed, addressable references**, not prose dumps, and **not a third domain model**:
 
 ```text
-SeriesRef      {series_id, object_type, label}
+SeriesRef      {series_id, object_type, name}
 RevisionRef    {revision_id, series_id, object_type, revision_seq, schema_version}
 ArtifactRef    {artifact_id, authority, native_id?, checksum, size, content_type}
 ReferenceRef   {resource_id, kind}          # run/session/lit/external ref through GlobalResourceRegistry
@@ -62,6 +62,11 @@ EvidenceRef    {evidence_id, kind, source_ref?, target_ref, role/polarity}
 DecisionRef    {decision_id, status, superseded_by? (derived reverse of `supersedes`),
                 selects_refs[], evidence_ids[]}
 ```
+
+> Wire shape (Phase 6): `source_ref`/`target_ref` are the typed pairs
+> `source_kind`+`source_id` / `target_kind`+`target_id` (canonical `ResourceKind`/
+> `EvidenceTargetKind` enums), and `selects_refs[]` is `selects[]` of
+> `{target_id, target_kind}` — flattened, never a third domain model.
 
 A reference addresses `series_id` or `revision_id` explicitly (never the ambiguous
 `object id`); Evidence's source/target are **reference associations**, not

@@ -19,6 +19,7 @@ from fastapi import (
     Header,
     HTTPException,
     Path,
+    Query,
     Response,
     UploadFile,
 )
@@ -987,7 +988,7 @@ def create_agent_proposal(
     payload: schemas.AgentProposalCreate,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> Any:
+) -> schemas.DecisionRead:
     # The proposal wire surface is exactly the `decision.record_draft` typed tool:
     # it calls the same Decision creation service and can only ever produce a
     # draft. A committed Decision requires the authorized commit endpoint below.
@@ -1001,7 +1002,7 @@ def create_agent_proposal(
         cites=[{"evidence_id": c.evidence_id, "cited_as": c.cited_as.value} for c in payload.cites],
         selects=[{"target_id": s.target_id, "target_kind": s.target_kind.value} for s in payload.selects],
     )
-    return queries.decision_summary(session, decision)
+    return schemas.DecisionRead(**queries.decision_summary(session, decision))
 
 
 @router.get(
@@ -1011,7 +1012,7 @@ def create_agent_proposal(
 def inspect_project_artifact(
     project_id: UUID,
     artifact_id: UUID,
-    preview_limit: int = 2048,
+    preview_limit: int = Query(default=2048, ge=0, le=65536),
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
     registry: DriverRegistry = Depends(get_driver_registry),

@@ -15,49 +15,6 @@
         "title": "ActorRead",
         "type": "object"
       },
-      "AgentProposalCreate": {
-        "description": "An Agent's proposed scientific conclusion. Recording it is a typed domain\noperation that creates a Decision `draft` only \u2014 never committed truth.",
-        "properties": {
-          "cites": {
-            "items": {
-              "$ref": "#/components/schemas/CitationCreate"
-            },
-            "title": "Cites",
-            "type": "array"
-          },
-          "next_actions": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Next Actions",
-            "type": "array"
-          },
-          "selects": {
-            "items": {
-              "$ref": "#/components/schemas/SelectTargetCreate"
-            },
-            "title": "Selects",
-            "type": "array"
-          },
-          "statement": {
-            "minLength": 1,
-            "title": "Statement",
-            "type": "string"
-          },
-          "title": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "title",
-          "statement"
-        ],
-        "title": "AgentProposalCreate",
-        "type": "object"
-      },
       "AgentToolAutonomy": {
         "description": "The executable agent-autonomy classification (ADR-0013 authority matrix):\n\n- `automatic`: safe reads/proposals the Agent may perform without further\n  authorization;\n- `policy`: a typed domain mutation gated by project policy (the current\n  policy is `owner`/`member` membership);\n- `explicit_action`: an operation with side effects or truth-promotion that\n  is never auto-executed by the Agent loop \u2014 it requires an explicit,\n  authorized Actor action (e.g. committing a Decision, submitting compute).",
         "enum": [
@@ -833,6 +790,7 @@
             "items": {
               "$ref": "#/components/schemas/CitationCreate"
             },
+            "maxItems": 500,
             "title": "Cites",
             "type": "array"
           },
@@ -840,6 +798,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 200,
             "title": "Next Actions",
             "type": "array"
           },
@@ -847,10 +806,12 @@
             "items": {
               "$ref": "#/components/schemas/SelectTargetCreate"
             },
+            "maxItems": 500,
             "title": "Selects",
             "type": "array"
           },
           "statement": {
+            "maxLength": 50000,
             "minLength": 1,
             "title": "Statement",
             "type": "string"
@@ -3889,7 +3850,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AgentProposalCreate"
+                "$ref": "#/components/schemas/DecisionCreate"
               }
             }
           },
@@ -4138,6 +4099,8 @@
             "required": false,
             "schema": {
               "default": 2048,
+              "maximum": 65536,
+              "minimum": 0,
               "title": "Preview Limit",
               "type": "integer"
             }

@@ -272,10 +272,10 @@ class SelectTargetCreate(BaseModel):
 
 class DecisionCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
-    statement: str = Field(min_length=1)
-    next_actions: list[str] = Field(default_factory=list)
-    cites: list[CitationCreate] = Field(default_factory=list)
-    selects: list[SelectTargetCreate] = Field(default_factory=list)
+    statement: str = Field(min_length=1, max_length=50_000)
+    next_actions: list[str] = Field(default_factory=list, max_length=200)
+    cites: list[CitationCreate] = Field(default_factory=list, max_length=500)
+    selects: list[SelectTargetCreate] = Field(default_factory=list, max_length=500)
 
 
 class DecisionPatch(BaseModel):
@@ -713,12 +713,7 @@ class ArtifactInspectRead(BaseModel):
     binary: bool
 
 
-class AgentProposalCreate(BaseModel):
-    """An Agent's proposed scientific conclusion. Recording it is a typed domain
-    operation that creates a Decision `draft` only — never committed truth."""
-
-    title: str = Field(min_length=1, max_length=200)
-    statement: str = Field(min_length=1)
-    next_actions: list[str] = Field(default_factory=list)
-    cites: list[CitationCreate] = Field(default_factory=list)
-    selects: list[SelectTargetCreate] = Field(default_factory=list)
+# An Agent's proposed conclusion records a Decision DRAFT through the SAME typed
+# domain operation as the ordinary Decision creation (single source of truth, no
+# duplicate wire component). Commit remains a separate authorized operation.
+AgentProposalCreate = DecisionCreate

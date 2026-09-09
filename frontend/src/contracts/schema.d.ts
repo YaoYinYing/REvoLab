@@ -861,23 +861,6 @@ export interface components {
             actor_id: string;
         };
         /**
-         * AgentProposalCreate
-         * @description An Agent's proposed scientific conclusion. Recording it is a typed domain
-         *     operation that creates a Decision `draft` only — never committed truth.
-         */
-        AgentProposalCreate: {
-            /** Cites */
-            cites?: components["schemas"]["CitationCreate"][];
-            /** Next Actions */
-            next_actions?: string[];
-            /** Selects */
-            selects?: components["schemas"]["SelectTargetCreate"][];
-            /** Statement */
-            statement: string;
-            /** Title */
-            title: string;
-        };
-        /**
          * AgentToolAutonomy
          * @description The executable agent-autonomy classification (ADR-0013 authority matrix):
          *
@@ -2522,7 +2505,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AgentProposalCreate"];
+                "application/json": components["schemas"]["DecisionCreate"];
             };
         };
         responses: {
