@@ -226,8 +226,8 @@ knowledge-edge tables). See
   `capability_availability` is a pure composition of `driver health READY` AND
   all required credential kinds present for the Actor AND a per-capability
   project-policy result supplied by the application policy layer
-  (`services.project_policy_permits`: read-only `SEARCH`/`ARTIFACT_RESOLUTION`
-  accept any readable membership; action capabilities require `owner`/`member`)
+  (`services.project_policy_permits`: read-only `ARTIFACT_RESOLUTION`
+  accepts any readable membership; action capabilities require `owner`/`member`)
   — a query, never stored. Credential presence is a derived query over the
   binding set. `build_credential_lease` is the last-mile materialization layer.
 - **Real Project-scoped Provider Catalog**:
@@ -844,8 +844,8 @@ passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
   The Agent's Phase-6 `context.build` left the catalog: context reading is the
   context-assembly step, not a Tool.
 - **Invocation + result semantics** (`POST /api/projects/{project_id}/tools/invocations`):
-  `ToolResultRead` with `result_kind` (`ephemeral|artifact|evidence|decision|
-  scientific_object|run_reference`). `persist=true` on a derived-result tool
+  `ToolResultRead` with `result_kind` (`ephemeral|artifact|evidence|decision` —
+  the producing kinds only). `persist=true` on a derived-result tool
   (owner/member) writes an internal `ArtifactReference` via the typed
   ContentStore→reference path and a `ToolInvocation` record (tool_id,
   tool_version `1.0.0`, input resource ids, validated parameters,
@@ -1004,6 +1004,24 @@ Regression tests added: plot truncation + under-bound; table.select
 source-truncation propagation. Full suite green — backend **277 passed / 6
 skipped**, frontend typecheck + **15 tests** + build, Playwright **4 specs**,
 OpenAPI fresh, contracts idempotent.
+
+### Pre-merge review (3 lenses)
+
+Three fresh read-only reviewers were launched over the pre-merge delta
+(architecture/domain semantics; analysis correctness/security;
+contracts/tests/frontend) and given ample time. **analysis correctness/security**
+returned **PASS** (no P0/P1); **tests/contracts/frontend** returned **PASS**
+(no P0/P1/P2); **architecture/domain** returned REQUEST_CHANGES with one P1 —
+`SYSTEM_ARCHITECTURE.md`'s top product boundary and system-context diagram still
+presented REvoDesign/OpenBio as reachable backends. That P1 was fixed (the
+boundary and context now present REvoCompute as the sole configured backend,
+REvoDesign as an unrelated existing product, and OpenBio as a design reference
+only), together with the reviewer's P2 prose-cleanup (removed lingering
+`SEARCH`/`DESIGN`/`INTERACTIVE_HANDOFF` mentions from Core docstrings and stale
+IMPLEMENTATION_STATE text, and `AGENT_CONTEXT.md`/`EVIDENCE_PROVENANCE.md`
+references). Full gates rerun green — backend **277 passed / 6 skipped**, frontend
+typecheck + **15 tests** + build, Playwright **4 specs**, OpenAPI fresh, contracts
+idempotent, CI backend/frontend/e2e green. No P0/P1 remains.
 
 ## Known deferrals (explicit, not silently postponed)
 

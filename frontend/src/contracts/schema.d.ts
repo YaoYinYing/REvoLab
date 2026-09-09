@@ -1025,10 +1025,9 @@ export interface components {
          * @description Core-owned closed capability vocabulary (ADR-0012). Core categorizes
          *     realized capabilities by these kinds; it never parses provider vocabulary.
          *
-         *     Only realized capabilities exist: COMPUTE (REvoCompute) and
-         *     ARTIFACT_RESOLUTION. SEARCH/DESIGN/INTERACTIVE_HANDOFF were speculative
-         *     pre-projection vocabulary and are deliberately absent until a concrete,
-         *     provider-neutral use case forces them.
+         *     Only the two realized capability kinds exist. Any additional kind is added
+         *     only when a concrete, provider-neutral use case forces it — never pre-
+         *     projected as speculative vocabulary.
          * @enum {string}
          */
         CapabilityKind: "compute" | "artifact_resolution";

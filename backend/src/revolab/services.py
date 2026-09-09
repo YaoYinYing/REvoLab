@@ -90,9 +90,9 @@ def _is_frozen(session: Session, evidence_id: UUID) -> bool:
 # ---------------------------------------------------------------------------
 
 # Capability kinds whose "requested operation" is a read/projection. Action
-# capabilities (compute submission, design export, interactive handoff) require a
-# mutation-capable membership. This is the Phase-3 minimal policy, not an RBAC
-# engine: the ONLY authorization truth remains Phase-1 ProjectMembership roles.
+# capabilities (compute submission) require a mutation-capable membership. This
+# is the Phase-3 minimal policy, not an RBAC engine: the ONLY authorization
+# truth remains Phase-1 ProjectMembership roles.
 READ_ONLY_CAPABILITY_KINDS = frozenset({CapabilityKind.ARTIFACT_RESOLUTION})
 
 

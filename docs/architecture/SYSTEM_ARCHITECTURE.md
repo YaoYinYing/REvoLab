@@ -16,14 +16,18 @@ REvoLab
     scientific context / project knowledge layer
 
 REvoCompute
-    scientific execution layer
+    scientific execution layer (primary heavyweight backend)
 
 REvoDesign
-    interactive molecular design / analysis layer
+    an unrelated existing interactive-design product (not a REvoLab backend)
 
-External providers
-    biological databases, literature, models, instruments, services
+External knowledge sources
+    biological databases, literature, models — design references only, not
+    configured backends
 ```
+
+OpenBio is mentioned only as a **design reference**; it is not a REvoLab
+dependency or backend.
 
 ### Canonical invariant
 
@@ -44,20 +48,19 @@ flowchart LR
     Human["Human (scientist)"]
     Agent["REvoLab Agent"]
     RL["REvoLab<br/>scientific context / knowledge"]
-    RC["REvoCompute<br/>execution layer"]
-    RD["REvoDesign<br/>interactive design / analysis"]
-    OB["OpenBio + external providers<br/>databases, literature, models, services"]
+    RC["REvoCompute<br/>scientific execution layer"]
 
     Human --> RL
     Agent --> RL
     RL --> RC
-    RL --> RD
-    RL --> OB
 ```
 
-- REvoLab is the hub of *context*. All three external families are reachable only
-  through REvoLab's Provider/Capability layer; neither the Human nor the Agent
-  bypasses REvoLab to reach them for project work.
+- REvoLab is the hub of *context*. REvoCompute (the heavyweight execution
+  backend) is reached through REvoLab's Provider/Capability layer; neither the
+  Human nor the Agent bypasses REvoLab to reach it for project work.
+- REvoDesign is an **unrelated existing product** (not a REvoLab backend) and
+  OpenBio is a **design reference only**; neither is a configured external
+  provider and neither has a driver or capability in Core.
 - REvoLab **records durable references** to external work; it **does not copy**
   external mutable execution state.
 

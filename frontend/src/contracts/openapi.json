@@ -182,7 +182,7 @@
         "type": "string"
       },
       "CapabilityKind": {
-        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly realized capabilities exist: COMPUTE (REvoCompute) and\nARTIFACT_RESOLUTION. SEARCH/DESIGN/INTERACTIVE_HANDOFF were speculative\npre-projection vocabulary and are deliberately absent until a concrete,\nprovider-neutral use case forces them.",
+        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly the two realized capability kinds exist. Any additional kind is added\nonly when a concrete, provider-neutral use case forces it \u2014 never pre-\nprojected as speculative vocabulary.",
         "enum": [
           "compute",
           "artifact_resolution"

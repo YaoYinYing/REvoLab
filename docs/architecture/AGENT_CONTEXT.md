@@ -131,7 +131,7 @@ policy-gated per the authority matrix).
 |---|---|---|---|---|
 | **Constitutional** (how to develop REvoLab) | project-architecture, engineering-workflow, architecture-review, security-boundaries | CLAUDE.md + docs/architecture + ADRs | handwritten, rarely changes | review against invariants |
 | **Domain** (what REvoLab means) | scientific-object-model, provenance-lineage, project-context, decision-record, artifact-inspection | backend schema + OpenAPI | written; POINT at schema, never copy | drift-checked against generated schema |
-| **Integration** (how to use an external capability) | revocompute, revodesign, openbio | the driver's capability contract + OpenAPI | procedural + generated capability/param reference | drift-checked against generated schema |
+| **Integration** (how to use an external capability) | revocompute | the driver's capability contract + OpenAPI | procedural + generated capability/param reference | drift-checked against generated schema |
 
 **Decision on which skills to add/revise/keep** (from the review):
 - **KEEP:** engineering-workflow, decision-record, artifact-inspection,
@@ -141,10 +141,12 @@ policy-gated per the authority matrix).
   provenance-lineage (harden reference semantics), project-context (make it the real
   agent-context skill teaching ContextSelection + promotion).
 - **ADD:** `security-boundaries` (constitutional, procedural) and
-  `architecture-review` (constitutional, near-empty procedural). The integration
-  skills (**revocompute / revodesign / openbio**) are **staged and MUST NOT be
-  pre-created** — they exist only when the provider actually exists (creating them
-  now is a premature-plugin failure).
+  `architecture-review` (constitutional, near-empty procedural). The only
+  integration skill is **revocompute**; it is **staged and MUST NOT be
+  pre-created** — it exists only when the provider actually exists (creating it
+  now is a premature-plugin failure). No revodesign/openbio skill exists or is
+  staged: REvoDesign is an unrelated product and OpenBio is a design reference
+  only.
 
 The **SkillCatalog** resolves *task → which skills load*; it is not a database of
 skill content.
