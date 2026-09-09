@@ -27,6 +27,7 @@ from revolab.models import (
     GlobalResourceRegistry,
     LiteratureReference,
     ProjectResourceLink,
+    ResourceStewardship,
     RunReference,
     ScientificObjectRevision,
     ScientificObjectSeries,
@@ -70,6 +71,41 @@ def series_summary(session: Session, series: ScientificObjectSeries) -> dict[str
         "created_at": series.created_at,
         "archived_at": series.archived_at,
     }
+
+
+def preferred_revision_id(session: Session, project_id: UUID, series_id: UUID) -> UUID | None:
+    """The Project-local preferred-revision pin (nullable). It names a revision
+    already visible through this Project's links — never a global current pointer."""
+    link = session.scalar(
+        select(ProjectResourceLink).where(
+            ProjectResourceLink.project_id == project_id,
+            ProjectResourceLink.resource_id == series_id,
+        )
+    )
+    return link.preferred_revision_id if link else None
+
+
+def read_only(session: Session, project_id: UUID, resource_id: UUID) -> bool:
+    """Whether `resource_id` is read-only through `project_id`: the Project holds
+    the read lens but is NOT its steward (visibility is not stewardship).
+
+    Stewardship is granted per-Series (and to reference rows on creation); a
+    Revision never carries its own stewardship row, so a Revision's lens is
+    resolved through its owning Series. This keeps the read-only indication
+    truthful for every surface that emits it.
+    """
+    registry = session.get(GlobalResourceRegistry, resource_id)
+    if registry is None:
+        raise NotFoundError("unknown global resource")
+    kind = ResourceKind(registry.resource_kind)
+    stewardship_key = resource_id
+    if kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        revision = session.get(ScientificObjectRevision, resource_id)
+        if revision is None:
+            raise NotFoundError("revision not found")
+        stewardship_key = revision.series_id
+    stewardship = session.get(ResourceStewardship, stewardship_key)
+    return stewardship is None or stewardship.steward_project_id != project_id
 
 
 def revision_summary(revision: ScientificObjectRevision) -> dict[str, Any]:
@@ -176,6 +212,8 @@ def object_detail(session: Session, project_id: UUID, series_id: UUID) -> dict[s
         "series": series_summary(session, series),
         "visible_revisions": [revision_summary(r) for r in visible_revisions],
         "latest_revision_seq": visible_revisions[-1].revision_seq if visible_revisions else None,
+        "preferred_revision_id": str(pin) if (pin := preferred_revision_id(session, project_id, series_id)) else None,
+        "read_only": read_only(session, project_id, series_id),
         "provenance": {
             "inbound": inbound_provenance,
             "outbound": outbound_provenance,

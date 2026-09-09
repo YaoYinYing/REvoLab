@@ -28,3 +28,7 @@ export const CAPABILITY_KINDS: readonly components['schemas']['CapabilityKind'][
 export const PROVIDER_RUNTIME_HEALTHS: readonly components['schemas']['ProviderRuntimeHealth'][] = ["ready","degraded","unreachable"] as const
 
 export const CAPABILITY_AVAILABILITIES: readonly components['schemas']['CapabilityAvailability'][] = ["available","credential_missing","not_authorized","provider_unavailable"] as const
+
+export const ROLES: readonly components['schemas']['Role'][] = ["owner","member","viewer"] as const
+
+export const PROJECT_VISIBILITIES: readonly components['schemas']['ProjectVisibility'][] = ["private","shared_with_members"] as const

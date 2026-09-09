@@ -1,13 +1,15 @@
 import { useState } from 'react'
-import { ArrowLeft, Boxes, FileText, GitBranch, Play, Plus } from 'lucide-react'
+import { ArrowLeft, Boxes, FileText, GitBranch, Play, Plus, Share2 } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
+import { apiErrorMessage } from '../api/client'
 import type {
   DecisionRead,
   EvidenceRead,
   ObjectDetailRead,
   Polarity,
   EvidenceKind,
+  ProjectRead,
 } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, EnumSelect, Field, Loading, Section } from '../components/ui'
@@ -233,12 +235,84 @@ function DecisionRow({
   )
 }
 
+function SharePanel({
+  actorId,
+  projectId,
+  detail,
+  projects,
+}: {
+  actorId: string
+  projectId: string
+  detail: ObjectDetailRead
+  projects: ProjectRead[]
+}) {
+  const [targetProjectId, setTargetProjectId] = useState<string>(projects[0]?.id ?? '')
+  const [resourceId, setResourceId] = useState<string>(detail.series.series_id)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState<string | null>(null)
+
+  async function share() {
+    if (!targetProjectId) return
+    setBusy(true)
+    setError(null)
+    setDone(null)
+    const res = await projectApi(actorId).shareResource(targetProjectId, { resource_id: resourceId })
+    setBusy(false)
+    if (res.error || !res.data) {
+      setError(apiErrorMessage(res.error, res.response))
+      return
+    }
+    setDone(`Shared as ${res.data.resource_kind} into the selected project.`)
+  }
+
+  return (
+    <Section title="Share into another project">
+      <div className="stack-form compact">
+        <div className="form-grid">
+          <Field label="Target project">
+            <select value={targetProjectId} onChange={(event) => setTargetProjectId(event.target.value)}>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="What to share">
+            <select value={resourceId} onChange={(event) => setResourceId(event.target.value)}>
+              <option value={detail.series.series_id}>Series ({detail.series.name})</option>
+              {detail.visible_revisions.map((revision) => (
+                <option key={revision.revision_id} value={revision.revision_id}>
+                  Revision #{revision.revision_seq}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="form-actions">
+          <Button type="button" onClick={share} disabled={busy || !targetProjectId}>
+            <Share2 size={13} /> {busy ? 'Sharing…' : 'Share'}
+          </Button>
+          {done ? <span className="hint">{done}</span> : null}
+          {error ? <span className="inline-error">{error}</span> : null}
+        </div>
+        <small className="hint">
+          Sharing grants the target Project the read/context lens only — never mutation authority, and
+          never a copy. Mutating a shared resource still requires stewardship.
+        </small>
+      </div>
+    </Section>
+  )
+}
+
 export function ObjectDetailView({
   actorId,
   projectId,
   detail,
   loading,
   error,
+  projects,
   onBack,
   onChanged,
   onCompute,
@@ -248,6 +322,7 @@ export function ObjectDetailView({
   detail: ObjectDetailRead | null
   loading: boolean
   error: string | null
+  projects: ProjectRead[]
   onBack: () => void
   onChanged: () => void
   onCompute: (revisionId: string) => void
@@ -261,6 +336,7 @@ export function ObjectDetailView({
   const latest = detail.visible_revisions.at(-1)
   const relatedEvidence = detail.evidence as EvidenceRead[]
   const relatedDecisions = detail.decisions as DecisionRead[]
+  const otherProjects = projects.filter((project) => project.id !== projectId)
 
   return (
     <div className="view">
@@ -272,8 +348,19 @@ export function ObjectDetailView({
           <div className="eyebrow">{detail.series.object_type.toUpperCase()} · SCIENTIFIC OBJECT</div>
           <h1>{detail.series.name}</h1>
           {detail.series.description ? <p>{detail.series.description}</p> : null}
+          <p className="hint">
+            {detail.read_only ? (
+              <Badge tone="warn">Read-only in this project (not steward)</Badge>
+            ) : (
+              <Badge tone="good">Stewarded by this project</Badge>
+            )}
+          </p>
         </div>
       </div>
+
+      {otherProjects.length > 0 ? (
+        <SharePanel actorId={actorId} projectId={projectId} detail={detail} projects={otherProjects} />
+      ) : null}
 
       <section className="content-section">
         <div className="section-heading">

@@ -137,6 +137,7 @@ export function ObjectsView({
                 <FlaskConical size={15} />
                 <span>{object.name}</span>
                 <Badge>{object.object_type}</Badge>
+                {object.read_only ? <Badge tone="warn">read-only</Badge> : null}
               </div>
               <div className="object-card-meta">
                 {object.description ? <p>{object.description}</p> : <p>No description.</p>}

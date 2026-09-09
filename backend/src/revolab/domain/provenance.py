@@ -209,6 +209,22 @@ def link_series(session: Session, project_id: UUID, resource_id: UUID) -> None:
     session.commit()
 
 
+def share_into_project(session: Session, project_id: UUID, resource_id: UUID) -> None:
+    """Identity-free share write: bind `resource_id` into a Project's context
+    with the frozen revision⇒series closure. Sharing a revision also links its
+    owning Series (the closure's forward direction), while sharing a Series never
+    links revisions (the closure's non-reverse direction). No copy is made — the
+    same global `resource_id` is linked as a read lens. Idempotent per link."""
+    kind = persistence.resource_kind(session, resource_id)
+    if kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        series_id = persistence.revision_series_id(session, resource_id)
+        if not persistence.is_visible(session, project_id, series_id):
+            persistence.link(session, project_id, series_id)
+        persistence.link(session, project_id, resource_id)
+    else:
+        persistence.link(session, project_id, resource_id)
+
+
 # ---------------------------------------------------------------------------
 # Global provenance edges (#1-7), typed
 # ---------------------------------------------------------------------------

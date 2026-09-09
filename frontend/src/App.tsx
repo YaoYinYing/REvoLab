@@ -9,6 +9,7 @@ import {
   ListTree,
   Play,
   Server,
+  Settings2,
 } from 'lucide-react'
 
 import { resolveActor } from './api/actor'
@@ -17,6 +18,7 @@ import { useObjectDetail, useProjects } from './api/hooks'
 import { ContextInspector } from './components/ContextInspector'
 import { ErrorBox, Loading } from './components/ui'
 import { ProjectPicker } from './components/ProjectPicker'
+import { PROJECT_VISIBILITY_PRIVATE } from './contracts/enums'
 import { ComputeView } from './views/Compute'
 import { DecisionsView } from './views/Decisions'
 import { EvidenceView } from './views/Evidence'
@@ -26,8 +28,19 @@ import { ObjectsView } from './views/Objects'
 import { OverviewView } from './views/Overview'
 import { ProvidersView } from './views/Providers'
 import { RunsAndArtifactsView } from './views/RunsAndArtifacts'
+import { SettingsView } from './views/Settings'
 
-type View = 'overview' | 'objects' | 'object' | 'evidence' | 'runs' | 'decisions' | 'knowledge' | 'providers' | 'compute'
+type View =
+  | 'overview'
+  | 'objects'
+  | 'object'
+  | 'evidence'
+  | 'runs'
+  | 'decisions'
+  | 'knowledge'
+  | 'providers'
+  | 'compute'
+  | 'settings'
 
 const NAV = [
   { view: 'overview', label: 'Overview', icon: Home },
@@ -38,6 +51,7 @@ const NAV = [
   { view: 'decisions', label: 'Decisions', icon: FileText },
   { view: 'knowledge', label: 'Knowledge', icon: BookOpen },
   { view: 'providers', label: 'Providers', icon: CircleDot },
+  { view: 'settings', label: 'Settings', icon: Settings2 },
 ] as const
 
 export function App() {
@@ -75,7 +89,7 @@ export function App() {
 
   async function createProject(name: string, description: string | null) {
     if (!actorId) return
-    const res = await projectApi(actorId).createProject({ name, description })
+    const res = await projectApi(actorId).createProject({ name, description, visibility: PROJECT_VISIBILITY_PRIVATE })
     if (res.error || !res.data) return
     projects.reload()
     setActiveProjectId(res.data.id)
@@ -87,6 +101,7 @@ export function App() {
     const res = await projectApi(actorId).createProject({
       name: projectName,
       description: projectDescription || null,
+      visibility: PROJECT_VISIBILITY_PRIVATE,
     })
     if (res.error || !res.data) return
     projects.reload()
@@ -242,6 +257,7 @@ export function App() {
               detail={objectDetail.data}
               loading={objectDetail.loading}
               error={objectDetail.error}
+              projects={projects.data ?? []}
               onBack={() => setView('objects')}
               onChanged={() => objectDetail.reload()}
               onCompute={(revisionId) => openCompute(revisionId)}
@@ -255,6 +271,14 @@ export function App() {
           {view === 'decisions' ? <DecisionsView actorId={actorId} projectId={projectId} /> : null}
           {view === 'knowledge' ? <KnowledgeView actorId={actorId} projectId={projectId} /> : null}
           {view === 'providers' ? <ProvidersView actorId={actorId} projectId={projectId} /> : null}
+          {view === 'settings' ? (
+            <SettingsView
+              actorId={actorId}
+              projectId={projectId}
+              projects={projects.data ?? []}
+              onProjectChanged={() => projects.reload()}
+            />
+          ) : null}
         </main>
 
         <ContextInspector detail={objectDetail.data} />

@@ -26,6 +26,7 @@ from revolab.enums import (
     EvidenceTargetKind,
     ObjectType,
     Polarity,
+    ProjectVisibility,
     ProviderRuntimeHealth,
     RelationType,
     ResourceKind,
@@ -44,13 +45,20 @@ class ActorRead(BaseModel):
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    visibility: ProjectVisibility = ProjectVisibility.PRIVATE
+
+
+class ProjectPatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = None
+    visibility: ProjectVisibility | None = None
 
 
 class ProjectRead(BaseModel):
     id: UUID
     name: str
     description: str | None = None
-    visibility: str
+    visibility: ProjectVisibility
     created_at: datetime
     deleted_at: datetime | None = None
 
@@ -60,10 +68,23 @@ class MembershipCreate(BaseModel):
     role: Role
 
 
+class MembershipUpdate(BaseModel):
+    role: Role
+
+
 class MembershipRead(BaseModel):
     project_id: UUID
     actor_id: UUID
     role: Role
+
+
+class ResourceShareCreate(BaseModel):
+    resource_id: UUID
+
+
+class ResourceShareRead(BaseModel):
+    resource_id: UUID
+    resource_kind: ResourceKind
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +113,10 @@ class ImportCreate(BaseModel):
     source_kind: ResourceKind
     source_id: UUID
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreferredRevisionPut(BaseModel):
+    revision_id: UUID | None = None
 
 
 class ExternalIdentityAttach(BaseModel):
@@ -155,6 +180,7 @@ class ReferenceRead(BaseModel):
     title: str | None = None
     created_at: datetime | None = None
     revoked_at: datetime | None = None
+    read_only: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +331,13 @@ class ObjectDetailProvenance(BaseModel):
 
 
 class ObjectSummaryRead(BaseModel):
-    """Collection-list projection of a visible Series (summary mode)."""
+    """Collection-list projection of a visible Series (summary mode).
+
+    `latest_revision` is the Project's current visible revision — the visible
+    preferred pin when set, otherwise the latest visible revision. The pin is
+    exposed separately as `preferred_revision_id`; `read_only` is True when the
+    Project holds only the read lens (it is not the resource's steward).
+    """
 
     series_id: UUID
     object_type: ObjectType
@@ -314,6 +346,8 @@ class ObjectSummaryRead(BaseModel):
     created_at: datetime | None = None
     archived_at: datetime | None = None
     latest_revision: RevisionRead | None = None
+    preferred_revision_id: UUID | None = None
+    read_only: bool = False
 
 
 class ObjectDetailRead(BaseModel):
@@ -322,6 +356,8 @@ class ObjectDetailRead(BaseModel):
     series: SeriesRead
     visible_revisions: list[RevisionRead]
     latest_revision_seq: int | None = None
+    preferred_revision_id: UUID | None = None
+    read_only: bool = False
     provenance: ObjectDetailProvenance
     evidence: list[EvidenceRead]
     decisions: list[DecisionRead]

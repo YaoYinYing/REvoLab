@@ -26,6 +26,8 @@ const enumNames = [
   'CapabilityKind',
   'ProviderRuntimeHealth',
   'CapabilityAvailability',
+  'Role',
+  'ProjectVisibility',
 ]
 
 const constName = (name) =>
@@ -43,6 +45,8 @@ const constName = (name) =>
     CapabilityKind: 'CAPABILITY_KINDS',
     ProviderRuntimeHealth: 'PROVIDER_RUNTIME_HEALTHS',
     CapabilityAvailability: 'CAPABILITY_AVAILABILITIES',
+    Role: 'ROLES',
+    ProjectVisibility: 'PROJECT_VISIBILITIES',
   })[name]
 
 const lines = [

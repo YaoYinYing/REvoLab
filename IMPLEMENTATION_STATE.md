@@ -484,6 +484,211 @@ Two semantics were corrected after the above:
   discovered artifact), and the Providers catalog now renders the derived fake
   provider instead of the empty state.
 
+## Implemented (Phase 5)
+
+- **Membership collaboration commands** (`services.py`, `api.py`): inspect the
+  Project roster (`list_memberships`), change a member's role (`update_membership`),
+  and remove a member (`remove_membership`), all owner-gated; `add_membership`
+  now validates the role, rejects duplicate membership as `ConflictError`, and
+  rejects unknown Actors as `NotFoundError`. The **final required owner
+  invariant** is enforced in one place (`_other_owner_count`): an active Project
+  can never be left with zero owners by demoting or removing the last owner.
+  Tombstoned Projects reject membership operations fail-closed.
+- **Project visibility** (`services.py`, `schemas.py`, `api.py`): `ProjectCreate`
+  and the new `PATCH /projects/{id}` accept the accepted two-state visibility
+  (`private | shared_with_members`); `public` is rejected. Visibility is a
+  Project label, never an access grant — read authorization stays
+  membership-derived (`readable_membership`), so a non-member is denied
+  regardless of visibility and visibility does not touch `ProjectMembership`.
+- **First-class cross-Project sharing** (`services.share_resource` +
+  `POST /projects/{id}/shares`): binds an already-existing global `resource_id`
+  into another Project's `ProjectResourceLink` set. Authority is two-fold: a
+  mutation-capable membership in the TARGET Project, plus proof that the actor
+  can READ the resource through at least one OTHER active Project (source
+  visibility) — possession of a UUID is not permission to link an arbitrary
+  resource. Sharing is idempotent and copies nothing; the same global id becomes
+  visible through multiple Projects.
+- **Revision ⇒ series closure executed** (`provenance.share_into_project`):
+  sharing a revision also links its owning Series (sibling revisions stay
+  private, past and future); sharing a Series never links revisions. Read
+  projections derive the current visible revision only from that Project's
+  visible revision set, with the optional Project-local preferred-revision pin
+  (`set_preferred_revision` + `PUT .../preferred-revision`, validated to name a
+  visible revision of that series). No global `current_revision_id` exists.
+- **Read-only lens surfaced**: object summary/detail and reference reads now
+  carry `read_only` (`queries.read_only`: the Project is not the steward), and
+  object reads expose the `preferred_revision_id` pin.
+- **Project-context write-time invariant** is exercised end-to-end across shared
+  resources: Evidence source/target, Decision draft selects and commit, and the
+  import command's owning-series visibility (`services.import_revision`) all fail
+  closed on endpoints outside the Project's visible link set; compute inputs were
+  already gated by `resolve_compute_input` visibility (pre-Phase-5,
+  `test_grant_authority.py`). Backend-owned, not frontend-only.
+- **Frontend collaboration surface** (`views/Settings.tsx`, `views/ObjectDetail.tsx`
+  share panel): members/roles, add/change/remove (owner-gated), Project
+  visibility editing, resource sharing into another Project, a per-object
+  "Read-only in this project (not steward)" indication, and Project-local
+  Evidence/Knowledge around shared resources. Role and visibility choice lists
+  come only from the generated `ROLES`/`PROJECT_VISIBILITIES` enums.
+- **REvoCompute honesty preserved**: sharing a Run/Artifact reference grants
+  REvoLab context visibility only; upstream REvoCompute authorization remains a
+  separate, Actor-scoped concern (see
+  `docs/integrations/REVOCOMPUTE_CONTRACT_GAPS.md`).
+
+## Verified evidence (Phase 5)
+
+- Backend: `ruff check backend` and strict `mypy` pass (31 source files).
+  `pytest` passes with **208 passed, 4 skipped** (the four skips are the opt-in
+  PostgreSQL acceptance file). New collaboration regressions cover membership
+  roster/role/remove + final-owner protection + duplicate/unknown Actor +
+  tombstone denial; visibility create/update/owner-gate/non-member denial;
+  share target-membership + UUID-possession + unknown-resource rejection;
+  revision→series closure with future-sibling privacy + idempotence;
+  visibility-is-not-stewardship for rename/append/archive/external-identity;
+  shared-resource interpretation isolation; project-context write-invariant for
+  Evidence/Decision; the preferred-revision pin (visibility + series-membership
+  validation); tombstone survival of the shared resource and the surviving
+  Project's context; the partially-privileged global-edge projection; and
+  caller-credential isolation for shared artifact resolution.
+- PostgreSQL: `alembic upgrade head` + `alembic check` report **no drift** on a
+  clean PostgreSQL 16 database; the Phase-5 collaboration vertical slice passes
+  on PostgreSQL (`test_postgres_integration.py`: 4 passed) — two Actors, two
+  Projects, one shared revision, read-only non-steward mutation denial, isolated
+  interpretations, and Project deletion preserving the global resource and the
+  surviving Project's Evidence/Decision.
+- Frontend: `npm run typecheck`, `npm run test` (11 tests — plus the new
+  Settings collaboration view), and `npm run build` pass.
+  `openapi.json`/`schema.d.ts` regenerated; `enums.generated.ts` now also carries
+  the Core-owned `Role` and `ProjectVisibility` choice lists.
+- Browser (`npm run test:e2e`, Playwright Chromium, workers serialized over one
+  database): the Phase-2 smoke and the new collaboration E2E pass — two Actors
+  share one revision through the UI, the receiving Project shows the read-only
+  lens and no sibling revision and forms its own Evidence, the source Project
+  sees none of it, and the owner drives visibility + membership-role changes
+  through the Settings surface.
+
+## Independent review (Phase 5)
+
+Five fresh read-only reviewers audited `main...HEAD` (architecture/domain,
+authorization/security, persistence/lifecycle, API/frontend/contracts,
+tests/CI/maintainability). **No P0 findings.** One P1 (untyped
+`ProjectRead.visibility`) and the in-scope P2s were fixed, then the full suite
+was rerun green:
+
+- **P1** — `ProjectRead.visibility` was an unconstrained `string`; now typed as
+  the generated `ProjectVisibility` enum (the frontend cast removed).
+- **P2** — `queries.read_only` misreported a Revision inside its own steward
+  Project (stewardship is per-Series); now resolves a Revision through its
+  owning Series.
+- **P2** — race-path hardening: `add_membership`/`share_resource` map the
+  relevant uniqueness `IntegrityError` to `ConflictError`; the final-required-
+  owner count selects **all** of the Project's owner rows under
+  `SELECT ... FOR UPDATE` (counting excluding the target in Python), so
+  concurrent owner demotions serialize and the loser re-counts against the
+  committed owner set. The concurrent interleaving itself is not directly
+  thread-tested (SQLite `StaticPool` is single-connection; PostgreSQL is the
+  concurrency backstop) — the invariant is regression-tested sequentially.
+- **P2** — added regressions for immediate-effect role/membership changes
+  (HTTP), caller-credential (never the sharer's) for shared artifact resolution,
+  `read_only` revision-through-series resolution, and partially-privileged
+  global-provenance-edge projection.
+- **P2** — explicit source-of-share policy documented (`services.share_resource`
+  docstring): source authority is the read lens (any readable membership), and a
+  share mints only another read lens — no stewardship/mutation/credential
+  transfer.
+- **P3 (behavior or UI, regression-tested where named)** — `ProjectPatch` clear
+  vs omit description (HTTP-tested); frontend role/visibility literals derive
+  from generated `ROLES`/`PROJECT_VISIBILITIES` constants (compile-time); the
+  others are code-only defense-in-depth/UI layer and are NOT separately
+  regression-tested: `get_evidence`/`get_decision` by-id exclude archived rows
+  (unreachable until per-row archival exists, because tombstone also removes
+  membership first), `import_revision` asserts owning-series visibility
+  (unreachable in practice because stewardship implies the series link), and the
+  Objects list read-only badge (render-only, backed by the tested `read_only`
+  projection). Dead `SettingsIcon` removed; docs use the canonical
+  `shared_with_members` wire value; CI PostgreSQL step label and PG-module
+  docstring updated; roster-visibility policy recorded in
+  `COLLABORATION_IDENTITY.md`.
+- **Rejected/out-of-scope P3s (with rationale):** `share_into_project` living in
+  `provenance.py` and per-query read-projection scans predate Phase 5 and match
+  accepted ownership (no change); `consumed_as_input_by` raw endpoint and the
+  `GET /actors/{id}` existence oracle are pre-Phase-5 accepted seams
+  (`X-Actor-Id` is not authentication); the two visibility states being
+  observationally equivalent is the accepted "label-not-gate" design (`public`
+  deferred).
+
+No Phase-5 migration was required (no `models.py`/migration change); the change
+remains additive and drift-checked.
+
+### GitHub review follow-up (P1 + P2 on `1e51543`)
+
+A further GitHub review of head `1e51543` found one authorization blocker and a
+concurrency-idempotence issue; both fixed without reopening the accepted
+collaboration architecture:
+
+- **P1 — existing-reference reuse no longer bypasses sharing authority.**
+  The existing-reference branches of `create_run_reference` /
+  `create_session_reference` / `create_artifact_reference` /
+  `create_literature_reference` now route through
+  `_authorize_existing_reference_link`, which permits linking an existing global
+  reference only when it is **already visible in the target Project**
+  (idempotent) or the Actor **can read it through another active Project** — the
+  same source-read authority as `share_resource`. Possession of
+  `(authority, native_id[, version_id])` is no longer authority to make another
+  Project's reference visible. Provider/byte-furnished paths have explicit
+  trusted internal helpers (`_persist_run_reference_trusted`,
+  `_persist_artifact_reference_trusted`) reached only from the Actor-scoped
+  capability call result (`record_compute_run` / `record_compute_artifacts`) or a
+  byte upload (`create_internal_artifact`) — never a client-controlled flag.
+  New negative regressions prove an Actor cannot link another Project's existing
+  Run/Session/Artifact/Literature reference merely by knowing its durable
+  external identity, and positive regressions prove idempotent and
+  source-visible reuse still succeed.
+- **P2 — concurrent duplicate shares are idempotent, not 409.** On the narrow
+  `uq_link_project_resource` race, `share_resource` now rolls back, re-reads the
+  committed link state, verifies the resource is visible (and, for a revision,
+  that the revision→series closure is satisfied via `_share_is_satisfied`, so the
+  concurrent winner's work counts as this request's success), and otherwise
+  re-raises. Unrelated `IntegrityError`s are never swallowed.
+- **Defense-in-depth** — `share_resource` now validates target membership and
+  share authority **before** reading the registry kind, so an Actor with no valid
+  read path gets `AuthorizationError` rather than a `NotFound` existence oracle;
+  the idempotent early-return still resolves the kind where the link already
+  exists.
+
+A second fresh pass (3 read-only reviewers: reference-reuse authorization,
+concurrency/idempotence, regression/contract consistency) found **no P0/P1**.
+Two in-scope P2s and the appropriate P3s were then fixed:
+
+- **P2** — in `create_run_reference` / `create_artifact_reference`, the
+  share-authority check now runs BEFORE `assert_reference_compatible`, so an
+  unauthorized caller sees `AuthorizationError` rather than a 409
+  existence/mismatch oracle (mirroring `share_resource`'s posture).
+- **P2** — added behavioral regressions for the race branch: a forced
+  `uq_link_project_resource` `IntegrityError` through `share_resource` returns
+  idempotent success when the link state (incl. revision→series closure) is
+  satisfied, an unrelated `IntegrityError` propagates, and
+  `_share_is_satisfied` rejects a revision whose owning series is not visible.
+- **P3** — positive reuse now covers all four reference kinds (was run-only);
+  stale test name corrected to `test_share_unknown_resource_is_not_authorized`;
+  `create_artifact_reference` documented as the request-derived/
+  authority-enforcing primitive.
+
+Accepted/deferred (documented, not silently postponed): an
+unauthorized prober can still distinguish an existing hidden reference (403)
+from a truly-new identity (201 mint) — inherent to get-or-create, and a strict
+improvement over the pre-fix silently-linking behavior; the downstream duplicate-
+link insert race in `_link_existing_reference` and the trusted helpers still maps
+a concurrent identical reuse to a raw `IntegrityError` (pre-existing, DB
+constraint still protects — tracked, not a Phase-5 blocker); `services.link_series`
+remains a tests-only internal link primitive and must never be promoted to a
+request/agent tool without source-read authority.
+
+Verification after the fix (rerun in full): `ruff`, strict `mypy`, `pytest`
+**214 passed / 4 skipped**, PostgreSQL acceptance **4 passed** + `alembic check`
+no drift, frontend typecheck/test(11)/build + `check:contracts` clean, Playwright
+E2E **2 passed**.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

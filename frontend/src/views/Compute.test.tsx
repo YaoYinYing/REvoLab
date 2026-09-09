@@ -48,6 +48,8 @@ const object: ObjectSummaryRead = {
   description: null,
   created_at: null,
   archived_at: null,
+  preferred_revision_id: null,
+  read_only: false,
   latest_revision: {
     revision_id: 'revision-1',
     series_id: 'series-1',

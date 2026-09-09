@@ -1,4 +1,5 @@
-"""PostgreSQL acceptance for Phase 3 (migration + credential/availability slice).
+"""PostgreSQL acceptance for the migrated schema (Phase 3-5 vertical slices:
+credential/availability, REvoCompute, and collaboration/sharing).
 
 Runs only when `REVOLAB_TEST_DATABASE_URL` points at a migrated PostgreSQL
 database (CI runs `alembic upgrade head && alembic check` first, then this file).
@@ -198,3 +199,83 @@ def test_phase4_compute_vertical_slice_on_postgres(pg_session: Session, tmp_path
         )
     )
     assert produced is not None
+
+
+def test_phase5_collaboration_vertical_slice_on_postgres(pg_session: Session) -> None:
+    """Phase-5 end-to-end collaboration scenario over PostgreSQL (TODO.md #12):
+    one global resource, two Projects, two Actors, isolated interpretations, and
+    Project deletion that preserves the shared resource and the other context."""
+    from revolab import queries
+    from revolab.domain.errors import AuthorizationError
+    from revolab.enums import Role
+    from revolab.models import (
+        Decision,
+        Evidence,
+        ProjectResourceLink,
+        ResourceStewardship,
+        ScientificObjectRevision,
+        ScientificObjectSeries,
+    )
+
+    actor_a = services.create_actor(pg_session)
+    actor_b = services.create_actor(pg_session)
+    project_a = services.create_project(pg_session, actor_a, "PG-A")
+    project_b = services.create_project(pg_session, actor_b, "PG-B")
+    services.add_membership(pg_session, actor_b, project_b.id, actor_a, Role.MEMBER.value)
+
+    series = services.create_object(
+        pg_session, actor_a, project_a.id, "protein", "P5X", payload={"organism": "collab"}
+    )
+    revision = pg_session.scalar(
+        select(ScientificObjectRevision).where(
+            ScientificObjectRevision.series_id == series,
+            ScientificObjectRevision.revision_seq == 1,
+        )
+    )
+
+    # Authorized cross-Project share of exactly one revision.
+    services.share_resource(pg_session, actor_a, project_b.id, revision.revision_id)
+
+    detail_b = queries.object_detail(pg_session, project_b.id, series)
+    assert [rev["revision_seq"] for rev in detail_b["visible_revisions"]] == [1]
+    assert detail_b["read_only"] is True
+
+    # B receives read/context visibility only — mutation requires stewardship.
+    with pytest.raises(AuthorizationError):
+        services.append_revision(pg_session, actor_b, project_b.id, series, {"chain": "B"})
+
+    # B forms its own interpretation; the write-time invariant keeps A-private
+    # scientific endpoints out of B's project-scoped records.
+    b_evidence = services.create_evidence(
+        pg_session, actor_b, project_b.id, kind="computation", polarity="contradicts",
+        source_kind="scientific_object_revision", source_id=revision.revision_id,
+        target_kind="scientific_object_revision", target_id=revision.revision_id,
+    )
+    b_decision = services.create_decision(
+        pg_session, actor_b, project_b.id, title="PG-B decision", statement="B truth",
+        cites=[{"evidence_id": b_evidence.id, "cited_as": "supports"}],
+        selects=[{"target_id": series, "target_kind": "scientific_object_series"}],
+    )
+    services.commit_decision(pg_session, actor_b, project_b.id, b_decision.id)
+
+    # A sees none of B's interpretation.
+    detail_a = queries.object_detail(pg_session, project_a.id, series)
+    assert detail_a["evidence"] == []
+    assert detail_a["decisions"] == []
+
+    # Delete Project A: the global resource and B's context survive.
+    services.delete_project(pg_session, actor_a, project_a.id)
+    assert pg_session.get(ScientificObjectSeries, series) is not None
+    assert pg_session.get(ScientificObjectRevision, revision.revision_id) is not None
+    assert (
+        pg_session.scalar(
+            select(ProjectResourceLink.id).where(ProjectResourceLink.project_id == project_b.id)
+        )
+        is not None
+    )
+    assert pg_session.get(ResourceStewardship, series).steward_project_id is None
+    assert pg_session.get(Evidence, b_evidence.id).archived_at is None
+    assert pg_session.get(Decision, b_decision.id).archived_at is None
+    detail_b_after = queries.object_detail(pg_session, project_b.id, series)
+    assert [e["id"] for e in detail_b_after["evidence"]] == [str(b_evidence.id)]
+    assert [d["id"] for d in detail_b_after["decisions"]] == [str(b_decision.id)]

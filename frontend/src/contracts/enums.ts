@@ -14,7 +14,9 @@ import {
   EVIDENCE_TARGET_KINDS,
   OBJECT_TYPES,
   POLARITIES,
+  PROJECT_VISIBILITIES,
   RESOURCE_KINDS,
+  ROLES,
 } from './enums.generated'
 
 function pick<T extends string>(values: readonly T[], preferred: T): T {
@@ -41,3 +43,10 @@ export const DECISION_STATUS_COMMITTED = pick(DECISION_STATUSES, 'committed')
 export const CAPABILITY_KIND_COMPUTE = pick(CAPABILITY_KINDS, 'compute')
 export const CAPABILITY_AVAILABILITY_AVAILABLE = pick(CAPABILITY_AVAILABILITIES, 'available')
 export const RESOURCE_KIND_REVISION = pick(RESOURCE_KINDS, 'scientific_object_revision')
+
+// Collaboration-slice aliases (Phase 5): owner-role gating and default
+// visibility are derived from the generated lists, never re-declared as bare
+// string literals in the view layer.
+export const ROLE_OWNER = pick(ROLES, 'owner')
+export const ROLE_VIEWER = pick(ROLES, 'viewer')
+export const PROJECT_VISIBILITY_PRIVATE = pick(PROJECT_VISIBILITIES, 'private')

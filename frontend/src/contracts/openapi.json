@@ -1377,6 +1377,18 @@
         "title": "MembershipRead",
         "type": "object"
       },
+      "MembershipUpdate": {
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "MembershipUpdate",
+        "type": "object"
+      },
       "ObjectCreate": {
         "properties": {
           "description": {
@@ -1475,8 +1487,25 @@
             ],
             "title": "Latest Revision Seq"
           },
+          "preferred_revision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Revision Id"
+          },
           "provenance": {
             "$ref": "#/components/schemas/ObjectDetailProvenance"
+          },
+          "read_only": {
+            "default": false,
+            "title": "Read Only",
+            "type": "boolean"
           },
           "series": {
             "$ref": "#/components/schemas/SeriesRead"
@@ -1500,7 +1529,7 @@
         "type": "object"
       },
       "ObjectSummaryRead": {
-        "description": "Collection-list projection of a visible Series (summary mode).",
+        "description": "Collection-list projection of a visible Series (summary mode).\n\n`latest_revision` is the Project's current visible revision \u2014 the visible\npreferred pin when set, otherwise the latest visible revision. The pin is\nexposed separately as `preferred_revision_id`; `read_only` is True when the\nProject holds only the read lens (it is not the resource's steward).",
         "properties": {
           "archived_at": {
             "anyOf": [
@@ -1554,6 +1583,23 @@
           "object_type": {
             "$ref": "#/components/schemas/ObjectType"
           },
+          "preferred_revision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Revision Id"
+          },
+          "read_only": {
+            "default": false,
+            "title": "Read Only",
+            "type": "boolean"
+          },
           "series_id": {
             "format": "uuid",
             "title": "Series Id",
@@ -1593,6 +1639,24 @@
         "title": "Polarity",
         "type": "string"
       },
+      "PreferredRevisionPut": {
+        "properties": {
+          "revision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Id"
+          }
+        },
+        "title": "PreferredRevisionPut",
+        "type": "object"
+      },
       "ProducedCreate": {
         "properties": {
           "artifact_id": {
@@ -1631,12 +1695,56 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/ProjectVisibility",
+            "default": "private"
           }
         },
         "required": [
           "name"
         ],
         "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectPatch": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "visibility": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectVisibility"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ProjectPatch",
         "type": "object"
       },
       "ProjectRead": {
@@ -1679,8 +1787,7 @@
             "type": "string"
           },
           "visibility": {
-            "title": "Visibility",
-            "type": "string"
+            "$ref": "#/components/schemas/ProjectVisibility"
           }
         },
         "required": [
@@ -1691,6 +1798,14 @@
         ],
         "title": "ProjectRead",
         "type": "object"
+      },
+      "ProjectVisibility": {
+        "enum": [
+          "private",
+          "shared_with_members"
+        ],
+        "title": "ProjectVisibility",
+        "type": "string"
       },
       "ProviderCapabilityRead": {
         "description": "One realized capability of a provider, with the calling Actor's derived\navailability for that specific capability (the policy component of the\navailability formula is operation-specific, so availability lives here).",
@@ -1818,6 +1933,11 @@
             "title": "Native Id",
             "type": "string"
           },
+          "read_only": {
+            "default": true,
+            "title": "Read Only",
+            "type": "boolean"
+          },
           "resource_id": {
             "format": "uuid",
             "title": "Resource Id",
@@ -1923,6 +2043,38 @@
         ],
         "title": "ResourceKind",
         "type": "string"
+      },
+      "ResourceShareCreate": {
+        "properties": {
+          "resource_id": {
+            "format": "uuid",
+            "title": "Resource Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id"
+        ],
+        "title": "ResourceShareCreate",
+        "type": "object"
+      },
+      "ResourceShareRead": {
+        "properties": {
+          "resource_id": {
+            "format": "uuid",
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_kind": {
+            "$ref": "#/components/schemas/ResourceKind"
+          }
+        },
+        "required": [
+          "resource_id",
+          "resource_kind"
+        ],
+        "title": "ResourceShareRead",
+        "type": "object"
       },
       "RevisionCreate": {
         "properties": {
@@ -2776,6 +2928,70 @@
           }
         },
         "summary": "Get Project"
+      },
+      "patch": {
+        "operationId": "patch_project_api_projects__project_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Project"
       }
     },
     "/api/projects/{project_id}/artifacts": {
@@ -3984,6 +4200,64 @@
       }
     },
     "/api/projects/{project_id}/members": {
+      "get": {
+        "operationId": "list_members_api_projects__project_id__members_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MembershipRead"
+                  },
+                  "title": "Response List Members Api Projects  Project Id  Members Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Members"
+      },
       "post": {
         "operationId": "add_membership_api_projects__project_id__members_post",
         "parameters": [
@@ -4047,6 +4321,139 @@
           }
         },
         "summary": "Add Membership"
+      }
+    },
+    "/api/projects/{project_id}/members/{member_actor_id}": {
+      "delete": {
+        "operationId": "remove_membership_api_projects__project_id__members__member_actor_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "member_actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Member Actor Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove Membership"
+      },
+      "patch": {
+        "operationId": "update_membership_api_projects__project_id__members__member_actor_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "member_actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Member Actor Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Membership"
       }
     },
     "/api/projects/{project_id}/objects": {
@@ -4544,6 +4951,75 @@
           }
         },
         "summary": "Import Object"
+      }
+    },
+    "/api/projects/{project_id}/objects/{series_id}/preferred-revision": {
+      "put": {
+        "operationId": "set_preferred_revision_api_projects__project_id__objects__series_id__preferred_revision_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "series_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Series Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferredRevisionPut"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Preferred Revision"
       }
     },
     "/api/projects/{project_id}/objects/{series_id}/revisions": {
@@ -5674,6 +6150,72 @@
           }
         },
         "summary": "Create Session"
+      }
+    },
+    "/api/projects/{project_id}/shares": {
+      "post": {
+        "operationId": "share_resource_api_projects__project_id__shares_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceShareCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceShareRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Share Resource"
       }
     },
     "/health": {

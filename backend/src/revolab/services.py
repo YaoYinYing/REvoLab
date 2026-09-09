@@ -22,6 +22,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from revolab.capabilities import (
@@ -50,7 +51,7 @@ from revolab.domain.identity import (
     readable_membership as _readable_membership,
 )
 from revolab.drivers import DriverRegistry
-from revolab.enums import CapabilityKind, RelationType, ResourceKind, Role
+from revolab.enums import CapabilityKind, ProjectVisibility, RelationType, ResourceKind, Role
 from revolab.models import (
     Actor,
     ArtifactReference,
@@ -154,7 +155,11 @@ def create_project(
     *,
     visibility: str = "private",
 ) -> Project:
-    project = Project(name=name, description=description, visibility=visibility)
+    try:
+        visibility_value = ProjectVisibility(visibility)
+    except ValueError as exc:
+        raise ValidationError(f"unknown project visibility {visibility!r}") from exc
+    project = Project(name=name, description=description, visibility=visibility_value.value)
     session.add(project)
     session.flush()
     session.add(ProjectMembership(project_id=project.id, actor_id=actor_id, role=Role.OWNER.value))
@@ -180,6 +185,82 @@ def list_projects_for_actor(session: Session, actor_id: UUID) -> list[Project]:
     return list(rows)
 
 
+def _require_role(role: str) -> Role:
+    try:
+        return Role(role)
+    except ValueError as exc:
+        raise ValidationError(f"unknown role {role!r}") from exc
+
+
+def _requires_actor(session: Session, actor_id: UUID) -> None:
+    if session.get(Actor, actor_id) is None:
+        raise NotFoundError("actor not found")
+
+
+def _is_membership_uniqueness_conflict(exc: IntegrityError) -> bool:
+    """Narrow detection of the project_memberships composite PK uniqueness.
+
+    Unrelated integrity failures are re-raised untouched (same fail-closed
+    posture as `_is_binding_uniqueness_conflict` in the Identity domain)."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(diagnostics.constraint_name == "project_memberships_pkey")
+    message = str(orig)
+    return "UNIQUE constraint failed" in message and "project_memberships" in message
+
+
+def _is_link_uniqueness_conflict(exc: IntegrityError) -> bool:
+    """Narrow detection of the `uq_link_project_resource` unique constraint."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(diagnostics.constraint_name == "uq_link_project_resource")
+    message = str(orig)
+    return (
+        "UNIQUE constraint failed" in message
+        and "project_resource_links.project_id" in message
+    )
+
+
+def _other_owner_count(session: Session, project_id: UUID, excluding_actor_id: UUID) -> int:
+    """Count owner memberships in an active Project other than `excluding_actor_id`.
+
+    This is the single place the final-required-owner invariant is derived:
+    membership/role changes must never leave an active Project with zero owners.
+
+    ALL owner rows of the Project are locked under `FOR UPDATE` (not just the
+    counted subset) so that concurrent owner demotions/removals serialize: the
+    second transaction blocks until the first commits, then re-counts against the
+    committed owner set — closing the check-then-act window that would otherwise
+    let two owners demote each other into a zero-owner Project. On SQLite the
+    clause is a no-op, but SQLite already serializes writes.
+    """
+    owner_ids = list(
+        session.scalars(
+            select(ProjectMembership.actor_id)
+            .where(
+                ProjectMembership.project_id == project_id,
+                ProjectMembership.role == Role.OWNER.value,
+            )
+            .with_for_update()
+        ).all()
+    )
+    return sum(1 for actor in owner_ids if actor != excluding_actor_id)
+
+
+def _require_membership(session: Session, project_id: UUID, member_actor_id: UUID) -> ProjectMembership:
+    membership = session.scalar(
+        select(ProjectMembership).where(
+            ProjectMembership.project_id == project_id,
+            ProjectMembership.actor_id == member_actor_id,
+        )
+    )
+    if membership is None:
+        raise NotFoundError("actor is not a member of the project")
+    return membership
+
+
 def add_membership(
     session: Session,
     actor_id: UUID,
@@ -188,12 +269,118 @@ def add_membership(
     role: str,
 ) -> ProjectMembership:
     owner_membership(session, actor_id, project_id)
-    membership = ProjectMembership(
-        project_id=project_id, actor_id=member_actor_id, role=Role(role).value
-    )
+    role_value = _require_role(role)
+    _requires_actor(session, member_actor_id)
+    if (
+        session.scalar(
+            select(ProjectMembership.actor_id).where(
+                ProjectMembership.project_id == project_id,
+                ProjectMembership.actor_id == member_actor_id,
+            )
+        )
+        is not None
+    ):
+        raise ConflictError("actor is already a member of the project")
+    membership = ProjectMembership(project_id=project_id, actor_id=member_actor_id, role=role_value.value)
     session.add(membership)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if _is_membership_uniqueness_conflict(exc):
+            raise ConflictError("actor is already a member of the project") from exc
+        raise
+    session.refresh(membership)
     return membership
+
+
+def list_memberships(session: Session, actor_id: UUID, project_id: UUID) -> list[ProjectMembership]:
+    """Inspect the Project membership roster. Any readable membership may see it:
+    membership is the visibility vector, and visibility does not require an
+    owner/member role (consistent with the derived read projection)."""
+    readable_membership(session, actor_id, project_id)
+    return list(
+        session.scalars(
+            select(ProjectMembership)
+            .where(ProjectMembership.project_id == project_id)
+            .order_by(ProjectMembership.created_at)
+        )
+    )
+
+
+def update_membership(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    member_actor_id: UUID,
+    role: str,
+) -> ProjectMembership:
+    """Change a member's role. Owner-only; the final required owner is protected."""
+    owner_membership(session, actor_id, project_id)
+    role_value = _require_role(role)
+    membership = _require_membership(session, project_id, member_actor_id)
+    if (
+        membership.role == Role.OWNER.value
+        and role_value is not Role.OWNER
+        and not _other_owner_count(session, project_id, member_actor_id)
+    ):
+        raise ConflictError("project must retain at least one owner")
+    membership.role = role_value.value
+    session.commit()
+    session.refresh(membership)
+    return membership
+
+
+def remove_membership(
+    session: Session, actor_id: UUID, project_id: UUID, member_actor_id: UUID
+) -> None:
+    """Remove a member. Owner-only; the final required owner is protected."""
+    owner_membership(session, actor_id, project_id)
+    membership = _require_membership(session, project_id, member_actor_id)
+    if (
+        membership.role == Role.OWNER.value
+        and not _other_owner_count(session, project_id, member_actor_id)
+    ):
+        raise ConflictError("project must retain at least one owner")
+    session.delete(membership)
+    session.commit()
+
+
+def update_project(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    visibility: str | None = None,
+    clear_description: bool = False,
+) -> Project:
+    """Update Project metadata/visibility. Owner-only.
+
+    Phase-5 visibility is an explicit Project-label (`private |
+    shared-with-members`); it never gates access on its own — read authorization
+    remains membership-derived (`readable_membership`). `public` is deferred.
+
+    `clear_description` distinguishes an explicit `description: null` (clear the
+    field) from an omitted description (leave it unchanged).
+    """
+    owner_membership(session, actor_id, project_id)
+    project = get_project(session, project_id)
+    if name is not None:
+        project.name = name
+    if clear_description:
+        project.description = None
+    elif description is not None:
+        project.description = description
+    if visibility is not None:
+        try:
+            project.visibility = ProjectVisibility(visibility).value
+        except ValueError as exc:
+            raise ValidationError(f"unknown project visibility {visibility!r}") from exc
+    session.commit()
+    session.refresh(project)
+    return project
 
 
 def delete_project(session: Session, actor_id: UUID, project_id: UUID) -> None:
@@ -326,10 +513,172 @@ def archive_series(session: Session, actor_id: UUID, project_id: UUID, series_id
 
 
 def link_series(session: Session, actor_id: UUID, project_id: UUID, resource_id: UUID) -> None:
-    """Grant the read/context lens: a mutation-capable membership may bind a
-    global resource into the Project's context (Project-owned link set)."""
+    """Internal read-lens link primitive (used where the caller previously
+    established the resource's context — e.g. import/provenance orchestration and
+    tests). Cross-Project sharing from outside the Project must go through
+    `share_resource`, which additionally validates source visibility/share
+    authority; do not treat possession of a UUID as permission to link here."""
     mutation_capable_membership(session, actor_id, project_id)
     provenance.link_series(session, project_id, resource_id)
+
+
+def _visible_project_ids(session: Session, actor_id: UUID, resource_id: UUID) -> set[UUID]:
+    """The active Projects through which `actor` can READ `resource` (a derived
+    projection over membership and link — never a stored ACL)."""
+    return {
+        project_id
+        for project_id in session.scalars(
+            select(ProjectMembership.project_id)
+            .join(Project, Project.id == ProjectMembership.project_id)
+            .join(ProjectResourceLink, ProjectResourceLink.project_id == Project.id)
+            .where(
+                ProjectMembership.actor_id == actor_id,
+                Project.deleted_at.is_(None),
+                ProjectResourceLink.resource_id == resource_id,
+            )
+        )
+    }
+
+
+def _authorize_existing_reference_link(
+    session: Session, actor_id: UUID, project_id: UUID, resource_id: UUID
+) -> None:
+    """Enforce the share-authority invariant for user/request-derived reuse of an
+    already-existing global reference (Run/Session/Artifact/Literature).
+
+    Possession of `(authority, native_id[, version_id])` is NOT authority to make
+    an existing global reference visible in another Project. Linking is allowed
+    only when:
+      * the reference is ALREADY visible in the target Project (idempotent), or
+      * the Actor can read it through another active Project — the same
+        source-read authority as `share_resource`.
+
+    Callers must have already validated target-Project membership.
+    """
+    if persistence.is_visible(session, project_id, resource_id):
+        return
+    sources = _visible_project_ids(session, actor_id, resource_id) - {project_id}
+    if not sources:
+        raise AuthorizationError(
+            "cannot link an existing reference the actor cannot read through another project"
+        )
+
+
+def share_resource(session: Session, actor_id: UUID, target_project_id: UUID, resource_id: UUID) -> ResourceKind:
+    """First-class cross-Project share: make an already-existing global resource
+    part of another Project's context (a `ProjectResourceLink` — the read lens).
+
+    Authority (TODO #3):
+      * the actor holds a mutation-capable membership in the TARGET Project
+        (granting the read lens requires target-Project authority, ADR-0008);
+      * the actor can READ the resource through at least one OTHER active Project
+        (the source of the share) — possession of a UUID is NOT permission to
+        link an arbitrary resource.
+
+    Source-of-share authority is deliberately the read lens itself (any readable
+    membership — owner/member/viewer — in an active Project that links the
+    resource): sharing only mints another read lens in the target Project and
+    never transfers stewardship, mutation authority, or external credentials, so
+    a viewer re-sharing a resource they can already read grants no escalation.
+
+    Revision ⇒ series visibility closure (TODO #4): sharing a revision also links
+    its owning Series into the TARGET Project (sibling revisions stay private).
+    Nothing is copied: the same global `resource_id` becomes visible through the
+    target Project's link set only.
+
+    Defense-in-depth: target membership is validated, then share authority (an
+    already-visible target link or a source read path) is checked BEFORE the
+    registry kind is read, so an Actor with no valid read path cannot use
+    `NotFound` vs `AuthorizationError` to probe global-resource existence.
+    """
+    mutation_capable_membership(session, actor_id, target_project_id)
+    # Idempotent fast path: the read lens already exists. A visible link implies
+    # a real registered resource, so resolving the kind here is safe.
+    if persistence.is_visible(session, target_project_id, resource_id):
+        return persistence.resource_kind(session, resource_id)
+    # Share authority before existence/kind: deny (403) whether or not the UUID
+    # exists, so global-resource existence is never leaked to an unauthorized
+    # caller.
+    sources = _visible_project_ids(session, actor_id, resource_id) - {target_project_id}
+    if not sources:
+        raise AuthorizationError(
+            "cannot share a resource the actor cannot read through another project"
+        )
+    kind = persistence.resource_kind(session, resource_id)
+    provenance.share_into_project(session, target_project_id, resource_id)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if not _is_link_uniqueness_conflict(exc):
+            raise
+        # A concurrent share won the same link insert. The unique constraint is
+        # the real guard; re-read the now-committed link state and treat the
+        # request as idempotently satisfied only if the winner actually produced
+        # the requested visible context (including the revision=>series closure).
+        if _share_is_satisfied(session, target_project_id, resource_id):
+            return kind
+        raise ConflictError("resource is already linked through this project") from exc
+    return kind
+
+
+def _share_is_satisfied(session: Session, project_id: UUID, resource_id: UUID) -> bool:
+    """True when `resource_id` is now visible through `project_id` (and, for a
+    revision, its owning series is too). Post-rollback, this reads the concurrent
+    winner's committed link state."""
+    if not persistence.is_visible(session, project_id, resource_id):
+        return False
+    if persistence.resource_kind(session, resource_id) is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        series_id = persistence.revision_series_id(session, resource_id)
+        return persistence.is_visible(session, project_id, series_id)
+    return True
+
+
+def set_preferred_revision(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    series_id: UUID,
+    revision_id: UUID | None,
+) -> None:
+    """Set/clear the Project-local preferred-revision pin on a series link.
+
+    Project-local context mutation (the link is owned by the Project domain), so
+    a mutation-capable membership authorizes it. The pin must point at a revision
+    of that series that is already visible through this Project — never a global
+    `current` pointer, never a sibling revision leaked from another Project.
+    """
+    mutation_capable_membership(session, actor_id, project_id)
+    if persistence.resource_kind(session, series_id) is not ResourceKind.SCIENTIFIC_OBJECT_SERIES:
+        raise ValidationError("preferred revision requires a scientific_object_series")
+    if not persistence.is_visible(session, project_id, series_id):
+        raise AuthorizationError("series is not visible through this project")
+    if revision_id is None:
+        link = _require_link(session, project_id, series_id)
+        link.preferred_revision_id = None
+        session.commit()
+        return
+    if persistence.resource_kind(session, revision_id) is not ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        raise ValidationError("preferred revision must name a scientific_object_revision")
+    if persistence.revision_series_id(session, revision_id) != series_id:
+        raise ValidationError("preferred revision must belong to the series")
+    if not persistence.is_visible(session, project_id, revision_id):
+        raise AuthorizationError("preferred revision must already be visible through this project")
+    link = _require_link(session, project_id, series_id)
+    link.preferred_revision_id = revision_id
+    session.commit()
+
+
+def _require_link(session: Session, project_id: UUID, resource_id: UUID) -> ProjectResourceLink:
+    link = session.scalar(
+        select(ProjectResourceLink).where(
+            ProjectResourceLink.project_id == project_id,
+            ProjectResourceLink.resource_id == resource_id,
+        )
+    )
+    if link is None:
+        raise NotFoundError("resource link not found in project")
+    return link
 
 
 # ---------------------------------------------------------------------------
@@ -345,11 +694,95 @@ def _finalize_reference(session: Session, project_id: UUID, resource_id: UUID, r
     return row
 
 
-def _link_existing_reference(session: Session, project_id: UUID, resource_id: UUID, row: Any) -> Any:
+def _link_existing_reference(
+    session: Session, actor_id: UUID, project_id: UUID, resource_id: UUID, row: Any
+) -> Any:
+    """Link an already-existing global reference into a Project for a
+    request-derived caller, enforcing the share-authority invariant (the caller
+    must already be able to read it somewhere, or it must already be visible)."""
+    _authorize_existing_reference_link(session, actor_id, project_id, resource_id)
     persistence.link(session, project_id, resource_id)
     session.commit()
     session.refresh(row)
     return row
+
+
+def _persist_run_reference_trusted(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    authority: str,
+    native_id: str,
+    *,
+    task_type: str | None,
+    input_parameter_digest: str | None = None,
+    submitted_at: datetime | None = None,
+) -> Any:
+    """Trusted internal get-or-create for a run the Actor's capability call just
+    returned (the provider handed this exact `(authority, native_id)` back to the
+    Actor). This independent authority is the reason existing reuse here may link
+    into the Project without a separate source-read path. Never reached from a
+    client-controlled identity input."""
+    mutation_capable_membership(session, actor_id, project_id)
+    existing = provenance.find_run_reference(session, authority, native_id)
+    if existing is not None:
+        provenance.assert_reference_compatible(
+            existing,
+            task_type=task_type,
+            input_parameter_digest=input_parameter_digest,
+            submitted_at=submitted_at,
+        )
+        persistence.link(session, project_id, existing.run_id)
+        session.commit()
+        session.refresh(existing)
+        return existing
+    row = provenance.create_run_reference_row(
+        session,
+        authority,
+        native_id,
+        task_type=task_type,
+        input_parameter_digest=input_parameter_digest,
+        submitted_at=submitted_at,
+    )
+    return _finalize_reference(session, project_id, row.run_id, row)
+
+
+def _persist_artifact_reference_trusted(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    authority: str,
+    native_id: str,
+    *,
+    content_type: str | None = None,
+    size: int | None = None,
+    checksum: str | None = None,
+    version_id: str = "",
+) -> Any:
+    """Trusted internal get-or-create for an artifact that either (a) the Actor's
+    capability call just enumerated, or (b) the Actor just furnished the bytes
+    for (ContentStore `authority == revolab`). Independent authority; never
+    reached from a client-controlled identity input."""
+    mutation_capable_membership(session, actor_id, project_id)
+    existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
+    if existing is not None:
+        provenance.assert_reference_compatible(
+            existing, checksum=checksum, size=size, content_type=content_type
+        )
+        persistence.link(session, project_id, existing.artifact_id)
+        session.commit()
+        session.refresh(existing)
+        return existing
+    row = provenance.create_artifact_reference_row(
+        session,
+        authority,
+        native_id,
+        content_type=content_type,
+        size=size,
+        checksum=checksum,
+        version_id=version_id,
+    )
+    return _finalize_reference(session, project_id, row.artifact_id, row)
 
 
 def create_run_reference(
@@ -366,13 +799,16 @@ def create_run_reference(
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_run_reference(session, authority, native_id)
     if existing is not None:
+        # Authorize BEFORE comparing metadata so an unauthorized caller always
+        # sees AuthorizationError (never a 409 existence/mismatch oracle).
+        _authorize_existing_reference_link(session, actor_id, project_id, existing.run_id)
         provenance.assert_reference_compatible(
             existing,
             task_type=task_type,
             input_parameter_digest=input_parameter_digest,
             submitted_at=submitted_at,
         )
-        return _link_existing_reference(session, project_id, existing.run_id, existing)
+        return _link_existing_reference(session, actor_id, project_id, existing.run_id, existing)
     row = provenance.create_run_reference_row(
         session,
         authority,
@@ -390,7 +826,7 @@ def create_session_reference(
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_session_reference(session, authority, native_id)
     if existing is not None:
-        return _link_existing_reference(session, project_id, existing.session_id, existing)
+        return _link_existing_reference(session, actor_id, project_id, existing.session_id, existing)
     row = provenance.create_session_reference_row(session, authority, native_id)
     return _finalize_reference(session, project_id, row.session_id, row)
 
@@ -407,14 +843,21 @@ def create_artifact_reference(
     checksum: str | None = None,
     version_id: str | None = None,
 ) -> Any:
+    """Request-derived authority-enforcing get-or-create for an artifact identity.
+
+    This is the share-authority-enforcing primitive; production callers that hold
+    independent authority (provider-enumerated artifacts, byte-furnished uploads)
+    use `_persist_artifact_reference_trusted` instead."""
     mutation_capable_membership(session, actor_id, project_id)
     version_id = version_id or ""
     existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
     if existing is not None:
+        # Authorize BEFORE comparing metadata: no 409 existence/mismatch oracle.
+        _authorize_existing_reference_link(session, actor_id, project_id, existing.artifact_id)
         provenance.assert_reference_compatible(
             existing, checksum=checksum, size=size, content_type=content_type
         )
-        return _link_existing_reference(session, project_id, existing.artifact_id, existing)
+        return _link_existing_reference(session, actor_id, project_id, existing.artifact_id, existing)
     row = provenance.create_artifact_reference_row(
         session,
         authority,
@@ -439,7 +882,7 @@ def create_literature_reference(
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_literature_reference(session, authority, native_id)
     if existing is not None:
-        return _link_existing_reference(session, project_id, existing.literature_id, existing)
+        return _link_existing_reference(session, actor_id, project_id, existing.literature_id, existing)
     row = provenance.create_literature_reference_row(session, authority, native_id, title=title)
     return _finalize_reference(session, project_id, row.literature_id, row)
 
@@ -592,6 +1035,8 @@ def import_revision(
     payload: dict[str, Any],
 ) -> Any:
     grant = can_mutate(session, actor_id, project_id, series_id, purpose="import object")
+    if not persistence.is_visible(session, project_id, series_id):
+        raise AuthorizationError("series must be visible in the project before importing into it")
     return provenance.import_revision(
         session, grant, project_id, series_id, source_id, payload=payload
     )
@@ -702,7 +1147,7 @@ def create_internal_artifact(
 ) -> Any:
     mutation_capable_membership(session, actor_id, project_id)
     result = store.put(data, content_type=content_type)
-    return create_artifact_reference(
+    return _persist_artifact_reference_trusted(
         session,
         actor_id,
         project_id,
@@ -811,7 +1256,7 @@ def record_compute_run(
     `consumed_as_input_by` edges for the external run. This stores only
     reference identity + scientific provenance — never the provider's mutable
     execution state."""
-    run = create_run_reference(
+    run = _persist_run_reference_trusted(
         session,
         actor_id,
         project_id,
@@ -846,7 +1291,7 @@ def record_compute_artifacts(
     are recorded only when the provider reports them."""
     recorded: list[dict[str, Any]] = []
     for handle in artifacts:
-        artifact = create_artifact_reference(
+        artifact = _persist_artifact_reference_trusted(
             session,
             actor_id,
             project_id,

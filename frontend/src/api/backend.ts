@@ -6,9 +6,27 @@ type EvidenceCreate = paths['/api/projects/{project_id}/evidence']['post']['requ
 type DecisionCreate = paths['/api/projects/{project_id}/decisions']['post']['requestBody']['content']['application/json']
 type DecisionPatch = paths['/api/projects/{project_id}/decisions/{decision_id}']['patch']['requestBody']['content']['application/json']
 type ProjectCreate = paths['/api/projects']['post']['requestBody']['content']['application/json']
+type ProjectPatch = paths['/api/projects/{project_id}']['patch']['requestBody']['content']['application/json']
+type MembershipCreate = paths['/api/projects/{project_id}/members']['post']['requestBody']['content']['application/json']
+type MembershipUpdate = paths['/api/projects/{project_id}/members/{member_actor_id}']['patch']['requestBody']['content']['application/json']
+type ResourceShareCreate = paths['/api/projects/{project_id}/shares']['post']['requestBody']['content']['application/json']
+type PreferredRevisionPut =
+  paths['/api/projects/{project_id}/objects/{series_id}/preferred-revision']['put']['requestBody']['content']['application/json']
 type ComputeSubmissionCreate = paths['/api/projects/{project_id}/compute/submissions']['post']['requestBody']['content']['application/json']
 
-export type { ObjectCreate, EvidenceCreate, DecisionCreate, DecisionPatch, ProjectCreate, ComputeSubmissionCreate }
+export type {
+  ObjectCreate,
+  EvidenceCreate,
+  DecisionCreate,
+  DecisionPatch,
+  ProjectCreate,
+  ProjectPatch,
+  MembershipCreate,
+  MembershipUpdate,
+  ResourceShareCreate,
+  PreferredRevisionPut,
+  ComputeSubmissionCreate,
+}
 
 /**
  * Project-scoped API facade: every call names resources through a Project and
@@ -27,6 +45,53 @@ export function projectApi(actorId: string) {
       api.GET('/api/projects/{project_id}', {
         headers,
         params: { path: { project_id: projectId } },
+      }),
+
+    patchProject: (projectId: string, body: ProjectPatch) =>
+      api.PATCH('/api/projects/{project_id}', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    listMembers: (projectId: string) =>
+      api.GET('/api/projects/{project_id}/members', {
+        headers,
+        params: { path: { project_id: projectId } },
+      }),
+
+    addMember: (projectId: string, body: MembershipCreate) =>
+      api.POST('/api/projects/{project_id}/members', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    patchMember: (projectId: string, memberActorId: string, body: MembershipUpdate) =>
+      api.PATCH('/api/projects/{project_id}/members/{member_actor_id}', {
+        headers,
+        params: { path: { project_id: projectId, member_actor_id: memberActorId } },
+        body,
+      }),
+
+    removeMember: (projectId: string, memberActorId: string) =>
+      api.DELETE('/api/projects/{project_id}/members/{member_actor_id}', {
+        headers,
+        params: { path: { project_id: projectId, member_actor_id: memberActorId } },
+      }),
+
+    shareResource: (projectId: string, body: ResourceShareCreate) =>
+      api.POST('/api/projects/{project_id}/shares', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    setPreferredRevision: (projectId: string, seriesId: string, body: PreferredRevisionPut) =>
+      api.PUT('/api/projects/{project_id}/objects/{series_id}/preferred-revision', {
+        headers,
+        params: { path: { project_id: projectId, series_id: seriesId } },
+        body,
       }),
 
     listObjects: (projectId: string, query: { limit?: number; offset?: number } = {}) =>

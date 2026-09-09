@@ -112,7 +112,8 @@ export interface paths {
         delete: operations["delete_project_api_projects__project_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Patch Project */
+        patch: operations["patch_project_api_projects__project_id__patch"];
         trace?: never;
     };
     "/api/projects/{project_id}/artifacts": {
@@ -351,7 +352,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** List Members */
+        get: operations["list_members_api_projects__project_id__members_get"];
         put?: never;
         /** Add Membership */
         post: operations["add_membership_api_projects__project_id__members_post"];
@@ -359,6 +361,24 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/members/{member_actor_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Membership */
+        delete: operations["remove_membership_api_projects__project_id__members__member_actor_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Membership */
+        patch: operations["update_membership_api_projects__project_id__members__member_actor_id__patch"];
         trace?: never;
     };
     "/api/projects/{project_id}/objects": {
@@ -426,6 +446,23 @@ export interface paths {
         put?: never;
         /** Import Object */
         post: operations["import_object_api_projects__project_id__objects__series_id__import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/objects/{series_id}/preferred-revision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Preferred Revision */
+        put: operations["set_preferred_revision_api_projects__project_id__objects__series_id__preferred_revision_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -703,6 +740,23 @@ export interface paths {
         put?: never;
         /** Create Session */
         post: operations["create_session_api_projects__project_id__sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/shares": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Share Resource */
+        post: operations["share_resource_api_projects__project_id__shares_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1237,6 +1291,10 @@ export interface components {
             project_id: string;
             role: components["schemas"]["Role"];
         };
+        /** MembershipUpdate */
+        MembershipUpdate: {
+            role: components["schemas"]["Role"];
+        };
         /** ObjectCreate */
         ObjectCreate: {
             /** Description */
@@ -1269,7 +1327,14 @@ export interface components {
             evidence: components["schemas"]["EvidenceRead"][];
             /** Latest Revision Seq */
             latest_revision_seq?: number | null;
+            /** Preferred Revision Id */
+            preferred_revision_id?: string | null;
             provenance: components["schemas"]["ObjectDetailProvenance"];
+            /**
+             * Read Only
+             * @default false
+             */
+            read_only: boolean;
             series: components["schemas"]["SeriesRead"];
             /** Visible Revisions */
             visible_revisions: components["schemas"]["RevisionRead"][];
@@ -1277,6 +1342,11 @@ export interface components {
         /**
          * ObjectSummaryRead
          * @description Collection-list projection of a visible Series (summary mode).
+         *
+         *     `latest_revision` is the Project's current visible revision — the visible
+         *     preferred pin when set, otherwise the latest visible revision. The pin is
+         *     exposed separately as `preferred_revision_id`; `read_only` is True when the
+         *     Project holds only the read lens (it is not the resource's steward).
          */
         ObjectSummaryRead: {
             /** Archived At */
@@ -1289,6 +1359,13 @@ export interface components {
             /** Name */
             name: string;
             object_type: components["schemas"]["ObjectType"];
+            /** Preferred Revision Id */
+            preferred_revision_id?: string | null;
+            /**
+             * Read Only
+             * @default false
+             */
+            read_only: boolean;
             /**
              * Series Id
              * Format: uuid
@@ -1305,6 +1382,11 @@ export interface components {
          * @enum {string}
          */
         Polarity: "supports" | "contradicts" | "neutral";
+        /** PreferredRevisionPut */
+        PreferredRevisionPut: {
+            /** Revision Id */
+            revision_id?: string | null;
+        };
         /** ProducedCreate */
         ProducedCreate: {
             /**
@@ -1324,6 +1406,16 @@ export interface components {
             description?: string | null;
             /** Name */
             name: string;
+            /** @default private */
+            visibility: components["schemas"]["ProjectVisibility"];
+        };
+        /** ProjectPatch */
+        ProjectPatch: {
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+            visibility?: components["schemas"]["ProjectVisibility"] | null;
         };
         /** ProjectRead */
         ProjectRead: {
@@ -1343,9 +1435,13 @@ export interface components {
             id: string;
             /** Name */
             name: string;
-            /** Visibility */
-            visibility: string;
+            visibility: components["schemas"]["ProjectVisibility"];
         };
+        /**
+         * ProjectVisibility
+         * @enum {string}
+         */
+        ProjectVisibility: "private" | "shared_with_members";
         /**
          * ProviderCapabilityRead
          * @description One realized capability of a provider, with the calling Actor's derived
@@ -1397,6 +1493,11 @@ export interface components {
             /** Native Id */
             native_id: string;
             /**
+             * Read Only
+             * @default true
+             */
+            read_only: boolean;
+            /**
              * Resource Id
              * Format: uuid
              */
@@ -1428,6 +1529,23 @@ export interface components {
          * @enum {string}
          */
         ResourceKind: "scientific_object_series" | "scientific_object_revision" | "run_reference" | "session_reference" | "artifact_reference" | "literature_reference" | "external_reference";
+        /** ResourceShareCreate */
+        ResourceShareCreate: {
+            /**
+             * Resource Id
+             * Format: uuid
+             */
+            resource_id: string;
+        };
+        /** ResourceShareRead */
+        ResourceShareRead: {
+            /**
+             * Resource Id
+             * Format: uuid
+             */
+            resource_id: string;
+            resource_kind: components["schemas"]["ResourceKind"];
+        };
         /** RevisionCreate */
         RevisionCreate: {
             /** Payload */
@@ -1878,6 +1996,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_project_api_projects__project_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectRead"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -2516,6 +2671,39 @@ export interface operations {
             };
         };
     };
+    list_members_api_projects__project_id__members_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     add_membership_api_projects__project_id__members_post: {
         parameters: {
             query?: never;
@@ -2535,6 +2723,76 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_membership_api_projects__project_id__members__member_actor_id__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                member_actor_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_membership_api_projects__project_id__members__member_actor_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                member_actor_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2798,6 +3056,42 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_preferred_revision_api_projects__project_id__objects__series_id__preferred_revision_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                series_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferredRevisionPut"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -3392,6 +3686,43 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    share_resource_api_projects__project_id__shares_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceShareCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResourceShareRead"];
                 };
             };
             /** @description Validation Error */

@@ -32,6 +32,7 @@ from revolab.content_store import ContentStore
 from revolab.domain import compute as compute_domain
 from revolab.domain import persistence
 from revolab.domain.errors import AuthorizationError, ValidationError
+from revolab.domain.provider import credentials_present
 from revolab.drivers import Capability, DriverContext, DriverRegistry
 from revolab.enums import (
     CapabilityErrorKind,
@@ -39,6 +40,7 @@ from revolab.enums import (
     ProviderRuntimeHealth,
     RelationType,
     ResourceKind,
+    Role,
 )
 from revolab.models import (
     ArtifactReference,
@@ -425,3 +427,81 @@ def test_shared_visible_input_is_submittable_without_source_stewardship(
     )
     assert edge is not None
     assert edge.source_id == revision
+
+
+def test_shared_artifact_resolves_under_callers_credential_not_sharers(
+    session, secret_store, tmp_path
+) -> None:
+    """TODO.md #9: a shared Run/Artifact reference grants REvoLab context
+    visibility only. Resolving the upstream bytes must use the CALLING Actor's
+    own credential — never the sharer's — and fails typed when absent."""
+    state = _State()
+    registry = _started(state, required_kinds=("api_key",))
+    actor_a = _actor(session)
+    actor_b = _actor(session)
+    project_a = _project(session, actor_a)
+    project_b = _project(session, actor_b)
+    services.add_membership(session, actor_b, project_b, actor_a, Role.MEMBER.value)
+
+    # Actor A holds the credential and produces an artifact through project A.
+    services.provision_credential(
+        session, secret_store, registry, actor_a, "fakecompute", "api_key", "a-only-secret"
+    )
+    revision = _revision(session, actor_a, project_a, {"sequence": "MEEP"})
+    submitted = services.compute_submit(
+        session, registry, secret_store, ContentStore(tmp_path), actor_a, project_a,
+        "fakecompute", "echo",
+        [InputBinding(kind=ResourceKind.SCIENTIFIC_OBJECT_REVISION, resource_id=revision)],
+        {},
+    )
+    artifacts = services.compute_refresh_artifacts(
+        session, registry, secret_store, actor_a, project_a, "fakecompute",
+        submitted["run_resource_id"], submitted["native_id"],
+    )
+    artifact = session.get(ArtifactReference, artifacts[0]["resource_id"])
+    assert artifact is not None
+    identity = artifacts[0]
+
+    # Share the ArtifactReference into Project B (context/read lens only).
+    services.share_resource(session, actor_a, project_b, artifact.artifact_id)
+
+    # Actor B has no credential: resolution must fail through the typed
+    # authorization boundary rather than silently reuse Actor A's secret.
+    assert credentials_present(session, actor_b, "fakecompute", ("api_key",)) is False
+    with pytest.raises(AuthorizationError):
+        compute_domain.resolve_artifact(
+            session,
+            registry,
+            secret_store,
+            actor_b,
+            "fakecompute",
+            ExternalArtifactRef(
+                authority="fakecompute",
+                native_id=identity["native_id"],
+                version_id=identity["version_id"] or "",
+                content_type=identity["content_type"],
+                size=identity["size"],
+                checksum=identity["checksum"],
+            ),
+            permitted=True,
+        )
+
+    # Actor A (the credential holder) can still resolve with their own lease.
+    assert credentials_present(session, actor_a, "fakecompute", ("api_key",)) is True
+    resolved = compute_domain.resolve_artifact(
+        session,
+        registry,
+        secret_store,
+        actor_a,
+        "fakecompute",
+        ExternalArtifactRef(
+            authority="fakecompute",
+            native_id=identity["native_id"],
+            version_id=identity["version_id"] or "",
+            content_type=identity["content_type"],
+            size=identity["size"],
+            checksum=identity["checksum"],
+        ),
+        permitted=True,
+    )
+    assert resolved.data == state.bytes(submitted["native_id"])
