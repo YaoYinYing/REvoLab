@@ -831,6 +831,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/tool-invocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tool Invocations
+         * @description Project-scoped activity log of persisted local-analysis Tool invocations
+         *     (reproducibility + observability). Never exposes secret material; the stored
+         *     `parameters` are canonical validated model dumps, not raw request input.
+         */
+        get: operations["list_tool_invocations_api_projects__project_id__tool_invocations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/tools": {
         parameters: {
             query?: never;
@@ -2180,10 +2202,52 @@ export interface components {
             tool_id: string;
         };
         /**
+         * ToolInvocationRead
+         * @description Durable local-tool activity record for persisted derived results (TODO.md
+         *     sections 17/18): which Tool/version, from which input resources, with which
+         *     typed parameters, and the derived artifact's identity. Not a Run model.
+         */
+        ToolInvocationRead: {
+            /** Actor Id */
+            actor_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Resource Ids */
+            input_resource_ids?: string[];
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            result_kind: components["schemas"]["ToolResultKind"];
+            /** Result Resource Id */
+            result_resource_id?: string | null;
+            /** Status */
+            status: string;
+            /** Tool Id */
+            tool_id: string;
+            /** Tool Version */
+            tool_version: string;
+        };
+        /**
          * ToolResultKind
          * @description The durable kind of a ToolResult: what the invocation produced (TODO.md
          *     section 7). `ephemeral` results are never persisted; every other kind names a
          *     durable REvoLab resource recorded through a typed domain operation.
+         *
+         *     Phase 7 produces `ephemeral`, `artifact`, `evidence`, and `decision`.
+         *     `scientific_object` and `run_reference` are RESERVED forward vocabulary for
+         *     future tools (typed ScientificObject creation / a Tool-facing run reference);
+         *     they currently have no producing code path and are not fabricated.
          * @enum {string}
          */
         ToolResultKind: "ephemeral" | "artifact" | "evidence" | "decision" | "scientific_object" | "run_reference";
@@ -2217,13 +2281,19 @@ export interface components {
          * @description What a successful Project Tool invocation may durably produce (TODO.md
          *     section 3/8). Persistence semantics are declared by the tool and enforced by
          *     the runtime — a ToolResult is never promoted to project truth automatically.
+         *
+         *     `creates_derived_result` covers any durable NON-truth resource the tool
+         *     persists through a typed domain operation — locally derived analysis
+         *     artifacts (CSV/plot spec), or harvested external reference identity cards —
+         *     never an Evidence/Decision promotion.
          * @enum {string}
          */
         ToolSideEffectClass: "read_only" | "creates_derived_result" | "creates_project_truth" | "external_action";
         /**
          * ToolSource
-         * @description Where a Phase-6 Agent tool descriptor originates (TODO.md section 3):
-         *     a REvoLab typed domain operation or an available Provider capability.
+         * @description Where a Project Tool descriptor originates (TODO.md section 3): a REvoLab
+         *     typed domain/analysis operation (`domain`) or an available Provider
+         *     capability (`provider`). Not secret-bearing; presentation metadata only.
          * @enum {string}
          */
         ToolSource: "domain" | "provider";
@@ -4424,6 +4494,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceShareRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tool_invocations_api_projects__project_id__tool_invocations_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolInvocationRead"][];
                 };
             };
             /** @description Validation Error */

@@ -7,7 +7,7 @@ is duplicated by hand into the frontend or into project skills.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
@@ -756,7 +756,7 @@ class ToolInvocationRead(BaseModel):
     tool_id: str
     tool_version: str
     actor_id: UUID | None = None
-    input_resource_ids: list[UUID] = Field(default_factory=list)
+    input_resource_ids: list[str] = Field(default_factory=list)
     parameters: dict[str, Any] = Field(default_factory=dict)
     result_kind: ToolResultKind
     result_resource_id: UUID | None = None
@@ -830,7 +830,9 @@ class TableDescribeCreate(BaseModel):
 
 class TableSelectCreate(BaseModel):
     artifact_id: UUID
-    columns: list[str] | None = Field(default=None, max_length=MAX_SELECT_COLUMNS)
+    columns: list[Annotated[str, Field(max_length=500)]] | None = Field(
+        default=None, max_length=MAX_SELECT_COLUMNS
+    )
     filter_column: str | None = Field(default=None, max_length=500)
     filter_value: str | None = Field(default=None, max_length=500)
     limit: int = Field(default=50, ge=1, le=1000)

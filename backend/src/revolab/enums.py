@@ -187,8 +187,9 @@ class CapabilityErrorKind(StrEnum):
 
 
 class ToolSource(StrEnum):
-    """Where a Phase-6 Agent tool descriptor originates (TODO.md section 3):
-    a REvoLab typed domain operation or an available Provider capability."""
+    """Where a Project Tool descriptor originates (TODO.md section 3): a REvoLab
+    typed domain/analysis operation (`domain`) or an available Provider
+    capability (`provider`). Not secret-bearing; presentation metadata only."""
 
     DOMAIN = "domain"
     PROVIDER = "provider"
@@ -248,7 +249,12 @@ class ToolSideEffectClass(StrEnum):
 class ToolResultKind(StrEnum):
     """The durable kind of a ToolResult: what the invocation produced (TODO.md
     section 7). `ephemeral` results are never persisted; every other kind names a
-    durable REvoLab resource recorded through a typed domain operation."""
+    durable REvoLab resource recorded through a typed domain operation.
+
+    Phase 7 produces `ephemeral`, `artifact`, `evidence`, and `decision`.
+    `scientific_object` and `run_reference` are RESERVED forward vocabulary for
+    future tools (typed ScientificObject creation / a Tool-facing run reference);
+    they currently have no producing code path and are not fabricated."""
 
     EPHEMERAL = "ephemeral"
     ARTIFACT = "artifact"

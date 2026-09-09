@@ -168,7 +168,10 @@ the runtime:
   `ToolInvocation` reproducibility record (tool_id, tool_version,
   input_resource_ids, parameters, result_resource_id). `ToolInvocation` is a
   REvoLab-local activity record, explicitly NOT a `RunReference` (external
-  REvoCompute execution identity card).
+  REvoCompute execution identity card). The stored `parameters` are the
+  CANONICAL validated model dump (never the raw request dict); the record is
+  written in ONE transaction with its derived artifact and is readable through
+  `GET /api/projects/{project_id}/tool-invocations`.
 - `creates_project_truth` → routes through the existing typed domain operations
   (Evidence/Decision). A Decision draft is the only shape the proposal path can
   produce; committing remains the separate authorized promotion gate.
@@ -213,9 +216,17 @@ Tool, which version (`1.0.0`), from which input resource identities, with which
 typed parameters. Heavy reproducibility belongs to REvoCompute; local tools capture
 only that stable, minimal context.
 
+Derived-analysis lineage is deliberately recorded in `ToolInvocation` (the
+REvoLab-local activity record), NOT as a `GlobalProvenanceEdge`. The frozen edge
+matrix has no artifact→artifact relation, and `SCIENTIFIC_GRAPH.md` ownership would have to
+change to add one, so tool derivation is activity/provenance-for-humans, while the
+scientific graph keeps only its accepted typed edges.
+
 ## Security / resource bounds
 
 The Tool Harness is not a code-execution service. Every local tool has explicit
 bounds and fails closed on unsupported formats; tool inputs are untrusted and
 validated at the boundary; tool implementations are trusted project code registered
-ahead of invocation.
+ahead of invocation. Local analysis reads external artifacts only through the
+provider's BOUNDED preview path, so a size-less external artifact can never be
+materialized beyond the 1 MiB analysis bound.

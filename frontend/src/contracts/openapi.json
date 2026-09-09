@@ -3235,8 +3235,96 @@
         "title": "ToolInvocationCreate",
         "type": "object"
       },
+      "ToolInvocationRead": {
+        "description": "Durable local-tool activity record for persisted derived results (TODO.md\nsections 17/18): which Tool/version, from which input resources, with which\ntyped parameters, and the derived artifact's identity. Not a Run model.",
+        "properties": {
+          "actor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "input_resource_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Input Resource Ids",
+            "type": "array"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "result_kind": {
+            "$ref": "#/components/schemas/ToolResultKind"
+          },
+          "result_resource_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Resource Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "string"
+          },
+          "tool_version": {
+            "title": "Tool Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "tool_id",
+          "tool_version",
+          "result_kind",
+          "status"
+        ],
+        "title": "ToolInvocationRead",
+        "type": "object"
+      },
       "ToolResultKind": {
-        "description": "The durable kind of a ToolResult: what the invocation produced (TODO.md\nsection 7). `ephemeral` results are never persisted; every other kind names a\ndurable REvoLab resource recorded through a typed domain operation.",
+        "description": "The durable kind of a ToolResult: what the invocation produced (TODO.md\nsection 7). `ephemeral` results are never persisted; every other kind names a\ndurable REvoLab resource recorded through a typed domain operation.\n\nPhase 7 produces `ephemeral`, `artifact`, `evidence`, and `decision`.\n`scientific_object` and `run_reference` are RESERVED forward vocabulary for\nfuture tools (typed ScientificObject creation / a Tool-facing run reference);\nthey currently have no producing code path and are not fabricated.",
         "enum": [
           "ephemeral",
           "artifact",
@@ -3311,7 +3399,7 @@
         "type": "object"
       },
       "ToolSideEffectClass": {
-        "description": "What a successful Project Tool invocation may durably produce (TODO.md\nsection 3/8). Persistence semantics are declared by the tool and enforced by\nthe runtime \u2014 a ToolResult is never promoted to project truth automatically.",
+        "description": "What a successful Project Tool invocation may durably produce (TODO.md\nsection 3/8). Persistence semantics are declared by the tool and enforced by\nthe runtime \u2014 a ToolResult is never promoted to project truth automatically.\n\n`creates_derived_result` covers any durable NON-truth resource the tool\npersists through a typed domain operation \u2014 locally derived analysis\nartifacts (CSV/plot spec), or harvested external reference identity cards \u2014\nnever an Evidence/Decision promotion.",
         "enum": [
           "read_only",
           "creates_derived_result",
@@ -3322,7 +3410,7 @@
         "type": "string"
       },
       "ToolSource": {
-        "description": "Where a Phase-6 Agent tool descriptor originates (TODO.md section 3):\na REvoLab typed domain operation or an available Provider capability.",
+        "description": "Where a Project Tool descriptor originates (TODO.md section 3): a REvoLab\ntyped domain/analysis operation (`domain`) or an available Provider\ncapability (`provider`). Not secret-bearing; presentation metadata only.",
         "enum": [
           "domain",
           "provider"
@@ -7440,6 +7528,90 @@
           }
         },
         "summary": "Share Resource"
+      }
+    },
+    "/api/projects/{project_id}/tool-invocations": {
+      "get": {
+        "description": "Project-scoped activity log of persisted local-analysis Tool invocations\n(reproducibility + observability). Never exposes secret material; the stored\n`parameters` are canonical validated model dumps, not raw request input.",
+        "operationId": "list_tool_invocations_api_projects__project_id__tool_invocations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ToolInvocationRead"
+                  },
+                  "title": "Response List Tool Invocations Api Projects  Project Id  Tool Invocations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Tool Invocations"
       }
     },
     "/api/projects/{project_id}/tools": {

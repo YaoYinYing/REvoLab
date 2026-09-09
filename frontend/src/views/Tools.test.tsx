@@ -58,7 +58,7 @@ beforeEach(() => {
 describe('Tools view', () => {
   it('renders local tools and separates remote compute tools', () => {
     render(<ToolsView actorId="actor-1" projectId="project-1" />)
-    expect(screen.getByText('Describe table')).toBeDefined()
+    expect(screen.getAllByText('Describe table').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Fake Compute: submit task').length).toBeGreaterThan(0)
     expect(screen.getByText('Remote compute tools')).toBeDefined()
   })

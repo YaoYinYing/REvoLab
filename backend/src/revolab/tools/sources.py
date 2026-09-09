@@ -33,6 +33,25 @@ MAX_ROWS = 10_000
 MAX_COLUMNS = 100
 MAX_PLOT_POINTS = 5_000
 
+# Tabular analysis accepts only CSV-ish media types; anything else (JSON, TSV,
+# images, binary) fails closed rather than being silently mis-parsed.
+_TABULAR_CONTENT_TYPES = frozenset(
+    {
+        "text/csv",
+        "application/csv",
+        "text/plain",
+        "application/vnd.ms-excel",
+    }
+)
+
+
+def _require_tabular_content_type(content_type: str | None) -> None:
+    base = (content_type or "").split(";", 1)[0].strip().lower()
+    if base and base not in _TABULAR_CONTENT_TYPES:
+        raise ValidationError(
+            f"unsupported artifact content type {content_type!r} for tabular analysis"
+        )
+
 
 def _is_visible(session: Session, project_id: UUID, artifact_id: UUID) -> bool:
     from revolab.domain import persistence
@@ -54,11 +73,15 @@ def require_artifact_visible(
 
 
 def read_analysis_bytes(ctx: InvocationContext, artifact_id: UUID) -> tuple[ArtifactReference, bytes]:
-    """Read bounded bytes for a local analysis tool, failing closed on size/kind
-    mismatches. External bytes are resolved live through the owning provider and
-    are never copied into Core here (only the caller may decide to persist a
-    derived result through the typed practitioner path)."""
+    """Read bounded bytes for a local analysis tool, failing closed on unsupported
+    formats and on anything that exceeds the per-analysis byte bound.
+
+    External bytes are read ONLY through the provider's BOUNDED preview path
+    (`resolve_artifact_preview` with `limit = MAX_ANALYSIS_BYTES + 1`), so an
+    external artifact whose durable `size` is unknown can never be fully
+    materialized before the bound is applied."""
     artifact = require_artifact_visible(ctx.session, ctx.actor_id, ctx.project_id, artifact_id)
+    _require_tabular_content_type(artifact.content_type)
     if artifact.size is not None and artifact.size > MAX_ANALYSIS_BYTES:
         raise ValidationError(
             f"artifact exceeds the local analysis byte bound ({MAX_ANALYSIS_BYTES} bytes)"
@@ -71,7 +94,7 @@ def read_analysis_bytes(ctx: InvocationContext, artifact_id: UUID) -> tuple[Arti
             raise NotFoundError(
                 f"no provider registered for authority {artifact.authority!r}"
             )
-        resolved = compute_domain.resolve_artifact(
+        resolved = compute_domain.resolve_artifact_preview(
             ctx.session,
             ctx.registry,
             ctx.secret_store,
@@ -88,6 +111,8 @@ def read_analysis_bytes(ctx: InvocationContext, artifact_id: UUID) -> tuple[Arti
             permitted=services.project_policy_permits(
                 ctx.session, ctx.actor_id, ctx.project_id, CapabilityKind.ARTIFACT_RESOLUTION
             ),
+            offset=0,
+            limit=MAX_ANALYSIS_BYTES + 1,
         )
         data = resolved.data or b""
     if len(data) > MAX_ANALYSIS_BYTES:

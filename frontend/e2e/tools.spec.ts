@@ -62,7 +62,7 @@ test('local analysis tool analyzes a compute-produced artifact', async ({ page }
 
   // table.select with persist -> derived ArtifactReference + durable record.
   await page.getByLabel('Tool').selectOption('table.select')
-  await page.getByPlaceholder('x,y').fill('group,value')
+  await page.getByLabel('columns').fill('group,value')
   await page.getByText('Persist result as a derived artifact (owner/member)').click()
   await page.getByRole('button', { name: 'Run analysis' }).click()
   await expect(page.getByText('artifact', { exact: true })).toBeVisible()

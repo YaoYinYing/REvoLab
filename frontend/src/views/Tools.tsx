@@ -3,19 +3,48 @@ import { FlaskConical, Play, Zap } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
 import { useResources, useTools } from '../api/hooks'
+import { apiErrorMessage } from '../api/client'
 import type { ReferenceRead, ToolDescriptorRead, ToolResultRead } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
 import {
+  AGENT_TOOL_AUTONOMY_EXPLICIT_ACTION,
   RESOURCE_KIND_ARTIFACT,
   TOOL_EXECUTION_CLASS_LOCAL,
   TOOL_EXECUTION_CLASS_REMOTE,
   TOOL_RESULT_KIND_ARTIFACT,
   TOOL_RESULT_KIND_EPHEMERAL,
+  TOOL_SIDE_EFFECT_CREATES_DERIVED_RESULT,
 } from '../contracts/enums'
 
-function toneFor(executionClass: string): 'good' | 'neutral' {
-  return executionClass === TOOL_EXECUTION_CLASS_LOCAL ? 'good' : 'neutral'
+// Presentation grouping only: which catalog tools belong to the local analysis
+// surface. Tool names, descriptions, availability and schemas all come from the
+// canonical catalog below — these ids are a view filter, not a schema copy.
+const ANALYSIS_TOOL_IDS = new Set(['table.describe', 'table.select', 'plot.xy'])
+
+type JsonSchema = Record<string, unknown> & {
+  type?: string | string[]
+  anyOf?: JsonSchema[]
+  properties?: Record<string, JsonSchema>
+}
+
+function resolveType(descriptor: JsonSchema): string {
+  const raw = descriptor.type
+  if (Array.isArray(raw)) {
+    if (raw.includes('array')) return 'array'
+    if (raw.includes('integer') || raw.includes('number')) return 'number'
+    return 'string'
+  }
+  if (typeof raw === 'string') return raw
+  // Pydantic optional fields render as anyOf: [real, null] with no top-level type.
+  if (Array.isArray(descriptor.anyOf)) {
+    const nonNull = descriptor.anyOf.filter((option) => {
+      const optionType = (option as JsonSchema).type
+      return optionType === 'array' || optionType === 'integer' || optionType === 'number'
+    })
+    if (nonNull.length > 0) return resolveType(nonNull[0] as JsonSchema)
+  }
+  return 'string'
 }
 
 function ToolRow({ tool }: { tool: ToolDescriptorRead }) {
@@ -25,9 +54,13 @@ function ToolRow({ tool }: { tool: ToolDescriptorRead }) {
         {tool.execution_class === TOOL_EXECUTION_CLASS_LOCAL ? <Zap size={15} /> : <Play size={15} />}
         <strong>{tool.name}</strong>
         <small className="mono">{tool.id}</small>
-        <Badge tone={toneFor(tool.execution_class)}>{tool.execution_class}</Badge>
+        <Badge tone={tool.execution_class === TOOL_EXECUTION_CLASS_LOCAL ? 'good' : 'neutral'}>
+          {tool.execution_class}
+        </Badge>
         <Badge>{tool.side_effect_class}</Badge>
-        <Badge tone={tool.autonomy === 'explicit_action' ? 'warn' : 'neutral'}>{tool.autonomy}</Badge>
+        <Badge tone={tool.autonomy === AGENT_TOOL_AUTONOMY_EXPLICIT_ACTION ? 'warn' : 'neutral'}>
+          {tool.autonomy}
+        </Badge>
         {tool.available ? <Badge tone="good">available</Badge> : <Badge tone="warn">unavailable</Badge>}
       </div>
       <p>{tool.description}</p>
@@ -39,17 +72,59 @@ function ToolRow({ tool }: { tool: ToolDescriptorRead }) {
   )
 }
 
-type AnalysisToolId = 'table.describe' | 'table.select' | 'plot.xy'
+function SchemaInput({
+  name,
+  descriptor,
+  value,
+  onChange,
+}: {
+  name: string
+  descriptor: JsonSchema
+  value: unknown
+  onChange: (name: string, value: unknown) => void
+}) {
+  const type = resolveType(descriptor)
+  if (type === 'array') {
+    const raw = Array.isArray(value) ? value.join(', ') : ''
+    return (
+      <input
+        value={raw}
+        onChange={(event) =>
+          onChange(
+            name,
+            event.target.value
+              .split(',')
+              .map((item) => item.trim())
+              .filter(Boolean),
+          )
+        }
+        placeholder="comma separated"
+      />
+    )
+  }
+  if (type === 'integer' || type === 'number') {
+    return (
+      <input
+        type="number"
+        value={typeof value === 'number' ? String(value) : ''}
+        onChange={(event) => onChange(name, event.target.value === '' ? undefined : Number(event.target.value))}
+      />
+    )
+  }
+  return (
+    <input
+      value={typeof value === 'string' ? value : ''}
+      onChange={(event) => onChange(name, event.target.value === '' ? undefined : event.target.value)}
+    />
+  )
+}
 
 export function ToolsView({ actorId, projectId }: { actorId: string; projectId: string }) {
   const tools = useTools(actorId, projectId)
   const artifacts = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
+  const [selectedToolId, setSelectedToolId] = useState<string>('table.describe')
   const [selectedArtifactId, setSelectedArtifactId] = useState<string>('')
-  const [toolId, setToolId] = useState<AnalysisToolId>('table.describe')
-  const [columns, setColumns] = useState('')
-  const [xColumn, setXColumn] = useState('')
-  const [yColumns, setYColumns] = useState('')
-  const [title, setTitle] = useState('')
+  const [params, setParams] = useState<Record<string, unknown>>({})
   const [persist, setPersist] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -63,32 +138,44 @@ export function ToolsView({ actorId, projectId }: { actorId: string; projectId: 
     () => (tools.data?.tools ?? []).filter((tool) => tool.execution_class === TOOL_EXECUTION_CLASS_REMOTE),
     [tools.data],
   )
+  const analysisTools = useMemo(() => localTools.filter((tool) => ANALYSIS_TOOL_IDS.has(tool.id)), [localTools])
+  const selectedTool = analysisTools.find((tool) => tool.id === selectedToolId) ?? analysisTools[0]
+
+  const inputSchema = (selectedTool?.input_schema as JsonSchema) ?? null
+  const inputProperties = Object.entries(inputSchema?.properties ?? {}).filter(
+    ([name]) => name !== 'artifact_id',
+  )
+
+  function selectTool(id: string) {
+    setSelectedToolId(id)
+    setParams({})
+    setResult(null)
+  }
 
   async function run() {
     setError(null)
+    if (!selectedTool) {
+      setError('Select an analysis tool.')
+      return
+    }
     if (!selectedArtifactId) {
       setError('Select an artifact to analyze.')
       return
     }
-    setBusy(true)
-    const input: Record<string, unknown> = { artifact_id: selectedArtifactId }
-    if (toolId === 'table.select') {
-      if (columns.trim()) input.columns = columns.split(',').map((value) => value.trim()).filter(Boolean)
-      input.limit = 50
-    } else if (toolId === 'plot.xy') {
-      input.x_column = xColumn
-      input.y_columns = yColumns.split(',').map((value) => value.trim()).filter(Boolean)
-      if (title.trim()) input.title = title
+    if (!selectedTool.available) {
+      setError('This tool is not available to you in this project.')
+      return
     }
-
+    setBusy(true)
+    const input: Record<string, unknown> = { artifact_id: selectedArtifactId, ...params }
     const res = await projectApi(actorId).invokeTool(projectId, {
-      tool_id: toolId,
+      tool_id: selectedTool.id,
       input,
-      persist,
+      persist: selectedTool.side_effect_class === TOOL_SIDE_EFFECT_CREATES_DERIVED_RESULT && persist,
     })
     setBusy(false)
     if (res.error || !res.data) {
-      setError('The analysis failed.')
+      setError(apiErrorMessage(res.error, res.response))
       return
     }
     setResult(res.data as ToolResultRead)
@@ -119,10 +206,16 @@ export function ToolsView({ actorId, projectId }: { actorId: string; projectId: 
       <Section title="Local analysis">
         <div className="stack-form">
           <Field label="Tool">
-            <select value={toolId} onChange={(event) => setToolId(event.target.value as AnalysisToolId)}>
-              <option value="table.describe">table.describe — summarize columns</option>
-              <option value="table.select">table.select — select columns / persist</option>
-              <option value="plot.xy">plot.xy — structured X-Y plot spec</option>
+            <select
+              value={selectedTool?.id ?? ''}
+              onChange={(event) => selectTool(event.target.value)}
+              aria-label="Tool"
+            >
+              {analysisTools.map((tool) => (
+                <option key={tool.id} value={tool.id} disabled={!tool.available}>
+                  {tool.name}
+                </option>
+              ))}
             </select>
           </Field>
           <Field label="Artifact">
@@ -144,32 +237,27 @@ export function ToolsView({ actorId, projectId }: { actorId: string; projectId: 
               </div>
             )}
           </Field>
-          {toolId === 'table.select' ? (
-            <Field label="Columns (comma separated; empty = all)">
-              <input value={columns} onChange={(event) => setColumns(event.target.value)} placeholder="x,y" />
+          {inputProperties.map(([name, descriptor]) => (
+            <Field key={name} label={name}>
+              <SchemaInput
+                name={name}
+                descriptor={descriptor}
+                value={params[name]}
+                onChange={(field, value) => {
+                  setParams((current) => ({ ...current, [field]: value }))
+                  setResult(null)
+                }}
+              />
             </Field>
-          ) : null}
-          {toolId === 'plot.xy' ? (
-            <>
-              <Field label="X column">
-                <input value={xColumn} onChange={(event) => setXColumn(event.target.value)} placeholder="x" />
-              </Field>
-              <Field label="Y columns (comma separated)">
-                <input value={yColumns} onChange={(event) => setYColumns(event.target.value)} placeholder="y" />
-              </Field>
-              <Field label="Plot title (optional)">
-                <input value={title} onChange={(event) => setTitle(event.target.value)} />
-              </Field>
-            </>
-          ) : null}
-          {(toolId === 'table.select' || toolId === 'plot.xy') && localTools.some((tool) => tool.id === toolId) ? (
+          ))}
+          {selectedTool?.side_effect_class === TOOL_SIDE_EFFECT_CREATES_DERIVED_RESULT ? (
             <label className="field-inline">
               <input type="checkbox" checked={persist} onChange={(event) => setPersist(event.target.checked)} />
               Persist result as a derived artifact (owner/member)
             </label>
           ) : null}
           <div className="form-actions">
-            <Button type="button" onClick={run} disabled={busy}>
+            <Button type="button" onClick={run} disabled={busy || selectedTool?.available === false}>
               {busy ? 'Running…' : 'Run analysis'}
             </Button>
             {error ? <span className="inline-error">{error}</span> : null}

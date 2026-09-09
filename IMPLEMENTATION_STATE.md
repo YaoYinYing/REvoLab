@@ -868,13 +868,18 @@ passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
 ## Verified evidence (Phase 7)
 
 - Backend: `ruff check backend` and strict `mypy` pass (46 source files). `pytest`
-  passes with **262 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  passes with **275 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
   acceptance file). New `tests/test_tools.py` covers registry duplicate-id
-  rejection/closedness, unknown-tool fail-closed, catalog authority/availability,
-  local tools independent of provider credentials, typed table/plot outputs,
-  viewer persist/truth denial, schema validation, unsupported/oversized/truncated
-  bounds, the persisted `ToolInvocation` record, and the REvoCompute-produced
-  artifact analyzed locally (`test_revocompute_artifact_analyzed_locally`).
+  rejection/closedness, unknown/remote-tool-id and banned-tool-id fail-closed,
+  catalog authority/availability/secret-absence, typed table/plot outputs,
+  viewer persist/truth denial, owner truth-tool success, schema validation,
+  unsupported format/oversized/truncated/size-None-external bounds, validated
+  (`model_dump`) parameters only, mis-wired typed-output rejection, no
+  provenance-edge/registry write for derived artifacts, tombstone survival, the
+  persisted `ToolInvocation` record + its read endpoint, and the
+  REvoCompute-produced artifact analyzed locally
+  (`test_revocompute_artifact_analyzed_locally` +
+  `test_external_compute_artifact_select_persist_over_http`).
 - PostgreSQL: `alembic upgrade head` + `alembic check` report no drift on a fresh
   SQLite stack and PostgreSQL; `test_phase7_tool_harness_vertical_slice_on_postgres`
   exercises internal CSV → `table.select` persist → Evidence → Decision draft, plus
@@ -887,6 +892,59 @@ passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
   collaboration, and the new `tools.spec.ts` (Project → fake compute `tabular` →
   local `table.describe`/`table.select` persist → Evidence → Decision draft →
   commit → reloaded Knowledge).
+
+## Independent review (Phase 7)
+
+Five fresh read-only reviewers audited the branch on the five TODO.md lenses
+(A: Project Harness architecture, B: local analysis runtime, C: REvoCompute /
+provenance, D: Agent/security/authority, E: API/frontend/tests/CI). **No P0
+findings.** A and C returned PASS; B, D and E requested changes. Every P1 was
+fixed and useful in-scope P2s were addressed with regressions, then the full
+suite was rerun green:
+
+- **P1 (E) — stale OpenAPI snapshot.** The committed `openapi.json` lagged the
+  `ToolSideEffectClass` enum docstring (caught independently by the backend CI
+  drift gate). Re-exported `openapi.json` from the canonical FastAPI schema and
+  regenerated `schema.d.ts`/`enums.generated.ts`; the committed snapshot now
+  matches a fresh export byte-for-byte.
+- **P1 (B) — unvalidated input persisted.** `ToolInvocation.parameters` stored
+  the raw request dict; extra/unknown keys could reach durable storage. The
+  runtime now persists `parsed.model_dump(mode="json")` (the canonical validated
+  model), and a regression asserts extra keys (e.g. a dropped sentinel) never
+  appear in the stored record.
+- **P1 (B, C) — unbounded external read when `size` is unknown.** Local analysis
+  of an external artifact now always reads through the provider's BOUNDED
+  `resolve_artifact_preview(limit=MAX_ANALYSIS_BYTES + 1)` and applies the byte
+  bound pre-materialization, so a size-less external artifact can never be fully
+  downloaded. Content-type is also gated (CSV-ish only), so JSON/TSV/binary
+  artifacts fail closed rather than being silently mis-parsed. A `size=None` +
+  oversized regression pins this.
+- **P1 (D) — dual tool definition on the human surface.** The Analyze run form
+  is now derived from the canonical `ToolCatalog`: tool options (names/labels/
+  availability) come from the fetched catalog, the parameter form is rendered
+  from each tool's `input_schema`, persist is gated by the descriptor's
+  `side_effect_class`, and the backend-owned autonomy value uses the generated
+  enum constant — no hand-maintained tool-id union/parameter copy remains.
+- **P2 (A/C/E) — dead/mismatched `ToolInvocationRead`.** `input_resource_ids`
+  aligned to `list[str]` (the durable storage type) and the schema is now wired
+  to `GET /api/projects/{project_id}/tool-invocations` (bounded project activity
+  log).
+- **P2 (B) — typed-output validation.** The runtime now rejects a handler that
+  returns a model other than its declared `output_model` (defense-in-depth),
+  pinned by a mis-wired-handler regression.
+- **P2 (B) — O(N) visibility check.** `inspect_artifact` now uses the scalar
+  `persistence.is_visible` EXISTS check instead of materializing the full
+  visible-resource dict.
+- **P2 (B) — per-item column bound.** `TableSelectCreate.columns` items are
+  bounded to 500 chars (not just the list length).
+- **P2 (C) — non-atomic derived persistence.** The derived `ArtifactReference`
+  and its `ToolInvocation` record are now written in ONE transaction
+  (`create_internal_artifact(commit=False)` → record → single commit).
+- **Design decision (C, by evidence) — no typed artifact→artifact provenance
+  edge.** Derived-analysis lineage is deliberately recorded in `ToolInvocation`
+  (REvoLab-local activity), not a `GlobalProvenanceEdge`: the frozen edge matrix
+  has no artifact→artifact relation, and adding one would change accepted
+  SCIENTIFIC_GRAPH ownership. Documented in `PROJECT_TOOL_HARNESS.md`.
 
 ## Known deferrals (explicit, not silently postponed)
 

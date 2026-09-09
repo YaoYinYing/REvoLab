@@ -15,10 +15,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from revolab import queries, services
+from revolab import services
 from revolab.capabilities import ExternalArtifactRef
 from revolab.content_store import ContentStore
 from revolab.domain import compute as compute_domain
+from revolab.domain import persistence
 from revolab.domain.errors import AuthorizationError, NotFoundError
 from revolab.domain.identity import readable_membership
 from revolab.drivers import DriverRegistry
@@ -43,7 +44,7 @@ def inspect_artifact(
     preview_limit: int = DEFAULT_PREVIEW_LIMIT,
 ) -> ArtifactInspectRead:
     readable_membership(session, actor_id, project_id)
-    if artifact_id not in queries.visible_resources(session, project_id):
+    if not persistence.is_visible(session, project_id, artifact_id):
         raise AuthorizationError("artifact is not visible through this project")
     artifact = session.scalar(
         select(ArtifactReference).where(ArtifactReference.artifact_id == artifact_id)
