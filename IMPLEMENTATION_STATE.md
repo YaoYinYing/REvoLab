@@ -704,7 +704,9 @@ E2E **2 passed**.
   originating run (never bytes), provider capability summaries, and loaded skill
   identifiers. No DB writes, no link/membership changes, no credential resolution.
 - **Context budget.** Deterministic per-category caps; every category reports actual
-  counts and a `truncated` flag. Large artifacts are reference headers only.
+  counts and a `truncated` flag. Caps are global across the turn (`max_revisions` is
+  enforced across all selected series, not per-series). Large artifacts are
+  reference headers only.
 - **inspect_artifact tool boundary.** `inspect_artifact` resolves an
   `ArtifactReference` through the ContentStore (`authority == revolab`) or the
   existing `ArtifactResolutionCapability`, returns a bounded preview (default 2048,
@@ -736,7 +738,9 @@ E2E **2 passed**.
 - **Frontend slice.** `views/Agent.tsx` selects an object, renders the assembled
   context summary + tool catalog (autonomy badges) + the proposal form and draft
   status with an explicit commit control; the truth boundary "Agent proposal ≠
-  committed Project Knowledge" is rendered. No chat UI, no prompt management.
+  committed Project Knowledge" is rendered. The write controls (record draft /
+  commit) are gated by the generated `owner`/`member` role vocabulary. No chat UI,
+  no prompt management.
 - **PostgreSQL / browser slice.** `test_postgres_integration.py` gained the
   Phase-6 vertical slice; `e2e/agent.spec.ts` proves draft → explicit commit →
   committed Knowledge over the real backend.
@@ -744,7 +748,7 @@ E2E **2 passed**.
 ## Verified evidence (Phase 6)
 
 - Backend: `ruff check backend` and strict `mypy` pass (37 source files).
-  `pytest` passes with **228 passed, 5 skipped** (the five skips are the opt-in
+  `pytest` passes with **229 passed, 5 skipped** (the five skips are the opt-in
   PostgreSQL acceptance file run separately below).
 - Migrations: `alembic upgrade head` + `alembic check` report **no drift** on a
   clean SQLite database and on a clean PostgreSQL 16 database (`revolab_p6`). The
