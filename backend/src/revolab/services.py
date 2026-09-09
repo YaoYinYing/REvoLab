@@ -799,6 +799,9 @@ def create_run_reference(
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_run_reference(session, authority, native_id)
     if existing is not None:
+        # Authorize BEFORE comparing metadata so an unauthorized caller always
+        # sees AuthorizationError (never a 409 existence/mismatch oracle).
+        _authorize_existing_reference_link(session, actor_id, project_id, existing.run_id)
         provenance.assert_reference_compatible(
             existing,
             task_type=task_type,
@@ -840,10 +843,17 @@ def create_artifact_reference(
     checksum: str | None = None,
     version_id: str | None = None,
 ) -> Any:
+    """Request-derived authority-enforcing get-or-create for an artifact identity.
+
+    This is the share-authority-enforcing primitive; production callers that hold
+    independent authority (provider-enumerated artifacts, byte-furnished uploads)
+    use `_persist_artifact_reference_trusted` instead."""
     mutation_capable_membership(session, actor_id, project_id)
     version_id = version_id or ""
     existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
     if existing is not None:
+        # Authorize BEFORE comparing metadata: no 409 existence/mismatch oracle.
+        _authorize_existing_reference_link(session, actor_id, project_id, existing.artifact_id)
         provenance.assert_reference_compatible(
             existing, checksum=checksum, size=size, content_type=content_type
         )

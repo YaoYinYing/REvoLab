@@ -656,8 +656,36 @@ collaboration architecture:
   the idempotent early-return still resolves the kind where the link already
   exists.
 
+A second fresh pass (3 read-only reviewers: reference-reuse authorization,
+concurrency/idempotence, regression/contract consistency) found **no P0/P1**.
+Two in-scope P2s and the appropriate P3s were then fixed:
+
+- **P2** — in `create_run_reference` / `create_artifact_reference`, the
+  share-authority check now runs BEFORE `assert_reference_compatible`, so an
+  unauthorized caller sees `AuthorizationError` rather than a 409
+  existence/mismatch oracle (mirroring `share_resource`'s posture).
+- **P2** — added behavioral regressions for the race branch: a forced
+  `uq_link_project_resource` `IntegrityError` through `share_resource` returns
+  idempotent success when the link state (incl. revision→series closure) is
+  satisfied, an unrelated `IntegrityError` propagates, and
+  `_share_is_satisfied` rejects a revision whose owning series is not visible.
+- **P3** — positive reuse now covers all four reference kinds (was run-only);
+  stale test name corrected to `test_share_unknown_resource_is_not_authorized`;
+  `create_artifact_reference` documented as the request-derived/
+  authority-enforcing primitive.
+
+Accepted/deferred (documented, not silently postponed): an
+unauthorized prober can still distinguish an existing hidden reference (403)
+from a truly-new identity (201 mint) — inherent to get-or-create, and a strict
+improvement over the pre-fix silently-linking behavior; the downstream duplicate-
+link insert race in `_link_existing_reference` and the trusted helpers still maps
+a concurrent identical reuse to a raw `IntegrityError` (pre-existing, DB
+constraint still protects — tracked, not a Phase-5 blocker); `services.link_series`
+remains a tests-only internal link primitive and must never be promoted to a
+request/agent tool without source-read authority.
+
 Verification after the fix (rerun in full): `ruff`, strict `mypy`, `pytest`
-**211 passed / 4 skipped**, PostgreSQL acceptance **4 passed** + `alembic check`
+**214 passed / 4 skipped**, PostgreSQL acceptance **4 passed** + `alembic check`
 no drift, frontend typecheck/test(11)/build + `check:contracts` clean, Playwright
 E2E **2 passed**.
 

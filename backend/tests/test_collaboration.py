@@ -194,7 +194,7 @@ def test_uuid_possession_is_not_share_authority(session):
         services.share_resource(session, c_owner, c.id, series)
 
 
-def test_share_unknown_resource_is_not_found(session):
+def test_share_unknown_resource_is_not_authorized(session):
     owner = _actor(session)
     project = services.create_project(session, owner, "P")
     # Defense-in-depth: an actor with no read path to the resource is denied as
@@ -502,20 +502,27 @@ def test_existing_reference_identity_is_not_share_authority(session):
 
 
 def test_existing_reference_reuse_succeeds_when_source_visible(session):
-    actor_a, actor_c, a, c, run, _sess, _artifact, _literature = _reference_fixture(session)
-    # Idempotent already-visible reuse in the source Project.
+    actor_a, actor_c, a, c, run, sess_ref, artifact, literature = _reference_fixture(session)
+    # Idempotent already-visible reuse in the source Project (run).
     again = services.create_run_reference(session, actor_a, a.id, "revocompute", "run-private")
     assert again.run_id == run.run_id
-    # Source-read reuse into a second Project where the actor is a member.
+    # Source-read reuse into a second Project where the actor is a member —
+    # every reference kind reuses the same guarded `_link_existing_reference`.
     services.add_membership(session, actor_c, c.id, actor_a, Role.MEMBER.value)
-    reused = services.create_run_reference(session, actor_a, c.id, "revocompute", "run-private")
-    assert reused.run_id == run.run_id
-    assert run.run_id in {
+    assert services.create_run_reference(session, actor_a, c.id, "revocompute", "run-private").run_id == run.run_id
+    assert services.create_session_reference(session, actor_a, c.id, "revocompute", "sess-private").session_id == sess_ref.session_id
+    assert services.create_artifact_reference(
+        session, actor_a, c.id, "revocompute", "art-private",
+        content_type="text/plain", size=3, checksum="abc", version_id="v1",
+    ).artifact_id == artifact.artifact_id
+    assert services.create_literature_reference(session, actor_a, c.id, "doi", "10.1/private").literature_id == literature.literature_id
+    linked = {
         link.resource_id
         for link in session.scalars(
             select(ProjectResourceLink).where(ProjectResourceLink.project_id == c.id)
         )
     }
+    assert {run.run_id, sess_ref.session_id, artifact.artifact_id, literature.literature_id} <= linked
 
 
 # ---------------------------------------------------------------------------
@@ -533,3 +540,81 @@ def test_share_satisfied_helper_recognizes_link_state(session):
     # An A-private object is not visible through B.
     other = services.create_object(session, a_owner, a.id, "ligand", "L", payload={"smiles": "CCO"})
     assert _share_is_satisfied(session, b.id, other) is False
+
+
+def test_share_satisfied_revision_requires_series_closure(session):
+    from revolab.domain import persistence as persistence_mod
+    from revolab.services import _share_is_satisfied
+
+    actor = _actor(session)
+    p1 = services.create_project(session, actor, "P1")
+    p2 = services.create_project(session, actor, "P2")
+    series = services.create_object(session, actor, p1.id, "protein", "X", payload={})
+    revision = session.scalar(
+        select(ScientificObjectRevision).where(
+            ScientificObjectRevision.series_id == series,
+            ScientificObjectRevision.revision_seq == 1,
+        )
+    )
+    # Link ONLY the revision (not its series) in a fresh project: the closure is
+    # unsatisfied and the idempotent-success predicate must reject it.
+    persistence_mod.link(session, p2.id, revision.revision_id)
+    session.commit()
+    assert _share_is_satisfied(session, p2.id, revision.revision_id) is False
+
+
+def test_concurrent_duplicate_share_returns_idempotent_success(session, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    actor = _actor(session)
+    a = services.create_project(session, actor, "A")
+    b = services.create_project(session, actor, "B")
+    series = services.create_object(session, actor, a.id, "protein", "X", payload={})
+
+    real_commit = session.commit
+
+    def fake_commit() -> None:
+        # Simulate the concurrent winner: commit this request's link, then raise
+        # the link-unique conflict as if the identical link already won the race.
+        real_commit()
+        raise IntegrityError(
+            "stmt",
+            {},
+            Exception(
+                "UNIQUE constraint failed: project_resource_links.project_id, "
+                "project_resource_links.resource_id"
+            ),
+        )
+
+    monkeypatch.setattr(session, "commit", fake_commit)
+    kind = services.share_resource(session, actor, b.id, series)
+    assert kind is ResourceKind.SCIENTIFIC_OBJECT_SERIES
+    assert series in {
+        link.resource_id
+        for link in session.scalars(
+            select(ProjectResourceLink).where(ProjectResourceLink.project_id == b.id)
+        )
+    }
+
+
+def test_share_unrelated_integrity_error_propagates(session, monkeypatch):
+    from sqlalchemy.exc import IntegrityError
+
+    actor = _actor(session)
+    a = services.create_project(session, actor, "A")
+    b = services.create_project(session, actor, "B")
+    series = services.create_object(session, actor, a.id, "protein", "X", payload={})
+
+    def fake_commit() -> None:
+        raise IntegrityError("stmt", {}, Exception("some unrelated constraint failure"))
+
+    monkeypatch.setattr(session, "commit", fake_commit)
+    with pytest.raises(IntegrityError):
+        services.share_resource(session, actor, b.id, series)
+    # The failed share wrote no link (rolled back), and nothing leaked into B.
+    assert series not in {
+        link.resource_id
+        for link in session.scalars(
+            select(ProjectResourceLink).where(ProjectResourceLink.project_id == b.id)
+        )
+    }
