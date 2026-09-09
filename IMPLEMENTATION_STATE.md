@@ -870,7 +870,7 @@ passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
 ## Verified evidence (Phase 7)
 
 - Backend: `ruff check backend` and strict `mypy` pass (46 source files). `pytest`
-  passes with **277 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  passes with **281 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
   acceptance file). New `tests/test_tools.py` covers registry duplicate-id
   rejection/closedness, unknown/remote-tool-id and banned-tool-id fail-closed,
   catalog authority/availability/secret-absence, typed table/plot outputs,
@@ -1001,7 +1001,7 @@ marking PR8 ready:
   kinds are `ephemeral` / `artifact` / `evidence` / `decision`.
 
 Regression tests added: plot truncation + under-bound; table.select
-source-truncation propagation. Full suite green — backend **277 passed / 6
+source-truncation propagation. Full suite green — backend **281 passed / 6
 skipped**, frontend typecheck + **15 tests** + build, Playwright **4 specs**,
 OpenAPI fresh, contracts idempotent.
 
@@ -1019,9 +1019,17 @@ REvoDesign as an unrelated existing product, and OpenBio as a design reference
 only), together with the reviewer's P2 prose-cleanup (removed lingering
 `SEARCH`/`DESIGN`/`INTERACTIVE_HANDOFF` mentions from Core docstrings and stale
 IMPLEMENTATION_STATE text, and `AGENT_CONTEXT.md`/`EVIDENCE_PROVENANCE.md`
-references). Full gates rerun green — backend **277 passed / 6 skipped**, frontend
+references). Full gates rerun green — backend **281 passed / 6 skipped**, frontend
 typecheck + **15 tests** + build, Playwright **4 specs**, OpenAPI fresh, contracts
 idempotent, CI backend/frontend/e2e green. No P0/P1 remains.
+
+### GitHub Codex review findings
+
+Four automated GitHub Codex review comments on PR8 were resolved: (P1) source
+truncation propagated into table projections; (P2) non-finite numeric values now
+fail closed; (P2) empty/duplicate explicit column selections rejected; (P2) CSV
+parser errors translated to typed validation errors. Each has a regression;
+backend is now **281 passed / 6 skipped**.
 
 ## Known deferrals (explicit, not silently postponed)
 
