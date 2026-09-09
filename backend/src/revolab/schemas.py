@@ -788,13 +788,17 @@ class TableDescribeRead(BaseModel):
 
 
 class TableSelectRead(BaseModel):
-    """Bounded table projection: selected columns plus at most `limit` rows."""
+    """Bounded table projection: selected columns plus at most `limit` rows.
+    `source_truncated` conservatively propagates that the SOURCE table itself was
+    capped by the analysis row bound (never silently hides upstream truncation);
+    `truncated` means the projection hit its own `limit`."""
 
     source_artifact_id: UUID
     columns: list[str] = Field(default_factory=list)
     rows: list[dict[str, str]] = Field(default_factory=list)
     row_count: int = 0
     truncated: bool = False
+    source_truncated: bool = False
 
 
 class PlotSeriesRead(BaseModel):
@@ -805,12 +809,20 @@ class PlotSeriesRead(BaseModel):
 
 class PlotSpecRead(BaseModel):
     """Structured plot data/specification (no opaque image file). The frontend
-    renders it; the Tool never owns scientific interpretation."""
+    renders it; the Tool never owns scientific interpretation.
+
+    Bounded rendering is explicit: `source_rows` is the table row count actually
+    decoded this invocation, `rendered_points` the number of points returned, and
+    `truncated` is True when the source table hit the analysis row bound OR more
+    rows existed than `rendered_points` — never silently dropped."""
 
     source_artifact_id: UUID
     kind: str = "xy"
     x_axis: str | None = None
     title: str | None = None
+    source_rows: int = 0
+    rendered_points: int = 0
+    truncated: bool = False
     series: list[PlotSeriesRead] = Field(default_factory=list)
 
 

@@ -23,7 +23,7 @@ export const RESOURCE_KINDS: readonly components['schemas']['ResourceKind'][] = 
 
 export const EVIDENCE_TARGET_KINDS: readonly components['schemas']['EvidenceTargetKind'][] = ["scientific_object_revision","decision","evidence"] as const
 
-export const CAPABILITY_KINDS: readonly components['schemas']['CapabilityKind'][] = ["compute","search","artifact_resolution","design","interactive_handoff"] as const
+export const CAPABILITY_KINDS: readonly components['schemas']['CapabilityKind'][] = ["compute","artifact_resolution"] as const
 
 export const PROVIDER_RUNTIME_HEALTHS: readonly components['schemas']['ProviderRuntimeHealth'][] = ["ready","degraded","unreachable"] as const
 
@@ -39,6 +39,6 @@ export const AGENT_TOOL_AUTONOMIES: readonly components['schemas']['AgentToolAut
 
 export const TOOL_EXECUTION_CLASSES: readonly components['schemas']['ToolExecutionClass'][] = ["local","remote"] as const
 
-export const TOOL_SIDE_EFFECT_CLASSES: readonly components['schemas']['ToolSideEffectClass'][] = ["read_only","creates_derived_result","creates_project_truth","external_action"] as const
+export const TOOL_SIDE_EFFECT_CLASSES: readonly components['schemas']['ToolSideEffectClass'][] = ["read_only","creates_derived_result","domain_mutation","external_action"] as const
 
-export const TOOL_RESULT_KINDS: readonly components['schemas']['ToolResultKind'][] = ["ephemeral","artifact","evidence","decision","scientific_object","run_reference"] as const
+export const TOOL_RESULT_KINDS: readonly components['schemas']['ToolResultKind'][] = ["ephemeral","artifact","evidence","decision"] as const

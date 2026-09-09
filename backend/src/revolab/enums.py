@@ -144,13 +144,15 @@ LEGAL_EVIDENCE_SOURCE_KINDS = frozenset(
 
 class CapabilityKind(StrEnum):
     """Core-owned closed capability vocabulary (ADR-0012). Core categorizes
-    realized capabilities by these kinds; it never parses provider vocabulary."""
+    realized capabilities by these kinds; it never parses provider vocabulary.
+
+    Only realized capabilities exist: COMPUTE (REvoCompute) and
+    ARTIFACT_RESOLUTION. SEARCH/DESIGN/INTERACTIVE_HANDOFF were speculative
+    pre-projection vocabulary and are deliberately absent until a concrete,
+    provider-neutral use case forces them."""
 
     COMPUTE = "compute"
-    SEARCH = "search"
     ARTIFACT_RESOLUTION = "artifact_resolution"
-    DESIGN = "design"
-    INTERACTIVE_HANDOFF = "interactive_handoff"
 
 
 class ProviderRuntimeHealth(StrEnum):
@@ -237,12 +239,15 @@ class ToolSideEffectClass(StrEnum):
 
     `creates_derived_result` covers any durable NON-truth resource the tool
     persists through a typed domain operation — locally derived analysis
-    artifacts (CSV/plot spec), or harvested external reference identity cards —
-    never an Evidence/Decision promotion."""
+    artifacts (CSV/plot spec), or harvested external reference identity cards.
+    `domain_mutation` is a neutral typed-domain write (Evidence, Decision
+    draft/commit). Truth promotion is expressed by the Decision lifecycle
+    (draft → committed) and `AgentToolAutonomy` (commit is `explicit_action`),
+    NOT by this side-effect class — a Decision DRAFT is never "project truth"."""
 
     READ_ONLY = "read_only"
     CREATES_DERIVED_RESULT = "creates_derived_result"
-    CREATES_PROJECT_TRUTH = "creates_project_truth"
+    DOMAIN_MUTATION = "domain_mutation"
     EXTERNAL_ACTION = "external_action"
 
 
@@ -251,14 +256,10 @@ class ToolResultKind(StrEnum):
     section 7). `ephemeral` results are never persisted; every other kind names a
     durable REvoLab resource recorded through a typed domain operation.
 
-    Phase 7 produces `ephemeral`, `artifact`, `evidence`, and `decision`.
-    `scientific_object` and `run_reference` are RESERVED forward vocabulary for
-    future tools (typed ScientificObject creation / a Tool-facing run reference);
-    they currently have no producing code path and are not fabricated."""
+    Only producing kinds are present: `ephemeral`, `artifact` (persisted derived
+    result), `evidence`, and `decision`."""
 
     EPHEMERAL = "ephemeral"
     ARTIFACT = "artifact"
     EVIDENCE = "evidence"
     DECISION = "decision"
-    SCIENTIFIC_OBJECT = "scientific_object"
-    RUN_REFERENCE = "run_reference"

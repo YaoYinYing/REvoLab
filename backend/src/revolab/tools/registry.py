@@ -190,7 +190,7 @@ ALL_LOCAL_TOOLS: tuple[LocalToolSpec, ...] = (
         name="Create evidence",
         description="Record a project-scoped typed Evidence claim.",
         autonomy=AgentToolAutonomy.POLICY,
-        side_effect_class=ToolSideEffectClass.CREATES_PROJECT_TRUTH,
+        side_effect_class=ToolSideEffectClass.DOMAIN_MUTATION,
         input_model=EvidenceCreate,
         output_model=EvidenceRead,
         requires_mutation=True,
@@ -204,7 +204,7 @@ ALL_LOCAL_TOOLS: tuple[LocalToolSpec, ...] = (
             "A draft is not committed project truth."
         ),
         autonomy=AgentToolAutonomy.POLICY,
-        side_effect_class=ToolSideEffectClass.CREATES_PROJECT_TRUTH,
+        side_effect_class=ToolSideEffectClass.DOMAIN_MUTATION,
         input_model=DecisionCreate,
         output_model=DecisionRead,
         requires_mutation=True,
@@ -218,7 +218,7 @@ ALL_LOCAL_TOOLS: tuple[LocalToolSpec, ...] = (
             "promotion gate). Never auto-executed by the Agent loop."
         ),
         autonomy=AgentToolAutonomy.EXPLICIT_ACTION,
-        side_effect_class=ToolSideEffectClass.CREATES_PROJECT_TRUTH,
+        side_effect_class=ToolSideEffectClass.DOMAIN_MUTATION,
         input_model=DecisionCommitCreate,
         output_model=DecisionRead,
         requires_mutation=True,

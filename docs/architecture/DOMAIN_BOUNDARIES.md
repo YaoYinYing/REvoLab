@@ -17,7 +17,7 @@ The governing question for every decision in this document:
 ```text
 REvoLab       → scientific context / project knowledge layer
 REvoCompute   → scientific execution layer
-REvoDesign    → interactive molecular design / analysis layer
+REvoDesign    → an unrelated existing interactive-design product (not a REvoLab backend)
 External providers → biological databases, literature, models, instruments, services
 ```
 

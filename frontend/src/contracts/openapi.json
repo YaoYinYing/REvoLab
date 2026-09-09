@@ -182,13 +182,10 @@
         "type": "string"
       },
       "CapabilityKind": {
-        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.",
+        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly realized capabilities exist: COMPUTE (REvoCompute) and\nARTIFACT_RESOLUTION. SEARCH/DESIGN/INTERACTIVE_HANDOFF were speculative\npre-projection vocabulary and are deliberately absent until a concrete,\nprovider-neutral use case forces them.",
         "enum": [
           "compute",
-          "search",
-          "artifact_resolution",
-          "design",
-          "interactive_handoff"
+          "artifact_resolution"
         ],
         "title": "CapabilityKind",
         "type": "string"
@@ -3324,14 +3321,12 @@
         "type": "object"
       },
       "ToolResultKind": {
-        "description": "The durable kind of a ToolResult: what the invocation produced (TODO.md\nsection 7). `ephemeral` results are never persisted; every other kind names a\ndurable REvoLab resource recorded through a typed domain operation.\n\nPhase 7 produces `ephemeral`, `artifact`, `evidence`, and `decision`.\n`scientific_object` and `run_reference` are RESERVED forward vocabulary for\nfuture tools (typed ScientificObject creation / a Tool-facing run reference);\nthey currently have no producing code path and are not fabricated.",
+        "description": "The durable kind of a ToolResult: what the invocation produced (TODO.md\nsection 7). `ephemeral` results are never persisted; every other kind names a\ndurable REvoLab resource recorded through a typed domain operation.\n\nOnly producing kinds are present: `ephemeral`, `artifact` (persisted derived\nresult), `evidence`, and `decision`.",
         "enum": [
           "ephemeral",
           "artifact",
           "evidence",
-          "decision",
-          "scientific_object",
-          "run_reference"
+          "decision"
         ],
         "title": "ToolResultKind",
         "type": "string"
@@ -3399,11 +3394,11 @@
         "type": "object"
       },
       "ToolSideEffectClass": {
-        "description": "What a successful Project Tool invocation may durably produce (TODO.md\nsection 3/8). Persistence semantics are declared by the tool and enforced by\nthe runtime \u2014 a ToolResult is never promoted to project truth automatically.\n\n`creates_derived_result` covers any durable NON-truth resource the tool\npersists through a typed domain operation \u2014 locally derived analysis\nartifacts (CSV/plot spec), or harvested external reference identity cards \u2014\nnever an Evidence/Decision promotion.",
+        "description": "What a successful Project Tool invocation may durably produce (TODO.md\nsection 3/8). Persistence semantics are declared by the tool and enforced by\nthe runtime \u2014 a ToolResult is never promoted to project truth automatically.\n\n`creates_derived_result` covers any durable NON-truth resource the tool\npersists through a typed domain operation \u2014 locally derived analysis\nartifacts (CSV/plot spec), or harvested external reference identity cards.\n`domain_mutation` is a neutral typed-domain write (Evidence, Decision\ndraft/commit). Truth promotion is expressed by the Decision lifecycle\n(draft \u2192 committed) and `AgentToolAutonomy` (commit is `explicit_action`),\nNOT by this side-effect class \u2014 a Decision DRAFT is never \"project truth\".",
         "enum": [
           "read_only",
           "creates_derived_result",
-          "creates_project_truth",
+          "domain_mutation",
           "external_action"
         ],
         "title": "ToolSideEffectClass",

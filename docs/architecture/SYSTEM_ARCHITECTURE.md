@@ -248,9 +248,9 @@ frozen legal source/target sets live in `SCIENTIFIC_GRAPH.md`.)
 flowchart LR
     Core["REvoLab Core<br/>(domain services)"]
     Cat["Provider Catalog<br/>(read-only, schema-driven)"]
-    Cap["Capability Protocols<br/>Compute · Search · Artifact · Design/HO"]
+    Cap["Capability Protocols<br/>Compute · Artifact"]
     Drv["Driver<br/>(provider vocabulary / transport)"]
-    Prov["External Provider<br/>(REvoCompute · REvoDesign · OpenBio · ...)"]
+    Prov["External Provider<br/>(REvoCompute · ...)"]
     Cred["Credential Store<br/>(owned secrets)"]
 
     Core -- calls typed Capability --> Cap
@@ -346,7 +346,7 @@ direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 | `SCIENTIFIC_OBJECT_MODEL.md` | What a ScientificObject is; extension, version, lifecycle |
 | `SCIENTIFIC_GRAPH.md` | Relation/edge semantics and the knowledge graph |
 | `EVIDENCE_PROVENANCE.md` | Evidence, Run/Artifact/Literature references, Decision, promotion |
-| `PROVIDER_CAPABILITIES.md` | Provider/Driver/Capability/Tool/Credential; REvoCompute/REvoDesign/OpenBio contracts |
+| `PROVIDER_CAPABILITIES.md` | Provider/Driver/Capability/Tool/Credential; the REvoCompute contract |
 | `PROJECT_TOOL_HARNESS.md` | The first-class Tool abstraction, ToolCatalog, local vs remote execution, authority, result semantics, Agent/frontend projection |
 | `AGENT_CONTEXT.md` | Context selection, tools, skills, safety/authority |
 | `COLLABORATION_IDENTITY.md` | Identity, sharing, persistence, lifecycle/deletion, event/audit |

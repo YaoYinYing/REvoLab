@@ -74,9 +74,9 @@ export const TOOL_SIDE_EFFECT_CREATES_DERIVED_RESULT = pick(
   TOOL_SIDE_EFFECT_CLASSES,
   'creates_derived_result',
 )
-export const TOOL_SIDE_EFFECT_CREATES_PROJECT_TRUTH = pick(
+export const TOOL_SIDE_EFFECT_DOMAIN_MUTATION = pick(
   TOOL_SIDE_EFFECT_CLASSES,
-  'creates_project_truth',
+  'domain_mutation',
 )
 export const TOOL_SIDE_EFFECT_EXTERNAL_ACTION = pick(TOOL_SIDE_EFFECT_CLASSES, 'external_action')
 export const TOOL_RESULT_KIND_EPHEMERAL = pick(TOOL_RESULT_KINDS, 'ephemeral')

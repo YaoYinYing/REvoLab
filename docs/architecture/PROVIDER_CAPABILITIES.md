@@ -2,19 +2,22 @@
 
 > **Status: Accepted** (merged into `main`). Defines Provider /
 > Driver / Capability / Tool / Credential,
-> capability discovery, schema-as-data, failure handling, and the REvoCompute /
-> REvoDesign / OpenBio integration contracts. Reconciles Subagents B and G.
+> capability discovery, schema-as-data, failure handling, and the REvoCompute
+> integration contract. REvoDesign is an unrelated existing product (not a REvoLab
+> backend) and OpenBio is a design reference only; neither has an integration
+> contract here.
 
 ## Ruling principle
 
 > **REvoLab owns scientific context and relationships. External systems own their
 > capabilities and execution truth.**
 
-Core must never grow a branch named `revocompute` / `revodesign` / `openbio`.
-Instead Core owns (a) typed capability Protocols, (b) neutral durable references
-(Run/Artifact/Literature references), and (c) the import boundary that
-turns external data into project truth. Each integration is a Driver that implements
-one or more capability Protocols and keeps provider vocabulary inside itself.
+Core must never grow a provider-specific branch. Instead Core owns (a) typed
+capability Protocols, (b) neutral durable references (Run/Artifact/Literature
+references), and (c) the import boundary that turns external data into project
+truth. Each integration is a Driver that implements one or more capability
+Protocols and keeps provider vocabulary inside itself. REvoCompute is the only
+currently configured external backend; no `revodesign` / `openbio` branch exists.
 
 ## The concepts, who owns them (four credential roles)
 
@@ -58,11 +61,11 @@ with *access provider*. They are different and must not share one string.
 
 ```text
 authority / namespace   → who defines the identity: uniprot, pdb, doi, pubmed, ...
-resolver / provider     → who you reach it through: openbio, direct-uniprot, revocompute, ...
+resolver / provider     → who you reach it through: an aggregator, a direct API, an engine
 ```
 
 - **Durable external identity is `(authority, native_id)`.** `UniProt:P12345` must
-  keep the same durable identity whether it is resolved today through OpenBio or
+  keep the same durable identity whether it is resolved today through one resolver or
   tomorrow through a direct UniProt API. Changing the resolver must **never** change
   the identity or invalidate stored references.
 - **`ExternalIdentity` is the single `(authority, native_id)` registry** (owned by the
@@ -73,13 +76,12 @@ resolver / provider     → who you reach it through: openbio, direct-uniprot, r
 - **REvoCompute**: its own run/artifact IDs are special: REvoCompute is *both* the
   authority (it defines those IDs) *and* the provider (it executes them). That is the
   normal case for a compute engine and is fine.
-- Public biological sources (UniProt/PDB/DOI/PubMed) are the authority; OpenBio is a
-  *resolver/aggregator*, never the authority. This holds even when OpenBio is the only
-  resolver currently configured.
+- Public biological sources (UniProt/PDB/DOI/PubMed) are the authority; a resolver
+  or aggregator is **never** the authority.
 
 ## Identity & discovery without learning vocabulary
 
-- **Provider identity:** a stable lowercase slug (`revocompute`, `openbio`), never
+- **Provider identity:** a stable lowercase slug (`revocompute`), never
   a path/hostname/username. Alongside: display name, description, version, and
   `required_credential_kinds`.
 - **Capability identity:** `(provider_key, capability_kind)` where `capability_kind`
@@ -91,12 +93,14 @@ resolver / provider     → who you reach it through: openbio, direct-uniprot, r
 
 ## The capability protocols
 
-A provider may expose many capabilities. Concretely:
+A provider may expose one or more of the **realized** capabilities. Only the
+protocols with a concrete provider-neutral use case exist; speculative
+`SEARCH` / `DESIGN` / `INTERACTIVE_HANDOFF` vocabulary is deliberately absent.
 
 ```python
 class Capability(Protocol):            # base
     provider_key: str
-    kind: CapabilityKind               # COMPUTE | SEARCH | ARTIFACT_RESOLUTION | DESIGN | INTERACTIVE_HANDOFF
+    kind: CapabilityKind               # COMPUTE | ARTIFACT_RESOLUTION
 
 class ComputeCapability(Capability, Protocol):            # REvoCompute (batch)
     def list_task_kinds(self, credentials: CredentialLease) -> list[TaskKindRef]: ...
@@ -113,29 +117,10 @@ class InputBinding:                                       # REvoLab-neutral reso
 
 class ArtifactResolutionCapability(Capability, Protocol):  # pure read
     def resolve(self, ext_ref, rev=None, credentials: CredentialLease) -> ArtifactHandle: ...
-
-class SearchCapability(Capability, Protocol):              # OpenBio / knowledge lookup
-    def search(self, query, filters=None, credentials: CredentialLease) -> list[ExternalHit]: ...
-    def hit_schema(self) -> JsonSchema: ...
-
-class DesignCapability(Capability, Protocol):              # durable export half
-    def open_design(self, object_ref, credentials: CredentialLease) -> DesignSession: ...
-    def export(self, session_id, credentials: CredentialLease) -> list[ArtifactHandle]: ...
-    def list_sessions(self, credentials: CredentialLease) -> list[DesignSession]: ...
-
-class InteractiveHandoffCapability(Capability, Protocol):  # deep-link / interactive half
-    def create_handoff(self, object_ref, return_callback, credentials: CredentialLease) -> HandoffRef: ...
-    def on_return(self, handoff_id, credentials: CredentialLease) -> HandoffResult: ...
 ```
 
-**Naming decisions (from the review):**
-- `ComputeCapability`, `ArtifactResolutionCapability` — keep.
-- `LiteratureSearchCapability` → **renamed `SearchCapability`** (one reader protocol
-  covers literature *and* biological-database lookup; avoid 5 near-identical search
-  protocols).
-- `DesignCapability` — **split into `DesignCapability` (export) + the interactive
-  `InteractiveHandoffCapability`**, because REvoDesign is stateful and interactive;
-  forcing it into the stateless compute/submit shape is a fake generic abstraction.
+`ComputeCapability` and `ArtifactResolutionCapability` are the only realized
+protocols (both implemented by the REvoCompute driver).
 
 ## Schema-as-data discovery
 
@@ -180,9 +165,9 @@ class InteractiveHandoffCapability(Capability, Protocol):  # deep-link / interac
   do request signing/proxying itself; that is a different architecture — the chosen
   model here is the ephemeral lease, not the signing proxy.)
 - **Availability is Actor-contextual** — not a single Project-wide boolean. Members
-  of one Project may have different permissions for the same provider (e.g. only one
-  member has an OpenBio commercial key or a REvoCompute privileged-runner grant). It
-  is always a **derived query**, never stored:
+  of one Project may have different permissions for the same provider (e.g. only
+  one member holds the REvoCompute privileged-runner credential). It is always a
+  **derived query**, never stored:
 
 ```text
 available(actor, provider, project) = (driver RuntimeHealth == READY)
@@ -323,67 +308,20 @@ neutral reference, never a copy.
 
 ---
 
-# REvoDesign integration contract
+# REvoDesign / OpenBio are not integration targets
 
-REvoDesign is **interactive and stateful** and is fundamentally different from
-REvoCompute. Do NOT force it into `ComputeCapability`.
+REvoDesign is an **unrelated existing product** — a method-specific, PyMOL-heavy
+enzyme-design application — and is not a REvoLab backend. OpenBio is a **design
+reference only**: its product ideas may inform REvoLab, but REvoLab does not
+integrate with it. No `DesignCapability`, `InteractiveHandoffCapability`,
+`SearchCapability`, or `revodesign`/`openbio` driver exists in Core.
 
-**Flows:**
+The provider-neutral import boundary those deferred directions would have needed —
+`ExternalIdentity` (`(authority, native_id)` registry) + `ExternalReference`
+(identity FK + resolver/cache metadata) + the `imported_as` edge — is already
+owned by the Scientific Object / Evidence domains and documented in
+`SCIENTIFIC_GRAPH.md` and `EVIDENCE_PROVENANCE.md`; it exists independent of any
+particular provider and is not expanded here.
 
-```text
-REvoLab Structure --open_design--> REvoDesign session
-  (user interacts in REvoDesign; REvoLab is NOT polling every frame)
-REvoDesign --export--> Structure/Variant/DesignSet
-  → REvoLab creates a NEW object + provenance
-```
-
-- REvoDesign shares the base `Driver` lifecycle and the durable-reference
-  discipline, and implements `DesignCapability` (open/export) + the
-  `InteractiveHandoffCapability` (deep-link/open-in-UI).
-- **Provenance is captured only at the export/import boundary**: input object →
-  session (SessionReference) → ArtifactReference (checksum) → output object, linked
-  by `derived_from` (Revision→Revision) and `represents` (Series→Series). The
-  ephemeral interactive timeline is never stored.
-- **A durable result** = a content-addressed ArtifactReference, optionally imported
-  into a new REvoLab ScientificObject + provenance edges — never the session timeline.
-
----
-
-# OpenBio / biological knowledge integration
-
-OpenBio is primarily an **external biological knowledge capability**
-(PDB/UniProt/PubMed/ChEMBL/…), **not** REvoLab's database.
-
-**Four entry modes — one boundary** (e.g. UniProt P12345):
-
-```text
-1. Live external lookup    → transient result, never persisted as project truth
-2. Cached external reference → REvoLab ensures an ExternalIdentity exists (the single
-     `(authority, native_id)` registry row, e.g. UniProt/P12345) and stores an
-     ExternalReference pointing at it (external_identity_id FK) + bounded, validated
-     metadata (label, kind, checksum/as_of when known). This is a durable identity/cache
-     handle, NOT a copy of the provider's data. It honors invariant #2
-     (no-mutable-external-copy): provider records stay authoritative in the provider;
-     no snapshot/full payload is mirrored into REvoLab.
-3. Imported scientific object → user/agent imports an ExternalReference into a
-     REvoLab Protein object (typed import; reference becomes provenance origin
-     via an imported_as edge). Explicit import is the ONLY way an external entity
-     becomes a first-class REvoLab object.
-4. Project evidence        → the reference/import is linked as Evidence supporting a Decision
-```
-
-**Boundary rule:** an entity becomes a REvoLab object **only via explicit import**
-(mode 3). Lookup/cache (1, 2) are non-committal; evidence (4) is a relation, not an
-object.
-
-**Core records needed (all provider-neutral, each a canonical graph node — see
-`SCIENTIFIC_GRAPH.md` node categories):** `ExternalIdentity` (the single
-`(authority, native_id)` registry, owned by the Scientific Object domain),
-`ExternalReference` (an `external_identity_id` FK + resolver/cache metadata),
-`RunReference`, `SessionReference` (REvoDesign interactive session identity card),
-`ArtifactReference`, `LiteratureReference`, `Evidence`. **Import provenance is a single
-mechanism — the `imported_as` edge** whose payload records the source reference and
-content fingerprint; there is **no separate `ImportRecord` node** (a second mechanism
-would duplicate import modeling). No OpenBio vocabulary leaks into Core.
-
-Recorded in **ADR-0012**.
+Recorded in **ADR-0012** (provider/capability vocabulary) and the Phase 7 roadmap
+correction in `IMPLEMENTATION_ROADMAP.md`.

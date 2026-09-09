@@ -82,7 +82,7 @@ def test_register_rejects_capability_mismatched_to_driver() -> None:
 def test_register_rejects_capability_kind_not_matching_registry_key() -> None:
     class KeyMismatchedCapability:
         provider_key = "stub"
-        kind = CapabilityKind.SEARCH  # keyed as COMPUTE below
+        kind = CapabilityKind.ARTIFACT_RESOLUTION  # keyed as COMPUTE below
 
     driver = RecordingDriver("stub")
     driver.capabilities = {CapabilityKind.COMPUTE: KeyMismatchedCapability()}

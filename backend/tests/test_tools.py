@@ -142,7 +142,7 @@ def test_catalog_authority_matrix(session):
     assert by_id["evidence.create"].available is True
     assert by_id["decision.commit"].available is True
     assert by_id["table.select"].execution_class is ToolExecutionClass.LOCAL
-    assert by_id["evidence.create"].side_effect_class is ToolSideEffectClass.CREATES_PROJECT_TRUTH
+    assert by_id["evidence.create"].side_effect_class is ToolSideEffectClass.DOMAIN_MUTATION
     assert by_id["decision.commit"].autonomy is AgentToolAutonomy.EXPLICIT_ACTION
 
     viewer_catalog = build_tool_catalog(session, viewer, project.id, _registry())
@@ -693,7 +693,46 @@ def test_plot_truncation_caps_points(session, tmp_path):
             input={"artifact_id": str(artifact.artifact_id), "x_column": "x", "y_columns": ["y"]},
         ),
     )
-    assert len((result.value or {})["series"][0]["y"]) == 5_000
+    value = result.value or {}
+    assert len(value["series"][0]["y"]) == 5_000
+    assert value["source_rows"] == 6_000
+    assert value["rendered_points"] == 5_000
+    assert value["truncated"] is True
+
+
+def test_plot_under_bound_is_not_truncated(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    ctx = _analysis_ctx(session, actor, project, tmp_path)
+    artifact = _upload(session, actor, project, ctx.content_store, b"x,y\n1,2\n2,4\n")
+    result = _runtime().invoke(
+        ctx,
+        ToolInvocationCreate(
+            tool_id="plot.xy",
+            input={"artifact_id": str(artifact.artifact_id), "x_column": "x", "y_columns": ["y"]},
+        ),
+    )
+    value = result.value or {}
+    assert value["source_rows"] == 2
+    assert value["rendered_points"] == 2
+    assert value["truncated"] is False
+
+
+def test_table_select_propagates_source_truncation(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    ctx = _analysis_ctx(session, actor, project, tmp_path)
+    artifact = _upload(session, actor, project, ctx.content_store, b"x\n" + b"1\n" * 10_500)
+    result = _runtime().invoke(
+        ctx,
+        ToolInvocationCreate(
+            tool_id="table.select",
+            input={"artifact_id": str(artifact.artifact_id), "columns": ["x"], "limit": 10},
+        ),
+    )
+    value = result.value or {}
+    assert value["source_truncated"] is True
+    assert value["row_count"] == 10
 
 
 def test_truth_tool_owner_success_paths(session, tmp_path):

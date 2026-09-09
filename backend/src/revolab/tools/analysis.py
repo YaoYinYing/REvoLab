@@ -160,6 +160,7 @@ def handle_table_select(
         rows=selected,
         row_count=len(selected),
         truncated=len(matching) > parsed.limit,
+        source_truncated=table.truncated,
     )
     derived = None
     if persist:
@@ -190,11 +191,13 @@ def handle_plot_xy(
     artifact_id, table = _read(ctx, parsed.artifact_id)
     _require_columns(table, [parsed.x_column, *parsed.y_columns])
 
+    source_rows = len(table.rows)
+    rendered = min(source_rows, MAX_PLOT_POINTS)
     series: list[PlotSeriesRead] = []
     for y_column in parsed.y_columns:
         x_values: list[float | str] = []
         y_values: list[float] = []
-        for row in table.rows[:MAX_PLOT_POINTS]:
+        for row in table.rows[:rendered]:
             raw_x = row[parsed.x_column]
             x_value: float | str = raw_x
             with contextlib.suppress(TypeError, ValueError):
@@ -211,6 +214,9 @@ def handle_plot_xy(
         kind="xy",
         x_axis=parsed.x_column,
         title=parsed.title,
+        source_rows=source_rows,
+        rendered_points=rendered,
+        truncated=table.truncated or len(table.rows) > MAX_PLOT_POINTS,
         series=series,
     )
     derived = None

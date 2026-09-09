@@ -1024,9 +1024,14 @@ export interface components {
          * CapabilityKind
          * @description Core-owned closed capability vocabulary (ADR-0012). Core categorizes
          *     realized capabilities by these kinds; it never parses provider vocabulary.
+         *
+         *     Only realized capabilities exist: COMPUTE (REvoCompute) and
+         *     ARTIFACT_RESOLUTION. SEARCH/DESIGN/INTERACTIVE_HANDOFF were speculative
+         *     pre-projection vocabulary and are deliberately absent until a concrete,
+         *     provider-neutral use case forces them.
          * @enum {string}
          */
-        CapabilityKind: "compute" | "search" | "artifact_resolution" | "design" | "interactive_handoff";
+        CapabilityKind: "compute" | "artifact_resolution";
         /** CitationCreate */
         CitationCreate: {
             /** @default supports */
@@ -2244,13 +2249,11 @@ export interface components {
          *     section 7). `ephemeral` results are never persisted; every other kind names a
          *     durable REvoLab resource recorded through a typed domain operation.
          *
-         *     Phase 7 produces `ephemeral`, `artifact`, `evidence`, and `decision`.
-         *     `scientific_object` and `run_reference` are RESERVED forward vocabulary for
-         *     future tools (typed ScientificObject creation / a Tool-facing run reference);
-         *     they currently have no producing code path and are not fabricated.
+         *     Only producing kinds are present: `ephemeral`, `artifact` (persisted derived
+         *     result), `evidence`, and `decision`.
          * @enum {string}
          */
-        ToolResultKind: "ephemeral" | "artifact" | "evidence" | "decision" | "scientific_object" | "run_reference";
+        ToolResultKind: "ephemeral" | "artifact" | "evidence" | "decision";
         /**
          * ToolResultRead
          * @description The typed invocation result. `result_kind` distinguishes ephemeral output
@@ -2284,11 +2287,14 @@ export interface components {
          *
          *     `creates_derived_result` covers any durable NON-truth resource the tool
          *     persists through a typed domain operation — locally derived analysis
-         *     artifacts (CSV/plot spec), or harvested external reference identity cards —
-         *     never an Evidence/Decision promotion.
+         *     artifacts (CSV/plot spec), or harvested external reference identity cards.
+         *     `domain_mutation` is a neutral typed-domain write (Evidence, Decision
+         *     draft/commit). Truth promotion is expressed by the Decision lifecycle
+         *     (draft → committed) and `AgentToolAutonomy` (commit is `explicit_action`),
+         *     NOT by this side-effect class — a Decision DRAFT is never "project truth".
          * @enum {string}
          */
-        ToolSideEffectClass: "read_only" | "creates_derived_result" | "creates_project_truth" | "external_action";
+        ToolSideEffectClass: "read_only" | "creates_derived_result" | "domain_mutation" | "external_action";
         /**
          * ToolSource
          * @description Where a Project Tool descriptor originates (TODO.md section 3): a REvoLab

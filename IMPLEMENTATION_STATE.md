@@ -819,8 +819,10 @@ passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
   local service OR capability/driver. Canonical `ToolDescriptorRead` carries
   `autonomy` (canonical `AgentToolAutonomy`), `execution_class`
   (`local|remote`), and `side_effect_class` (`read_only|creates_derived_result|
-  creates_project_truth|external_action`) — new Core-owned enums in
-  `revolab/enums.py`. Input/output JSON Schemas derive from the same Pydantic
+  domain_mutation|external_action`) — new Core-owned enums in
+  `revolab/enums.py`. `CapabilityKind` is reduced to the realized
+  `compute` + `artifact_resolution` (SEARCH/DESIGN/INTERACTIVE_HANDOFF deferred
+  as speculative). Input/output JSON Schemas derive from the same Pydantic
   models the runtime validates against (never hand-copied).
 - **Closed Local Tool Runtime** (`revolab/tools/runtime.py`, `registry.py`):
   lookup → Pydantic input validation → Actor/Project authorization → registered
@@ -868,7 +870,7 @@ passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
 ## Verified evidence (Phase 7)
 
 - Backend: `ruff check backend` and strict `mypy` pass (46 source files). `pytest`
-  passes with **275 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  passes with **277 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
   acceptance file). New `tests/test_tools.py` covers registry duplicate-id
   rejection/closedness, unknown/remote-tool-id and banned-tool-id fail-closed,
   catalog authority/availability/secret-absence, typed table/plot outputs,
@@ -972,6 +974,36 @@ Two optional (non-blocking) test suggestions from the architecture/runtime
 second pass were recorded as follow-ups, not added: a direct
 `_require_tabular_content_type` rejection test for an unsupported content type,
 and a forced-rollback test of the single-transaction derived-result saga.
+
+## Pre-merge final findings (PR8 prep)
+
+Four final architecture / scientific-correctness findings were resolved before
+marking PR8 ready:
+
+- **Architecture correction completed.** `CapabilityKind` is now only
+  `compute` + `artifact_resolution`; speculative `SEARCH` / `DESIGN` /
+  `INTERACTIVE_HANDOFF` vocabulary was removed from Core and their protocol
+  prose removed from `PROVIDER_CAPABILITIES.md`. The REvoDesign/OpenBio
+  integration-contract sections were replaced by one short statement (REvoDesign
+  = unrelated existing product; OpenBio = design reference only); the remaining
+  import-boundary principles stay provider-neutral. `SYSTEM_ARCHITECTURE.md` and
+  `DOMAIN_BOUNDARIES.md` reconciled; OpenAPI/TS contracts regenerated.
+- **No silent truncation.** `tabular` analysis now reports bounds explicitly:
+  `PlotSpecRead` carries `source_rows` / `rendered_points` / `truncated`, and
+  `TableSelectRead` carries `source_truncated` (source-table row boundary)
+  alongside its own `truncated`.
+- **Side-effect semantics.** `ToolSideEffectClass.CREATES_PROJECT_TRUTH` was
+  replaced by a neutral `DOMAIN_MUTATION`; a Decision DRAFT is no longer
+  classified as project truth. Truth promotion stays with the Decision lifecycle
+  (draft → committed) and `AgentToolAutonomy` (commit = `explicit_action`).
+- **Dead scaffolding removed.** `ToolResultKind.SCIENTIFIC_OBJECT` /
+  `RUN_REFERENCE` (forward-only, no producing path) were removed; the producing
+  kinds are `ephemeral` / `artifact` / `evidence` / `decision`.
+
+Regression tests added: plot truncation + under-bound; table.select
+source-truncation propagation. Full suite green — backend **277 passed / 6
+skipped**, frontend typecheck + **15 tests** + build, Playwright **4 specs**,
+OpenAPI fresh, contracts idempotent.
 
 ## Known deferrals (explicit, not silently postponed)
 

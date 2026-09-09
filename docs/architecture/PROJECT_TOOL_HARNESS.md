@@ -75,7 +75,7 @@ autonomy / authority class  (AgentToolAutonomy: automatic | policy | explicit_ac
                             never_agent = never projected as a Tool)
 execution class             (ToolExecutionClass: local | remote)
 side-effect class           (ToolSideEffectClass: read_only | creates_derived_result
-                            | creates_project_truth | external_action)
+                            | domain_mutation | external_action)
 availability                (derived, never stored)
 ```
 
@@ -113,8 +113,8 @@ artifact.inspect        read-only artifact preview
 table.describe          bounded per-column statistics over a tabular (CSV) artifact
 table.select            bounded column/row projection, optionally persisted
 plot.xy                 structured X-Y plot specification, optionally persisted
-evidence.create         typed Evidence creation (creates_project_truth)
-decision.record_draft   typed Decision DRAFT creation (creates_project_truth)
+evidence.create         typed Evidence creation (domain_mutation)
+decision.record_draft   typed Decision DRAFT creation (domain_mutation)
 decision.commit         Decision draft -> committed (promotion gate, explicit_action)
 ```
 
@@ -172,7 +172,7 @@ the runtime:
   CANONICAL validated model dump (never the raw request dict); the record is
   written in ONE transaction with its derived artifact and is readable through
   `GET /api/projects/{project_id}/tool-invocations`.
-- `creates_project_truth` → routes through the existing typed domain operations
+- `domain_mutation` → routes through the existing typed domain operations
   (Evidence/Decision). A Decision draft is the only shape the proposal path can
   produce; committing remains the separate authorized promotion gate.
 - A ToolResult is **never** automatically promoted to Evidence or Decision truth.

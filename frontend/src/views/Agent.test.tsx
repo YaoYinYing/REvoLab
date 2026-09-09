@@ -78,7 +78,7 @@ const catalog: ToolCatalogRead = {
       capability_kind: null,
       autonomy: 'explicit_action',
       execution_class: 'local',
-      side_effect_class: 'creates_project_truth',
+      side_effect_class: 'domain_mutation',
       available: true,
       availability_reason: null,
       input_schema: {},
