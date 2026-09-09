@@ -27,7 +27,8 @@ from revolab.agent import (
     record_proposal,
 )
 from revolab.agent.session import AgentSession
-from revolab.capabilities import ArtifactHandle, ExternalArtifactRef
+from revolab.agent.skills import SkillCatalog
+from revolab.capabilities import ArtifactHandle, CapabilityError, ExternalArtifactRef
 from revolab.content_store import ContentStore
 from revolab.domain.errors import AuthorizationError
 from revolab.drivers import DriverContext, DriverRegistry
@@ -150,6 +151,26 @@ class _ArtifactCapability:
             data=b"external-artifact-body",
         )
 
+    def preview(
+        self,
+        artifact: ExternalArtifactRef,
+        credentials: object,
+        *,
+        offset: int = 0,
+        limit: int,
+    ) -> ArtifactHandle:
+        if self._expected_secret is not None:
+            assert getattr(credentials, "get")("api_key") == self._expected_secret
+        return ArtifactHandle(
+            authority="credartifact",
+            native_id=artifact.native_id,
+            version_id="",
+            content_type="text/plain",
+            size=len(b"external-artifact-body"),
+            checksum=None,
+            data=b"external-artifact-body"[offset : offset + limit],
+        )
+
 
 class _CredentialedArtifactDriver:
     name = "credartifact"
@@ -171,6 +192,66 @@ class _CredentialedArtifactDriver:
 
     def probe_health(self) -> ProviderRuntimeHealth:
         return ProviderRuntimeHealth.READY
+
+
+class _NoPreviewCapability:
+    provider_key = "nopreview"
+    kind = CapabilityKind.ARTIFACT_RESOLUTION
+
+    def resolve(self, artifact: ExternalArtifactRef, credentials: object) -> ArtifactHandle:
+        return ArtifactHandle(
+            authority="nopreview",
+            native_id=artifact.native_id,
+            version_id="",
+            content_type="text/plain",
+            size=None,
+            checksum=None,
+            data=b"full-body",
+        )
+
+
+class _NoPreviewArtifactDriver:
+    name = "nopreview"
+    display_name = "No-Preview Artifact Provider"
+    description = "synthetic artifact-resolution driver WITHOUT bounded preview"
+    required_credential_kinds = ()
+    authorities = ("nopreview",)
+
+    def __init__(self) -> None:
+        self.capabilities: dict[CapabilityKind, object] = {
+            CapabilityKind.ARTIFACT_RESOLUTION: _NoPreviewCapability()
+        }
+
+    def start(self, context: DriverContext) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def probe_health(self) -> ProviderRuntimeHealth:
+        return ProviderRuntimeHealth.READY
+
+
+# ---------------------------------------------------------------------------
+# SkillCatalog runtime root
+# ---------------------------------------------------------------------------
+
+
+def test_skill_catalog_uses_configured_root(tmp_path):
+    root = tmp_path / "skills"
+    (root / "project-context").mkdir(parents=True)
+    (root / "project-context" / "SKILL.md").write_text(
+        "---\nname: project-context\nversion: 0.1.0\ndescription: context skill\n---\n# procedural body\n",
+        encoding="utf-8",
+    )
+    ref = SkillCatalog(root=root).load("project-context")
+    assert ref.id == "project-context"
+    assert ref.version == "0.1.0"
+
+
+def test_skill_catalog_fails_closed_on_missing_root(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        SkillCatalog(root=tmp_path / "missing").load("project-context")
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +347,47 @@ def test_foreign_selection_rejected_without_existence_oracle(session):
     for bad_id in (series_a, uuid4()):
         with pytest.raises(AuthorizationError):
             build_context(session, actor_b, project_b.id, registry, ContextSelectionCreate(series_ids=[bad_id]))
+
+
+def test_revision_only_selection_does_not_expand_siblings(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    series = _object(session, actor, project, "V")
+    _revision(session, actor, project, series, {"chain": "A1"})
+    target = _revision(session, actor, project, series, {"chain": "A2"})
+
+    context = build_context(
+        session,
+        actor,
+        project.id,
+        _registry(),
+        ContextSelectionCreate(revision_ids=[target.revision_id]),
+    )
+    assert {ref.series_id for ref in context.series} == {series}
+    # Only the explicitly selected revision; the initial revision and the other
+    # sibling stay out (declarative selection, never silent expansion).
+    assert {ref.revision_id for ref in context.revisions} == {target.revision_id}
+
+
+def test_graph_depth_does_not_leak_edges_beyond_boundary(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    s1 = _object(session, actor, project, "S1")
+    s2 = _object(session, actor, project, "S2")
+    s3 = _object(session, actor, project, "S3")
+    services.add_variant_of(session, actor, project.id, s1, s2)
+    services.add_variant_of(session, actor, project.id, s2, s3)
+
+    context = build_context(
+        session,
+        actor,
+        project.id,
+        _registry(),
+        ContextSelectionCreate(series_ids=[s1], graph_depth=1),
+    )
+    pairs = {(edge.source_id, edge.target_id) for edge in context.relations}
+    assert (s1, s2) in pairs
+    assert (s2, s3) not in pairs  # S3 is beyond the requested depth neighborhood
 
 
 def test_explicit_context_is_typed_and_bounded(session):
@@ -386,6 +508,51 @@ def test_inspect_artifact_requires_project_visibility(session, tmp_path):
             InMemorySecretStore(),
             content_store,
             outsider,
+            project.id,
+            artifact.artifact_id,
+        )
+
+
+def test_internal_inspect_uses_bounded_read_not_full_get(session, tmp_path, monkeypatch):
+    actor = _actor(session)
+    project = _project(session, actor)
+    content_store = ContentStore(tmp_path)
+    artifact = services.create_internal_artifact(
+        session, actor, project.id, content_store, b"A" * 10_000, content_type="text/plain"
+    )
+
+    def full_get(handle: str) -> bytes:
+        raise AssertionError("inspect_artifact must not materialize the whole internal artifact")
+
+    monkeypatch.setattr(content_store, "get", full_get)
+    result = inspect_artifact(
+        session,
+        _registry(),
+        InMemorySecretStore(),
+        content_store,
+        actor,
+        project.id,
+        artifact.artifact_id,
+        preview_limit=8,
+    )
+    assert result.preview == "AAAAAAAA"
+    assert result.preview_size == 8
+
+
+def test_inspect_artifact_fails_closed_without_preview_capability(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _registry(_NoPreviewArtifactDriver())
+    artifact = services.create_artifact_reference(
+        session, actor, project.id, "nopreview", "a1", content_type="text/plain"
+    )
+    with pytest.raises(CapabilityError):
+        inspect_artifact(
+            session,
+            registry,
+            InMemorySecretStore(),
+            ContentStore(tmp_path),
+            actor,
             project.id,
             artifact.artifact_id,
         )

@@ -85,12 +85,17 @@ def build_context(
     explicit = bool(selection.series_ids or selection.revision_ids)
 
     # Resolve and validate the declarative selection before assembling anything.
+    # An explicit `series_ids` selection expands its visible revisions; an explicit
+    # `revision_ids` selection adds only the owning series skeleton (the revision =>
+    # series closure), never sibling revisions (Phase-5 privacy + explicit selection).
     selected_series_ids: set[UUID] = set()
+    explicit_series_ids: set[UUID] = set()
     selected_revision_ids: set[UUID] = set()
     for series_id in selection.series_ids or []:
         if visible.get(series_id) is not ResourceKind.SCIENTIFIC_OBJECT_SERIES:
             raise AuthorizationError("selected series is not visible in this project")
         selected_series_ids.add(series_id)
+        explicit_series_ids.add(series_id)
     for revision_id in selection.revision_ids or []:
         if visible.get(revision_id) is not ResourceKind.SCIENTIFIC_OBJECT_REVISION:
             raise AuthorizationError("selected revision is not visible in this project")
@@ -98,8 +103,7 @@ def build_context(
         if revision is None:
             raise NotFoundError("selected revision not found")
         selected_revision_ids.add(revision_id)
-        # Revision => series closure: the owning series skeleton is implied, but
-        # sibling revisions of that series are NEVER added (Phase-5 privacy).
+        # Owning series skeleton implied (closure), siblings never implied.
         selected_series_ids.add(revision.series_id)
 
     if not explicit:
@@ -120,9 +124,14 @@ def build_context(
         if series is None:
             raise NotFoundError("selected series not found")
         series_refs.append(_series_ref(series))
-        # Visible revisions only (a Project without the revision link never sees
-        # it, even when the series is shared). `max_revisions` is a global budget
-        # across the whole turn, not a per-series budget.
+        # Only an EXPLICIT series selection expands visible revisions. A revision-
+        # implied series contributes its skeleton only; the explicitly selected
+        # revisions are appended below (declarative selection, never silent
+        # expansion). Visible revisions only (a Project without the revision link
+        # never sees it, even when the series is shared). `max_revisions` is a
+        # global budget across the whole turn, not a per-series budget.
+        if series_id not in explicit_series_ids:
+            continue
         revisions = _visible_revisions(session, series.series_id, visible)
         for revision in revisions:
             if len(revision_refs) >= selection.max_revisions:
@@ -151,8 +160,11 @@ def build_context(
 
     relations: list[EdgeRead] = []
     if selection.include_relations and selection.graph_depth > 0:
+        # Strict bounded subgraph: an edge is included only when BOTH endpoints
+        # are inside the requested neighborhood. Otherwise `graph_depth` would be
+        # a suggestion, not a boundary, and one more hop would leak through.
         for edge in _visible_edges(session, visible):
-            if edge.source_id in reachable or edge.target_id in reachable:
+            if edge.source_id in reachable and edge.target_id in reachable:
                 if len(relations) >= selection.max_relations:
                     truncated = True
                     break

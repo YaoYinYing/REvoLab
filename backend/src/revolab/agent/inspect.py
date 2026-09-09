@@ -54,14 +54,18 @@ def inspect_artifact(
 
     limit = max(0, min(preview_limit, MAX_PREVIEW_LIMIT))
     if artifact.authority == "revolab":
-        data = content_store.get(artifact.native_id)
+        # Bounded read: the ContentStore never materializes the whole artifact
+        # into the Agent inspect path.
+        head = content_store.read_range(artifact.native_id, offset=0, limit=limit)
     else:
         provider_key = registry.driver_for_authority(artifact.authority)
         if provider_key is None:
             raise NotFoundError(
                 f"no provider registered for authority {artifact.authority!r}"
             )
-        resolved = compute_domain.resolve_artifact(
+        # Bounded external read through the preview capability; a provider that
+        # cannot bound its read fails closed here rather than full-downloading.
+        resolved = compute_domain.resolve_artifact_preview(
             session,
             registry,
             secret_store,
@@ -78,10 +82,10 @@ def inspect_artifact(
             permitted=services.project_policy_permits(
                 session, actor_id, project_id, CapabilityKind.ARTIFACT_RESOLUTION
             ),
+            offset=0,
+            limit=limit,
         )
-        data = resolved.data or b""
-
-    head = data[:limit]
+        head = resolved.data or b""
     try:
         preview = head.decode("utf-8")
         binary = False
@@ -101,6 +105,12 @@ def inspect_artifact(
         version_id=artifact.version_id,
         preview=preview,
         preview_size=len(head),
-        truncated=len(data) > limit,
+        # Truncation is derived from the DURABLE size where known; when the
+        # provider did not record a size, a fully-consumed window is reported
+        # truncated rather than claiming a complete artifact.
+        truncated=(
+            (artifact.size is not None and artifact.size > len(head))
+            or (artifact.size is None and len(head) >= limit)
+        ),
         binary=binary,
     )

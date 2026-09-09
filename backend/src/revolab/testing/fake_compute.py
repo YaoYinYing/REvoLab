@@ -113,6 +113,27 @@ class _FakeArtifactResolutionCapability:
             data=data,
         )
 
+    def preview(
+        self,
+        artifact: ExternalArtifactRef,
+        credentials: CredentialLease,
+        *,
+        offset: int = 0,
+        limit: int,
+    ) -> ArtifactHandle:
+        run_id, _, _ = artifact.native_id.partition(":")
+        data = self._state.artifact(run_id)
+        head = data[offset : offset + limit]
+        return ArtifactHandle(
+            authority=FAKE_AUTHORITY,
+            native_id=artifact.native_id,
+            version_id="",
+            content_type="text/plain",
+            size=len(data),
+            checksum=hashlib.sha256(data).hexdigest(),
+            data=head,
+        )
+
 
 class _FakeState:
     """In-memory run -> artifact bytes. Not persisted, not secret-bearing."""

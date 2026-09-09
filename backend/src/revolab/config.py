@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # Opt-in in-process fake COMPUTE provider for the browser/e2e vertical slice.
     # Default OFF in production; never enables any real external credential flow.
     e2e_fake_compute: bool = False
+    # Explicit runtime root for the canonical skill tree. Defaults to the repo
+    # `.agents/skills/` during development; a packaged deployment MUST set this
+    # to a shipped skill root (the repo-relative path is not part of the wheel).
+    skills_root: str | None = None
 
 
 @lru_cache

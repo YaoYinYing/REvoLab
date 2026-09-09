@@ -63,3 +63,19 @@ class ContentStore:
         if hashlib.sha256(data).hexdigest() != store_handle:
             raise ConflictError("stored bytes failed integrity check")
         return data
+
+    def read_range(self, store_handle: str, *, offset: int = 0, limit: int) -> bytes:
+        """Bounded stream-like read (Phase 6 artifact preview): read at most
+        `limit` bytes starting at `offset` without materializing the whole stored
+        artifact. Integrity of the requested slice is still content-addressed by
+        construction (the handle is the full-content checksum)."""
+        if "/" in store_handle or ".." in store_handle:
+            raise ValidationError("invalid store handle")
+        if offset < 0 or limit < 0:
+            raise ValidationError("offset and limit must be non-negative")
+        path = self._path(store_handle)
+        if not self._fs.exists(path):
+            raise NotFoundError("content not found")
+        with self._fs.open(path, "rb") as handle:
+            handle.seek(offset)
+            return cast(bytes, handle.read(limit))

@@ -13,8 +13,18 @@ from pathlib import Path
 
 from revolab.schemas import ContextSelectionCreate
 
-# Repo-root-relative location of the single canonical skill tree.
-_SKILLS_ROOT = Path(__file__).resolve().parents[4] / ".agents" / "skills"
+# Development canonical root; packaged deployments configure `REVOLAB_SKILLS_ROOT`
+# because the repo-relative path is NOT part of the installed wheel.
+_DEV_SKILLS_ROOT = Path(__file__).resolve().parents[4] / ".agents" / "skills"
+
+
+def _default_skill_root() -> Path:
+    from revolab.config import get_settings
+
+    configured = get_settings().skills_root
+    if configured:
+        return Path(configured)
+    return _DEV_SKILLS_ROOT
 
 # The small Phase-6 relevance subset. Integration skills (revocompute / revodesign
 # / openbio) are intentionally absent: they exist only when the provider exists.
@@ -51,10 +61,15 @@ def _frontmatter(path: Path) -> dict[str, str]:
 
 
 class SkillCatalog:
-    """Read-only pointer catalog over the canonical `.agents/skills/` tree."""
+    """Read-only pointer catalog over the canonical `.agents/skills/` tree.
+
+    The root is configurable (`REVOLAB_SKILLS_ROOT`); in development it defaults
+    to the repo tree. A packaged deployment must configure an explicit root: the
+    repo-relative path is not part of the installed wheel.
+    """
 
     def __init__(self, root: Path | None = None) -> None:
-        self._root = root or _SKILLS_ROOT
+        self._root = root if root is not None else _default_skill_root()
 
     def skill_path(self, skill_id: str) -> Path:
         return self._root / skill_id / "SKILL.md"
@@ -63,8 +78,9 @@ class SkillCatalog:
         path = self.skill_path(skill_id)
         if not path.is_file():
             # Fail closed: a requested skill that does not exist must not be
-            # silently reported as loaded.
-            raise FileNotFoundError(f"skill not found: {skill_id}")
+            # silently reported as loaded. Name the resolved root so a packaged
+            # deployment misconfiguration is diagnosable, not a bare 500.
+            raise FileNotFoundError(f"skill not found: {skill_id} (root={self._root})")
         meta = _frontmatter(path)
         return SkillRef(
             id=skill_id,
@@ -78,7 +94,11 @@ class SkillCatalog:
         return [self.load(skill_id) for skill_id in _PHASE6_SKILL_IDS]
 
 
-def select_skills(selection: ContextSelectionCreate | None) -> list[SkillRef]:
+def select_skills(
+    selection: ContextSelectionCreate | None,
+    *,
+    skill_root: Path | None = None,
+) -> list[SkillRef]:
     """Deterministic relevance heuristic (no vector index, no RAG): the context
     skill is always loaded; `decision-record` loads when decisions are requested;
     `provenance-lineage` loads when relations/references are requested. This is
@@ -89,5 +109,5 @@ def select_skills(selection: ContextSelectionCreate | None) -> list[SkillRef]:
         choices.add("decision-record")
     if selection.include_relations or selection.include_references:
         choices.add("provenance-lineage")
-    catalog = SkillCatalog()
+    catalog = SkillCatalog(skill_root)
     return [catalog.load(skill_id) for skill_id in sorted(choices)]
