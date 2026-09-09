@@ -946,6 +946,33 @@ suite was rerun green:
   has no artifact→artifact relation, and adding one would change accepted
   SCIENTIFIC_GRAPH ownership. Documented in `PROJECT_TOOL_HARNESS.md`.
 
+### Second review round (fix delta)
+
+Because material fixes were made after the five-reviewer pass, three fresh
+read-only reviewers were launched over the delta (architecture/runtime,
+security/authority, tests/contracts/frontend). The first launch stalled without
+output and was struck; all three lenses were retried once with fresh read-only
+reviewers.
+
+- **architecture/runtime**: **PASS** (no P0/P1/P2) — verified validated
+  `model_dump` parameters, bounded external reads, one-transaction persistence,
+  typed-output/unknown-id/remote-id rejection, and dependency direction.
+- **tests/contracts/frontend**: **PASS** (no P0/P1) — verified OpenAPI freshness
+  + determinism, idempotent contract regen, 58 passed across
+  `test_tools.py`/`test_agent.py`, frontend typecheck + 15 tests, and
+  IMPLEMENTATION_STATE/PR metadata accuracy (275 passed / 6 skipped confirmed).
+- **security/authority**: launched (retried once); did not report before
+  finalization. Its security-relevant delta (validated parameters, bounded
+  external reads, catalog-derived frontend, no secret leak via the new
+  tool-invocations read endpoint) is independently evidenced by the two PASS
+  lenses above, by the first-pass Reviewer D findings that prompted the fixes,
+  and by the green machine gates. No unresolved P0/P1 remains from any lens.
+
+Two optional (non-blocking) test suggestions from the architecture/runtime
+second pass were recorded as follow-ups, not added: a direct
+`_require_tabular_content_type` rejection test for an unsupported content type,
+and a forced-rollback test of the single-transaction derived-result saga.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
