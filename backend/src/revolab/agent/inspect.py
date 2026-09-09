@@ -53,6 +53,22 @@ def inspect_artifact(
         raise NotFoundError("artifact reference not found")
 
     limit = max(0, min(preview_limit, MAX_PREVIEW_LIMIT))
+    if limit == 0:
+        # No bytes are requested: return an empty preview without touching the
+        # ContentStore or any provider transport.
+        return ArtifactInspectRead(
+            artifact_id=artifact_id,
+            authority=artifact.authority,
+            native_id=artifact.native_id,
+            content_type=artifact.content_type,
+            size=artifact.size,
+            checksum=artifact.checksum,
+            version_id=artifact.version_id,
+            preview="",
+            preview_size=0,
+            truncated=(artifact.size is not None and artifact.size > 0),
+            binary=False,
+        )
     if artifact.authority == "revolab":
         # Bounded read: the ContentStore never materializes the whole artifact
         # into the Agent inspect path.

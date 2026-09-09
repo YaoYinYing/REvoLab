@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     # Explicit runtime root for the canonical skill tree. Defaults to the repo
     # `.agents/skills/` during development; a packaged deployment MUST set this
     # to a shipped skill root (the repo-relative path is not part of the wheel).
+    # `get_settings()` is lru_cached, so set REVOLAB_SKILLS_ROOT before the first
+    # settings access (process start) or call `get_settings.cache_clear()`.
     skills_root: str | None = None
 
 

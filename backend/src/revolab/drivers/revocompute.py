@@ -486,18 +486,32 @@ class REvoComputeArtifactResolutionCapability:
         honor `Range` (no full-body fallback), so the Agent inspect path never
         silently materializes a large artifact."""
         task_id, path = self._parse_identity(artifact)
-        end = offset + max(limit, 0) - 1
-        response = self._httpx_call(
-            lambda: self._client.get(
-                f"/compute/api/results/{task_id}/artifacts/{quote(path, safe='/')}",
-                headers={
-                    "X-API-Key": credentials.get(REVOCOMPUTE_CREDENTIAL_KIND),
-                    "Range": f"bytes={offset}-{end}",
-                },
+        if limit <= 0:
+            return ArtifactHandle(
+                authority=REVOCOMPUTE_AUTHORITY,
+                native_id=f"{task_id}:{path}",
+                version_id="",
+                content_type=artifact.content_type,
+                size=artifact.size,
+                checksum=None,
+                data=b"",
             )
+        end = offset + limit - 1
+        # Stream, don't buffer: the body is consumed only once the upstream has
+        # honored the Range request (206). A 200 response means the upstream
+        # ignored Range and is rejected before any bytes are read.
+        request = self._client.build_request(
+            "GET",
+            f"/compute/api/results/{task_id}/artifacts/{quote(path, safe='/')}",
+            headers={
+                "X-API-Key": credentials.get(REVOCOMPUTE_CREDENTIAL_KIND),
+                "Range": f"bytes={offset}-{end}",
+            },
         )
+        response = self._httpx_call(lambda: self._client.send(request, stream=True))
         self._raise_on_error(response)
         if response.status_code != 206:
+            response.close()
             raise CapabilityError(
                 CapabilityErrorKind.PROVIDER_UNAVAILABLE,
                 "REvoCompute did not honor the byte-range request for artifact preview",

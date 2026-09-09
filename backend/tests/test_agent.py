@@ -254,6 +254,32 @@ def test_skill_catalog_fails_closed_on_missing_root(tmp_path):
         SkillCatalog(root=tmp_path / "missing").load("project-context")
 
 
+def test_skill_catalog_default_root_honors_env(tmp_path, monkeypatch):
+    from revolab.config import get_settings
+
+    root = tmp_path / "skills"
+    (root / "project-context").mkdir(parents=True)
+    (root / "project-context" / "SKILL.md").write_text(
+        "---\nname: project-context\nversion: 0.1.0\ndescription: env skill\n---\n# env\n",
+        encoding="utf-8",
+    )
+    get_settings.cache_clear()
+    monkeypatch.setenv("REVOLAB_SKILLS_ROOT", str(root))
+    try:
+        assert SkillCatalog().load("project-context").id == "project-context"
+    finally:
+        get_settings.cache_clear()
+        monkeypatch.delenv("REVOLAB_SKILLS_ROOT", raising=False)
+
+
+def test_skill_catalog_fails_closed_when_dev_root_missing(tmp_path, monkeypatch):
+    import revolab.agent.skills as skills_module
+
+    monkeypatch.setattr(skills_module, "_DEV_SKILLS_ROOT", tmp_path / "missing-dev-root")
+    with pytest.raises(FileNotFoundError):
+        SkillCatalog().load("project-context")
+
+
 # ---------------------------------------------------------------------------
 # ContextBuilder authorization / visibility
 # ---------------------------------------------------------------------------

@@ -263,9 +263,19 @@ def resolve_artifact_preview(
             provider_key=provider_key,
             capability_kind=CapabilityKind.ARTIFACT_RESOLUTION,
         )
-    return cast(ArtifactPreviewCapability, capability).preview(
+    handle = cast(ArtifactPreviewCapability, capability).preview(
         artifact, lease, offset=offset, limit=limit
     )
+    # Defense-in-depth: the preview boundary must never let a misbehaving driver
+    # slide a whole artifact into Agent memory even if it ignores the contract.
+    if handle.data is not None and len(handle.data) > max(limit, 0):
+        raise CapabilityError(
+            CapabilityErrorKind.PROVIDER_UNAVAILABLE,
+            "provider returned more than the requested artifact preview bound",
+            provider_key=provider_key,
+            capability_kind=CapabilityKind.ARTIFACT_RESOLUTION,
+        )
+    return handle
 
 
 __all__ = [
