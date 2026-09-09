@@ -22,7 +22,13 @@ from revolab.content_store import ContentStore
 from revolab.db import get_session
 from revolab.domain.errors import DomainError
 from revolab.enums import ResourceKind
-from revolab.models import ArtifactReference, GlobalProvenanceEdge, Project
+from revolab.models import (
+    Actor,
+    ArtifactReference,
+    GlobalProvenanceEdge,
+    GlobalResourceRegistry,
+    Project,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -68,6 +74,17 @@ def _content_store() -> ContentStore:
 def create_actor(session: Session = Depends(get_session)) -> schemas.ActorRead:
     actor_id = services.create_actor(session)
     return schemas.ActorRead(actor_id=actor_id)
+
+
+@router.get("/actors/{actor_id}", response_model=schemas.ActorRead)
+def get_actor_by_id(actor_id: UUID, session: Session = Depends(get_session)) -> schemas.ActorRead:
+    """Existence check for a durable opaque Actor id. Not a Project resource;
+    used by the frontend to detect and recover from a persisted id that no
+    longer exists in this backend (e.g. after a database reset)."""
+    actor = session.get(Actor, actor_id)
+    if actor is None:
+        raise HTTPException(status_code=404, detail="actor not found")
+    return schemas.ActorRead(actor_id=actor.actor_id)
 
 
 @router.post("/projects", response_model=schemas.ProjectRead, status_code=201)
@@ -127,14 +144,14 @@ def add_membership(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/projects/{project_id}/objects")
+@router.get("/projects/{project_id}/objects", response_model=list[schemas.ObjectSummaryRead])
 def list_objects(
     project_id: UUID,
     limit: int = 50,
     offset: int = 0,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> list[dict[str, Any]]:
+) -> Any:
     services.readable_membership(session, actor_id, project_id)
     services.get_project(session, project_id)
     visible = queries.visible_resources(session, project_id)
@@ -172,13 +189,13 @@ def list_objects(
     return result
 
 
-@router.post("/projects/{project_id}/objects", status_code=201)
+@router.post("/projects/{project_id}/objects", status_code=201, response_model=schemas.ObjectDetailRead)
 def create_object(
     project_id: UUID,
     payload: schemas.ObjectCreate,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     series_id = services.create_object(
         session,
         actor_id,
@@ -192,25 +209,25 @@ def create_object(
     return queries.object_detail(session, project_id, series_id)
 
 
-@router.get("/projects/{project_id}/objects/{series_id}")
+@router.get("/projects/{project_id}/objects/{series_id}", response_model=schemas.ObjectDetailRead)
 def get_object(
     project_id: UUID,
     series_id: UUID,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     services.readable_membership(session, actor_id, project_id)
     return queries.object_detail(session, project_id, series_id)
 
 
-@router.patch("/projects/{project_id}/objects/{series_id}")
+@router.patch("/projects/{project_id}/objects/{series_id}", response_model=schemas.ObjectDetailRead)
 def patch_object(
     project_id: UUID,
     series_id: UUID,
     payload: schemas.SeriesPatch,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     services.update_series(
         session, actor_id, project_id, series_id, name=payload.name, description=payload.description
     )
@@ -279,6 +296,54 @@ def attach_external_identity(
         "series_id": str(mapping.series_id),
         "is_canonical": mapping.is_canonical,
     }
+
+
+_REFERENCE_KINDS = frozenset(
+    {
+        ResourceKind.RUN_REFERENCE,
+        ResourceKind.SESSION_REFERENCE,
+        ResourceKind.ARTIFACT_REFERENCE,
+        ResourceKind.LITERATURE_REFERENCE,
+        ResourceKind.EXTERNAL_REFERENCE,
+    }
+)
+
+
+@router.get("/projects/{project_id}/resources", response_model=list[schemas.ReferenceRead])
+def list_resources(
+    project_id: UUID,
+    resource_kind: ResourceKind | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> Any:
+    """Project-scoped collection of the reference-card subset of visible
+    resources (run/session/artifact/literature/external). The Project lens
+    applies: only resources linked into this Project are returned."""
+    services.readable_membership(session, actor_id, project_id)
+    from revolab.models import ProjectResourceLink
+
+    kinds = _REFERENCE_KINDS if resource_kind is None else {resource_kind}
+    kinds = {k for k in kinds if k in _REFERENCE_KINDS}
+    link_ids = session.scalars(
+        select(ProjectResourceLink.resource_id)
+        .join(
+            GlobalResourceRegistry,
+            GlobalResourceRegistry.resource_id == ProjectResourceLink.resource_id,
+        )
+        .where(
+            ProjectResourceLink.project_id == project_id,
+            GlobalResourceRegistry.resource_kind.in_([kind.value for kind in kinds]),
+        )
+        .order_by(ProjectResourceLink.created_at)
+        .offset(offset)
+        .limit(limit)
+    )
+    result = []
+    for resource_id in link_ids:
+        result.append(queries.reference_summary(session, resource_id, services._resource_kind(session, resource_id)))
+    return result
 
 
 @router.get("/projects/{project_id}/resources/{resource_id}")
@@ -528,13 +593,13 @@ def list_evidence(
     return out
 
 
-@router.post("/projects/{project_id}/evidence", status_code=201)
+@router.post("/projects/{project_id}/evidence", status_code=201, response_model=schemas.EvidenceRead)
 def create_evidence(
     project_id: UUID,
     payload: schemas.EvidenceCreate,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     evidence = services.create_evidence(
         session,
         actor_id,
@@ -555,13 +620,13 @@ def create_evidence(
     return queries.evidence_summary(evidence, frozen=False)
 
 
-@router.get("/projects/{project_id}/evidence/{evidence_id}")
+@router.get("/projects/{project_id}/evidence/{evidence_id}", response_model=schemas.EvidenceRead)
 def get_evidence(
     project_id: UUID,
     evidence_id: UUID,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     services.readable_membership(session, actor_id, project_id)
     from revolab.models import Evidence
 
@@ -573,14 +638,14 @@ def get_evidence(
     )
 
 
-@router.patch("/projects/{project_id}/evidence/{evidence_id}")
+@router.patch("/projects/{project_id}/evidence/{evidence_id}", response_model=schemas.EvidenceRead)
 def patch_evidence(
     project_id: UUID,
     evidence_id: UUID,
     payload: schemas.EvidencePatch,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     fields = payload.model_dump(exclude_unset=True)
     evidence = services.update_evidence(session, actor_id, project_id, evidence_id, **fields)
     return queries.evidence_summary(
@@ -609,13 +674,13 @@ def list_decisions(
     return [schemas.DecisionRead(**queries.decision_summary(session, d)) for d in rows]
 
 
-@router.post("/projects/{project_id}/decisions", status_code=201)
+@router.post("/projects/{project_id}/decisions", status_code=201, response_model=schemas.DecisionRead)
 def create_decision(
     project_id: UUID,
     payload: schemas.DecisionCreate,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     decision = services.create_decision(
         session,
         actor_id,
@@ -629,13 +694,13 @@ def create_decision(
     return queries.decision_summary(session, decision)
 
 
-@router.get("/projects/{project_id}/decisions/{decision_id}")
+@router.get("/projects/{project_id}/decisions/{decision_id}", response_model=schemas.DecisionRead)
 def get_decision(
     project_id: UUID,
     decision_id: UUID,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     services.readable_membership(session, actor_id, project_id)
     from revolab.models import Decision
 
@@ -645,14 +710,14 @@ def get_decision(
     return queries.decision_summary(session, decision)
 
 
-@router.patch("/projects/{project_id}/decisions/{decision_id}")
+@router.patch("/projects/{project_id}/decisions/{decision_id}", response_model=schemas.DecisionRead)
 def patch_decision(
     project_id: UUID,
     decision_id: UUID,
     payload: schemas.DecisionPatch,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     decision = services.update_decision(
         session,
         actor_id,
@@ -671,13 +736,13 @@ def patch_decision(
     return queries.decision_summary(session, decision)
 
 
-@router.post("/projects/{project_id}/decisions/{decision_id}/commit")
+@router.post("/projects/{project_id}/decisions/{decision_id}/commit", response_model=schemas.DecisionRead)
 def commit_decision(
     project_id: UUID,
     decision_id: UUID,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> dict[str, Any]:
+) -> Any:
     decision = services.commit_decision(session, actor_id, project_id, decision_id)
     return queries.decision_summary(session, decision)
 

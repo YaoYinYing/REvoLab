@@ -127,8 +127,61 @@ knowledge-edge tables). See
   head` + `alembic check` report **no drift** on SQLite and on a **clean
   PostgreSQL 16** database; a full object→revision→evidence→decision→commit
   vertical slice was smoke-run against PostgreSQL and committed successfully.
-- Frontend gates still pass: `npm run typecheck`, `npm run test`, `npm run build`
-  (the fixture frontend is untouched and remains a Phase-2 replacement target).
+- Frontend gates pass: `npm run typecheck`, `npm run test`, `npm run build`;
+  `npm run check:contracts` regenerates the OpenAPI-derived TypeScript and
+  reports no drift (Phase 2). The bootstrap fixture frontend has been replaced.
+
+## Implemented (Phase 2)
+
+- **Deterministic generated contract boundary.** `python -m
+  revolab.export_openapi` emits a sorted-key, stable-indent OpenAPI document
+  committed as `frontend/src/contracts/openapi.json`. `openapi-typescript`
+  derives `frontend/src/contracts/schema.d.ts` and
+  `scripts/generate-enums.mjs` derives
+  `frontend/src/contracts/enums.generated.ts` from that snapshot. The typed
+  `openapi-fetch` client (`frontend/src/api/client.ts`) consumes `schema.d.ts`;
+  form controls read enum value lists only from `enums.generated.ts`. No
+  hand-maintained frontend domain enum or wire schema remains.
+- **CI drift is executable.** The backend job re-exports `openapi.json` and
+  fails on any diff; the frontend job runs `npm run check:contracts` (fresh
+  regeneration + `git diff --exit-code`).
+- **Typed Phase-2 API completions (backend).** Object collection/detail now
+  declare typed response models (`ObjectSummaryRead`, `ObjectDetailRead`,
+  `EdgeRead`; `DecisionRead` extended with `created_at`/`committed_at`); evidence
+  and decision endpoints return declared models so the aggregate is no longer an
+  untyped JSON bag. Added `GET /api/projects/{project_id}/resources` — a
+  Project-lens collection of visible reference cards (run/session/artifact/
+  literature/external), kind-filterable. Object-detail now includes draft
+  decisions whose working `draft_selects` target the object (drafts are read,
+  never written by the read projection; commit still materializes truth).
+- **Real Project-scoped workspace frontend.** The bootstrap `App.tsx` and its
+  fixture `objects`/`relations`/`evidence`/`decisions` arrays are removed. The
+  frontend is a project-lens workspace: project creation/selection, Overview,
+  Objects (collection via `ProjectResourceLink` presentation semantics + create),
+  Object Detail (Series and Revision identity rendered separately, revision
+  payload, inbound/outbound provenance, attached evidence and decisions),
+  Evidence, Runs & Artifacts (reference cards), Decisions (draft commit /
+  immutable committed / superseded badges), Knowledge (committed truth only),
+  and a static Phase-2 provider capability surface. A passive selection-driven
+  context inspector renders the selected object's aggregate.
+- **Actor identity seam (not authentication).** On first load the workspace
+  persists an opaque Actor id (via `POST /api/actors`) and sends it as
+  `X-Actor-Id`; OIDC/login remains deferred.
+
+## Verified evidence (Phase 2)
+
+- Backend: `pytest` (74 tests) passes, including new regressions for typed
+  object-detail aggregate, draft-in-object-detail before commit, reference
+  collection through the Project lens, and reference-collection project scoping.
+  `ruff check backend` and strict `mypy` pass.
+- Frontend: `npm run typecheck`, `npm run test` (6 tests: generated-contract
+  boundary + project-scoped shell, no production fixture state), and
+  `npm run build` pass.
+- Browser smoke test (`npm run test:e2e`, Playwright, Chromium) passes against a
+  real FastAPI backend + real SQLite database path: create Project → create
+  ScientificObject → object detail → create Evidence → create Decision draft →
+  commit → reload → observe committed truth in Knowledge. No fixture scientific
+  state. The same spec runs in CI against the repository PostgreSQL service.
 
 ## Removed prototype paths
 
@@ -145,10 +198,12 @@ knowledge-edge tables). See
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
-- Provider/Driver/Capability/credential material (Phase 3); generated
-  OpenAPI→TypeScript client + real frontend integration (Phase 2). The fixture
-  frontend still builds green.
+- Provider/Driver/Capability/credential material (Phase 3). The generated
+  OpenAPI→TypeScript client and the real Project-scoped workspace landed in
+  Phase 2 (above).
 
 ## Working set
 
 - Added dependencies: `fsspec` (ContentStore), `python-multipart` (artifact upload).
+- Frontend: `openapi-fetch` (typed client), `openapi-typescript` (contract
+  generation, dev), `@playwright/test` (browser smoke, dev), `@types/node` (dev).

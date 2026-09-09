@@ -24,6 +24,16 @@ def test_health_and_actor_creation(client):
     assert actor.json()["actor_id"]
 
 
+def test_actor_existence_check(client):
+    actor_id = client.post("/api/actors").json()["actor_id"]
+    found = client.get(f"/api/actors/{actor_id}")
+    assert found.status_code == 200
+    assert found.json()["actor_id"] == actor_id
+
+    missing = client.get("/api/actors/00000000-0000-4000-8000-000000000000")
+    assert missing.status_code == 404
+
+
 def test_full_vertical_slice_through_project_lens(client):
     actor_id = _actor(client)
     project = _project(client, actor_id)
@@ -194,3 +204,120 @@ def test_non_member_cannot_read(client):
     pid = project["id"]
     response = client.get(f"/api/projects/{pid}", headers=_headers(stranger))
     assert response.status_code == 403
+
+
+def test_object_detail_response_is_typed_aggregate(client):
+    actor_id = _actor(client)
+    project = _project(client, actor_id)
+    pid = project["id"]
+    created = client.post(
+        f"/api/projects/{pid}/objects",
+        json={"object_type": "protein", "name": "T5alphaH", "payload": {"organism": "T"}},
+        headers=_headers(actor_id),
+    )
+    assert created.status_code == 201
+    series_id = created.json()["series"]["series_id"]
+
+    detail = client.get(f"/api/projects/{pid}/objects/{series_id}", headers=_headers(actor_id))
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["series"]["object_type"] == "protein"
+    assert body["series"]["series_id"] == series_id
+    assert body["latest_revision_seq"] == 1
+    assert body["visible_revisions"][0]["object_type"] == "protein"
+    assert isinstance(body["provenance"]["inbound"], list)
+    assert isinstance(body["provenance"]["outbound"], list)
+    assert body["evidence"] == []
+    assert body["decisions"] == []
+
+    listing = client.get(f"/api/projects/{pid}/objects", headers=_headers(actor_id))
+    assert listing.status_code == 200
+    assert listing.json()[0]["series_id"] == series_id
+    assert listing.json()[0]["latest_revision"]["revision_seq"] == 1
+
+
+def test_object_detail_includes_draft_decision_before_commit(client):
+    actor_id = _actor(client)
+    project = _project(client, actor_id)
+    pid = project["id"]
+    created = client.post(
+        f"/api/projects/{pid}/objects",
+        json={"object_type": "protein", "name": "T5alphaH", "payload": {}},
+        headers=_headers(actor_id),
+    )
+    series_id = created.json()["series"]["series_id"]
+
+    draft = client.post(
+        f"/api/projects/{pid}/decisions",
+        json={
+            "title": "Draft select",
+            "statement": "Not yet truth",
+            "selects": [{"target_id": series_id, "target_kind": "scientific_object_series"}],
+        },
+        headers=_headers(actor_id),
+    )
+    assert draft.status_code == 201
+    decision_id = draft.json()["id"]
+
+    detail = client.get(f"/api/projects/{pid}/objects/{series_id}", headers=_headers(actor_id))
+    assert detail.status_code == 200
+    assert [d["id"] for d in detail.json()["decisions"]] == [decision_id]
+
+    committed = client.post(
+        f"/api/projects/{pid}/decisions/{decision_id}/commit", headers=_headers(actor_id)
+    )
+    assert committed.status_code == 200
+    detail_after = client.get(f"/api/projects/{pid}/objects/{series_id}", headers=_headers(actor_id))
+    assert [d["id"] for d in detail_after.json()["decisions"]] == [decision_id]
+    assert detail_after.json()["decisions"][0]["status"] == "committed"
+
+
+def test_reference_collection_through_project_lens(client, monkeypatch, tmp_path):
+    actor_id = _actor(client)
+    project = _project(client, actor_id)
+    pid = project["id"]
+    monkeypatch.setattr("revolab.api._content_store", lambda: ContentStore(tmp_path))
+
+    run = client.post(
+        f"/api/projects/{pid}/runs",
+        json={"authority": "revocompute", "native_id": "run-7"},
+        headers=_headers(actor_id),
+    )
+    assert run.status_code == 201
+    artifact = client.post(
+        f"/api/projects/{pid}/artifacts",
+        files={"file": ("s.fa", io.BytesIO(b">s\nA"), "text/plain")},
+        headers=_headers(actor_id),
+    )
+    assert artifact.status_code == 201
+
+    listing = client.get(f"/api/projects/{pid}/resources", headers=_headers(actor_id))
+    assert listing.status_code == 200
+    kinds = {row["resource_kind"] for row in listing.json()}
+    assert "run_reference" in kinds
+    assert "artifact_reference" in kinds
+
+    runs = client.get(
+        f"/api/projects/{pid}/resources",
+        params={"resource_kind": "run_reference"},
+        headers=_headers(actor_id),
+    )
+    assert runs.status_code == 200
+    assert all(row["resource_kind"] == "run_reference" for row in runs.json())
+
+
+def test_reference_collection_is_project_scoped(client):
+    actor_a = _actor(client)
+    actor_b = _actor(client)
+    project_a = _project(client, actor_a, name="A")
+    project_b = _project(client, actor_b, name="B")
+    client.post(
+        f"/api/projects/{project_a['id']}/runs",
+        json={"authority": "revocompute", "native_id": "run-scoped"},
+        headers=_headers(actor_a),
+    )
+    listing = client.get(
+        f"/api/projects/{project_b['id']}/resources", headers=_headers(actor_b)
+    )
+    assert listing.status_code == 200
+    assert listing.json() == []

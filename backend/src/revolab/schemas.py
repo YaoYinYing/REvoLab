@@ -21,6 +21,7 @@ from revolab.enums import (
     EvidenceTargetKind,
     ObjectType,
     Polarity,
+    RelationType,
     ResourceKind,
     Role,
 )
@@ -280,6 +281,46 @@ class RevisionRead(BaseModel):
     created_at: datetime | None = None
 
 
+class EdgeRead(BaseModel):
+    """A single global provenance edge as returned inside the object-detail
+    aggregate. Edges are read-only: there is no generic writer."""
+
+    edge_id: UUID
+    relation_type: RelationType
+    source_id: UUID
+    source_kind: ResourceKind
+    target_id: UUID
+    target_kind: ResourceKind
+
+
+class ObjectDetailProvenance(BaseModel):
+    inbound: list[EdgeRead]
+    outbound: list[EdgeRead]
+
+
+class ObjectSummaryRead(BaseModel):
+    """Collection-list projection of a visible Series (summary mode)."""
+
+    series_id: UUID
+    object_type: ObjectType
+    name: str
+    description: str | None = None
+    created_at: datetime | None = None
+    archived_at: datetime | None = None
+    latest_revision: RevisionRead | None = None
+
+
+class ObjectDetailRead(BaseModel):
+    """The first-class object-detail aggregate (Workspace IA single contract)."""
+
+    series: SeriesRead
+    visible_revisions: list[RevisionRead]
+    latest_revision_seq: int | None = None
+    provenance: ObjectDetailProvenance
+    evidence: list[EvidenceRead]
+    decisions: list[DecisionRead]
+
+
 class EvidenceRead(BaseModel):
     id: UUID
     project_id: UUID
@@ -310,3 +351,5 @@ class DecisionRead(BaseModel):
     selects: list[dict[str, Any]]
     superseded: bool = False
     superseded_by: UUID | None = None
+    created_at: datetime | None = None
+    committed_at: datetime | None = None
