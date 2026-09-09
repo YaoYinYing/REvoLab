@@ -748,7 +748,7 @@ E2E **2 passed**.
 ## Verified evidence (Phase 6)
 
 - Backend: `ruff check backend` and strict `mypy` pass (37 source files).
-  `pytest` passes with **235 passed, 5 skipped** (the five skips are the opt-in
+  `pytest` passes with **236 passed, 5 skipped** (the five skips are the opt-in
   PostgreSQL acceptance file run separately below).
 - Migrations: `alembic upgrade head` + `alembic check` report **no drift** on a
   clean SQLite database and on a clean PostgreSQL 16 database (`revolab_p6`). The
@@ -786,10 +786,16 @@ findings (committed in `a359408`, `661f6f3`, `bd5e410`):
   single `DecisionCreate` component;
 - `AGENT_CONTEXT.md` ref terminology reconciled to the durable wire shape.
 
-Second pass (three fresh read-only reviewers over the contract/security test fix
-delta): contract/schema returned PASS (no P0/P1). Security/authority and
-tests/PostgreSQL/CI are still in flight at the time of this edit; the final
-outcome is recorded in the PR body and completion checklist.
+Second pass (three fresh read-only reviewers over the contract/security/test fix
+delta): contract/schema returned PASS (no P0/P1); security/authority returned
+PASS (no P0; one P1 test-strength gap + P2s fixed in `12ab928`). The
+tests/PostgreSQL/CI second-pass reviewer stalled and was not replaced a second
+time; that lens is covered by the first-pass Reviewer E (PASS, full machine
+evidence) and by the primary integrator re-running the complete gate suite after
+every reconciliation — `236 passed` (backend), `5 passed` (PostgreSQL), `14
+passed` (frontend), `3 passed` (Playwright E2E).
+
+## Known deferrals (explicit, not silently postponed)
 
 ## Known deferrals (explicit, not silently postponed)
 
