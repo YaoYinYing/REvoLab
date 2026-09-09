@@ -874,3 +874,59 @@ def test_external_compute_artifact_select_persist_over_http(client):
         assert selected.json()["persisted"] is True
     finally:
         app.dependency_overrides.clear()
+
+
+def test_non_finite_numeric_value_fails_closed(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    ctx = _analysis_ctx(session, actor, project, tmp_path)
+    artifact = _upload(session, actor, project, ctx.content_store, b"x,y\n1,2\nNaN,4\n")
+    with pytest.raises(ValidationError):
+        _runtime().invoke(
+            ctx,
+            ToolInvocationCreate(tool_id="table.describe", input={"artifact_id": str(artifact.artifact_id)}),
+        )
+
+
+def test_plot_non_finite_y_fails_closed(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    ctx = _analysis_ctx(session, actor, project, tmp_path)
+    artifact = _upload(session, actor, project, ctx.content_store, b"x,y\n1,2\n2,Inf\n")
+    with pytest.raises(ValidationError):
+        _runtime().invoke(
+            ctx,
+            ToolInvocationCreate(
+                tool_id="plot.xy",
+                input={"artifact_id": str(artifact.artifact_id), "x_column": "x", "y_columns": ["y"]},
+            ),
+        )
+
+
+def test_table_select_rejects_empty_and_duplicate_columns(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    ctx = _analysis_ctx(session, actor, project, tmp_path)
+    artifact = _upload(session, actor, project, ctx.content_store, CSV)
+    for columns in ([], ["x", "x"]):
+        with pytest.raises(ValidationError):
+            _runtime().invoke(
+                ctx,
+                ToolInvocationCreate(
+                    tool_id="table.select",
+                    input={"artifact_id": str(artifact.artifact_id), "columns": columns},
+                ),
+            )
+
+
+def test_oversized_csv_field_fails_closed(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    ctx = _analysis_ctx(session, actor, project, tmp_path)
+    huge = b"x" * 200_000
+    artifact = _upload(session, actor, project, ctx.content_store, b"a,b\n" + huge + b",1\n")
+    with pytest.raises(ValidationError):
+        _runtime().invoke(
+            ctx,
+            ToolInvocationCreate(tool_id="table.describe", input={"artifact_id": str(artifact.artifact_id)}),
+        )

@@ -12,6 +12,7 @@ import contextlib
 import csv
 import io
 import json
+import math
 import statistics
 from dataclasses import dataclass
 from uuid import UUID
@@ -49,6 +50,8 @@ def _decode_csv(data: bytes, *, max_rows: int, max_columns: int) -> _Table:
         header = next(reader)
     except StopIteration as exc:
         raise ValidationError("unsupported artifact: empty table") from exc
+    except csv.Error as exc:
+        raise ValidationError("unsupported artifact: malformed CSV") from exc
     if not header:
         raise ValidationError("unsupported artifact: missing header row")
     columns = tuple(header)
@@ -57,12 +60,15 @@ def _decode_csv(data: bytes, *, max_rows: int, max_columns: int) -> _Table:
     if len(set(columns)) != len(columns):
         raise ValidationError("unsupported artifact: duplicate column names")
     rows: list[dict[str, str]] = []
-    for values in reader:
-        if len(rows) >= max_rows:
-            return _Table(columns=columns, rows=rows, truncated=True)
-        if not values:
-            continue
-        rows.append({column: (values[i] if i < len(values) else "") for i, column in enumerate(columns)})
+    try:
+        for values in reader:
+            if len(rows) >= max_rows:
+                return _Table(columns=columns, rows=rows, truncated=True)
+            if not values:
+                continue
+            rows.append({column: (values[i] if i < len(values) else "") for i, column in enumerate(columns)})
+    except csv.Error as exc:
+        raise ValidationError("unsupported artifact: malformed CSV") from exc
     return _Table(columns=columns, rows=rows)
 
 
@@ -76,9 +82,12 @@ def _numeric(values: list[str]) -> list[float] | None:
     out: list[float] = []
     for value in values:
         try:
-            out.append(float(value))
+            parsed = float(value)
         except (TypeError, ValueError):
             return None
+        if not math.isfinite(parsed):
+            raise ValidationError("unsupported artifact: non-finite numeric value")
+        out.append(parsed)
     return out
 
 
@@ -203,9 +212,12 @@ def handle_plot_xy(
             with contextlib.suppress(TypeError, ValueError):
                 x_value = float(raw_x)
             try:
-                y_values.append(float(row[y_column]))
+                y_value = float(row[y_column])
             except (TypeError, ValueError) as exc:
                 raise ValidationError(f"plot y column {y_column!r} is not numeric") from exc
+            if not math.isfinite(y_value):
+                raise ValidationError(f"plot y column {y_column!r} contains a non-finite value")
+            y_values.append(y_value)
             x_values.append(x_value)
         series.append(PlotSeriesRead(name=y_column, x=x_values, y=y_values))
 

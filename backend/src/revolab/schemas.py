@@ -849,6 +849,15 @@ class TableSelectCreate(BaseModel):
     filter_value: str | None = Field(default=None, max_length=500)
     limit: int = Field(default=50, ge=1, le=1000)
 
+    @model_validator(mode="after")
+    def _columns_nonempty_unique(self) -> TableSelectCreate:
+        if self.columns is not None:
+            if len(self.columns) == 0:
+                raise ValueError("columns must not be empty when supplied")
+            if len(set(self.columns)) != len(self.columns):
+                raise ValueError("columns must be unique")
+        return self
+
 
 class PlotXyCreate(BaseModel):
     artifact_id: UUID
