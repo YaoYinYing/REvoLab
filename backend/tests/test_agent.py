@@ -261,6 +261,24 @@ def test_context_budget_truncates_implicit_series(session):
     assert context.budget.truncated is True
 
 
+def test_context_budget_enforces_global_revision_cap(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    series = _object(session, actor, project, "T5")
+    for seq in range(3):
+        _revision(session, actor, project, series, {"chain": f"A{seq + 2}"})
+
+    context = build_context(
+        session,
+        actor,
+        project.id,
+        _registry(),
+        ContextSelectionCreate(series_ids=[series], max_revisions=2),
+    )
+    assert context.budget.revision_count == 2
+    assert context.budget.truncated is True
+
+
 # ---------------------------------------------------------------------------
 # Artifact inspection
 # ---------------------------------------------------------------------------

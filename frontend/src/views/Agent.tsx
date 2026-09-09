@@ -13,6 +13,8 @@ import {
   DECISION_STATUS_COMMITTED,
   DECISION_STATUS_DRAFT,
   DEFAULT_SELECT_TARGET_KIND,
+  ROLE_MEMBER,
+  ROLE_OWNER,
 } from '../contracts/enums'
 
 function autonomyTone(autonomy: string): 'neutral' | 'good' | 'warn' {
@@ -73,6 +75,8 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
   )
   const context = useProjectContext(actorId, projectId, selection)
   const tools = useAgentTools(actorId, projectId)
+  const canMutate =
+    context.data?.membership_role === ROLE_OWNER || context.data?.membership_role === ROLE_MEMBER
 
   async function recordDraft(event: React.FormEvent) {
     event.preventDefault()
@@ -187,11 +191,11 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
             />
           </Field>
           <div className="form-actions">
-            <Button type="submit" disabled={busy || !selection}>
+            <Button type="submit" disabled={busy || !selection || !canMutate}>
               {busy ? 'Recording…' : 'Record draft'}
             </Button>
             {proposalIsDraft ? (
-              <Button onClick={commitDraft} disabled={busy}>
+              <Button onClick={commitDraft} disabled={busy || !canMutate}>
                 <GitCommitHorizontal size={15} /> Commit (authorized)
               </Button>
             ) : null}

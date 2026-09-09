@@ -121,20 +121,25 @@ def build_context(
             raise NotFoundError("selected series not found")
         series_refs.append(_series_ref(series))
         # Visible revisions only (a Project without the revision link never sees
-        # it, even when the series is shared).
+        # it, even when the series is shared). `max_revisions` is a global budget
+        # across the whole turn, not a per-series budget.
         revisions = _visible_revisions(session, series.series_id, visible)
-        for revision in revisions[: selection.max_revisions]:
+        for revision in revisions:
+            if len(revision_refs) >= selection.max_revisions:
+                truncated = True
+                break
             revision_refs.append(_revision_ref(revision))
         if len(revisions) > selection.max_revisions:
             truncated = True
 
     # Explicitly selected revisions whose series was capped out still appear as
-    # addressable revision refs (they were validated visible above).
+    # addressable revision refs (they were validated visible above), still obeying
+    # the single global `max_revisions` budget.
     have_revision_ids = {ref.revision_id for ref in revision_refs}
     for revision_id in sorted(selected_revision_ids):
         if revision_id in have_revision_ids:
             continue
-        if len(revision_refs) >= selection.max_revisions * max(len(ordered_series_ids[: selection.max_series]), 1):
+        if len(revision_refs) >= selection.max_revisions:
             truncated = True
             break
         revision = session.get(ScientificObjectRevision, revision_id)
