@@ -71,7 +71,7 @@ def test_task_kind_discovery_and_schema(client) -> None:
         headers=_headers(actor),
     )
     assert listing.status_code == 200
-    assert [item["kind_id"] for item in listing.json()] == ["echo"]
+    assert [item["kind_id"] for item in listing.json()] == ["echo", "tabular"]
 
     schema = client.get(
         f"/api/projects/{project['id']}/providers/fakecompute/compute/task-kinds/echo/schema",
@@ -79,6 +79,13 @@ def test_task_kind_discovery_and_schema(client) -> None:
     )
     assert schema.status_code == 200
     assert schema.json()["parameter_schema"]["type"] == "object"
+
+    tabular = client.get(
+        f"/api/projects/{project['id']}/providers/fakecompute/compute/task-kinds/tabular/schema",
+        headers=_headers(actor),
+    )
+    assert tabular.status_code == 200
+    assert "rows" in tabular.json()["parameter_schema"]["properties"]
 
 
 def test_submit_status_artifacts_resolve_flow(client) -> None:

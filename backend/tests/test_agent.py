@@ -314,7 +314,7 @@ def test_viewer_reads_skeleton_and_cannot_record_draft(session):
     decisions = {tool.id: tool for tool in catalog.tools}
     assert decisions["decision.record_draft"].available is False
     assert decisions["decision.commit"].available is False
-    assert decisions["context.build"].available is True
+    assert decisions["table.describe"].available is True
 
 
 def test_shared_revision_sibling_privacy_in_context(session):
@@ -625,8 +625,10 @@ def _tool_ids(catalog) -> set[str]:
 
 DOMAIN_TOOL_IDS = frozenset(
     {
-        "context.build",
         "artifact.inspect",
+        "table.describe",
+        "table.select",
+        "plot.xy",
         "evidence.create",
         "decision.record_draft",
         "decision.commit",
@@ -640,12 +642,14 @@ def test_domain_tools_authority_matrix(session):
     catalog = build_tool_catalog(session, owner, project.id, _registry())
     by_id = {tool.id: tool for tool in catalog.tools}
 
-    # The closed domain-tool set is exactly the Phase-6 minimal slice — pin it so
+    # The closed local-tool set is exactly the Phase-7 minimal slice — pin it so
     # a raw-write/credential/membership tool can never slip in while tests pass.
     assert _tool_ids(catalog) == DOMAIN_TOOL_IDS
 
-    assert by_id["context.build"].autonomy is AgentToolAutonomy.AUTOMATIC
     assert by_id["artifact.inspect"].autonomy is AgentToolAutonomy.AUTOMATIC
+    assert by_id["table.describe"].autonomy is AgentToolAutonomy.AUTOMATIC
+    assert by_id["table.select"].autonomy is AgentToolAutonomy.AUTOMATIC
+    assert by_id["plot.xy"].autonomy is AgentToolAutonomy.AUTOMATIC
     assert by_id["evidence.create"].autonomy is AgentToolAutonomy.POLICY
     assert by_id["decision.record_draft"].autonomy is AgentToolAutonomy.POLICY
     assert by_id["decision.commit"].autonomy is AgentToolAutonomy.EXPLICIT_ACTION
@@ -958,7 +962,7 @@ def test_agent_http_viewer_is_read_only(client):
     assert by_id["decision.record_draft"]["available"] is False
     assert by_id["decision.commit"]["available"] is False
     assert by_id["evidence.create"]["available"] is False
-    assert by_id["context.build"]["available"] is True
+    assert by_id["table.describe"]["available"] is True
 
     proposal = client.post(
         f"/api/projects/{pid}/agent/proposals",

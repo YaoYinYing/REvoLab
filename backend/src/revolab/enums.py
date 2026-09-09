@@ -144,13 +144,14 @@ LEGAL_EVIDENCE_SOURCE_KINDS = frozenset(
 
 class CapabilityKind(StrEnum):
     """Core-owned closed capability vocabulary (ADR-0012). Core categorizes
-    realized capabilities by these kinds; it never parses provider vocabulary."""
+    realized capabilities by these kinds; it never parses provider vocabulary.
+
+    Only the two realized capability kinds exist. Any additional kind is added
+    only when a concrete, provider-neutral use case forces it — never pre-
+    projected as speculative vocabulary."""
 
     COMPUTE = "compute"
-    SEARCH = "search"
     ARTIFACT_RESOLUTION = "artifact_resolution"
-    DESIGN = "design"
-    INTERACTIVE_HANDOFF = "interactive_handoff"
 
 
 class ProviderRuntimeHealth(StrEnum):
@@ -187,8 +188,9 @@ class CapabilityErrorKind(StrEnum):
 
 
 class ToolSource(StrEnum):
-    """Where a Phase-6 Agent tool descriptor originates (TODO.md section 3):
-    a REvoLab typed domain operation or an available Provider capability."""
+    """Where a Project Tool descriptor originates (TODO.md section 3): a REvoLab
+    typed domain/analysis operation (`domain`) or an available Provider
+    capability (`provider`). Not secret-bearing; presentation metadata only."""
 
     DOMAIN = "domain"
     PROVIDER = "provider"
@@ -204,8 +206,59 @@ class AgentToolAutonomy(StrEnum):
     - `explicit_action`: an operation with side effects or truth-promotion that
       is never auto-executed by the Agent loop — it requires an explicit,
       authorized Actor action (e.g. committing a Decision, submitting compute).
+
+    This is the SINGLE canonical authority truth for Project Tools. The
+    `never_agent` class (membership, credential, destructive operations) is
+    represented by never projecting such an operation as a Tool at all — it is
+    not a fourth wire value.
     """
 
     AUTOMATIC = "automatic"
     POLICY = "policy"
     EXPLICIT_ACTION = "explicit_action"
+
+
+class ToolExecutionClass(StrEnum):
+    """Where a Project Tool actually runs (TODO.md section 3/6).
+
+    `local` tools are bounded, closed, in-process REvoLab operations (the Local
+    Tool Runtime). `remote` tools are projected Provider capabilities whose
+    execution truth stays with the external system (REvoCompute); they are
+    invoked through the existing capability endpoints, never the local runtime.
+    """
+
+    LOCAL = "local"
+    REMOTE = "remote"
+
+
+class ToolSideEffectClass(StrEnum):
+    """What a successful Project Tool invocation may durably produce (TODO.md
+    section 3/8). Persistence semantics are declared by the tool and enforced by
+    the runtime — a ToolResult is never promoted to project truth automatically.
+
+    `creates_derived_result` covers any durable NON-truth resource the tool
+    persists through a typed domain operation — locally derived analysis
+    artifacts (CSV/plot spec), or harvested external reference identity cards.
+    `domain_mutation` is a neutral typed-domain write (Evidence, Decision
+    draft/commit). Truth promotion is expressed by the Decision lifecycle
+    (draft → committed) and `AgentToolAutonomy` (commit is `explicit_action`),
+    NOT by this side-effect class — a Decision DRAFT is never "project truth"."""
+
+    READ_ONLY = "read_only"
+    CREATES_DERIVED_RESULT = "creates_derived_result"
+    DOMAIN_MUTATION = "domain_mutation"
+    EXTERNAL_ACTION = "external_action"
+
+
+class ToolResultKind(StrEnum):
+    """The durable kind of a ToolResult: what the invocation produced (TODO.md
+    section 7). `ephemeral` results are never persisted; every other kind names a
+    durable REvoLab resource recorded through a typed domain operation.
+
+    Only producing kinds are present: `ephemeral`, `artifact` (persisted derived
+    result), `evidence`, and `decision`."""
+
+    EPHEMERAL = "ephemeral"
+    ARTIFACT = "artifact"
+    EVIDENCE = "evidence"
+    DECISION = "decision"

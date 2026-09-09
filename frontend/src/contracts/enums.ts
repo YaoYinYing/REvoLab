@@ -18,6 +18,9 @@ import {
   PROJECT_VISIBILITIES,
   RESOURCE_KINDS,
   ROLES,
+  TOOL_EXECUTION_CLASSES,
+  TOOL_RESULT_KINDS,
+  TOOL_SIDE_EFFECT_CLASSES,
   TOOL_SOURCES,
 } from './enums.generated'
 
@@ -45,6 +48,7 @@ export const DECISION_STATUS_COMMITTED = pick(DECISION_STATUSES, 'committed')
 export const CAPABILITY_KIND_COMPUTE = pick(CAPABILITY_KINDS, 'compute')
 export const CAPABILITY_AVAILABILITY_AVAILABLE = pick(CAPABILITY_AVAILABILITIES, 'available')
 export const RESOURCE_KIND_REVISION = pick(RESOURCE_KINDS, 'scientific_object_revision')
+export const RESOURCE_KIND_ARTIFACT = pick(RESOURCE_KINDS, 'artifact_reference')
 
 // Collaboration-slice aliases (Phase 5): owner-role gating and default
 // visibility are derived from the generated lists, never re-declared as bare
@@ -60,3 +64,20 @@ export const AGENT_TOOL_AUTONOMY_AUTOMATIC = pick(AGENT_TOOL_AUTONOMIES, 'automa
 export const AGENT_TOOL_AUTONOMY_POLICY = pick(AGENT_TOOL_AUTONOMIES, 'policy')
 export const AGENT_TOOL_AUTONOMY_EXPLICIT_ACTION = pick(AGENT_TOOL_AUTONOMIES, 'explicit_action')
 export const TOOL_SOURCE_PROVIDER = pick(TOOL_SOURCES, 'provider')
+
+// Project Tool Harness aliases (Phase 7): execution/side-effect/result classes
+// are derived from the generated lists, never re-declared as bare literals.
+export const TOOL_EXECUTION_CLASS_LOCAL = pick(TOOL_EXECUTION_CLASSES, 'local')
+export const TOOL_EXECUTION_CLASS_REMOTE = pick(TOOL_EXECUTION_CLASSES, 'remote')
+export const TOOL_SIDE_EFFECT_READ_ONLY = pick(TOOL_SIDE_EFFECT_CLASSES, 'read_only')
+export const TOOL_SIDE_EFFECT_CREATES_DERIVED_RESULT = pick(
+  TOOL_SIDE_EFFECT_CLASSES,
+  'creates_derived_result',
+)
+export const TOOL_SIDE_EFFECT_DOMAIN_MUTATION = pick(
+  TOOL_SIDE_EFFECT_CLASSES,
+  'domain_mutation',
+)
+export const TOOL_SIDE_EFFECT_EXTERNAL_ACTION = pick(TOOL_SIDE_EFFECT_CLASSES, 'external_action')
+export const TOOL_RESULT_KIND_EPHEMERAL = pick(TOOL_RESULT_KINDS, 'ephemeral')
+export const TOOL_RESULT_KIND_ARTIFACT = pick(TOOL_RESULT_KINDS, 'artifact')

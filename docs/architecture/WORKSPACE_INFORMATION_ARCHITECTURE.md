@@ -22,6 +22,7 @@
 ```text
 Overview      → project's current scientific state (active decision, open next-actions, recent evidence, provider availability for you)
 Objects       → the organization tree (parent/child = pure grouping). Selecting a node opens its OBJECT DETAIL (graph-centric), not a CRUD card
+Analyze       → the Project Tool Harness surface: inspect artifacts, describe/select table columns, plot X-Y, and (from the same catalog) reach remote computation — schema-driven, never domain vocabulary
 Evidence      → all Evidence records, grouped by kind, filterable by source (authority / reference type)
 Runs & Artifacts → cross-cutting view of Run/Artifact references (aggregated from evidence)
 Decisions     → the project's decision log (draft / committed / superseded)
@@ -65,6 +66,10 @@ inside object detail, not a page people browse top-down.
   created it?" (durable reference, staleness/refresh status, provenance chain)
 - **Provider Capability Surface** — "What can this external system do here, and is
   it credentialed for my project?" (schema-driven, never hand-duplicated)
+- **Analyze / Tools** — "What can I compute locally over this artifact, and what
+  was derived from it?" (closed typed tools in one ToolCatalog shared by the human
+  workspace and the Agent; local results are ephemeral or explicitly persisted
+  derived artifacts, never automatic project truth)
 
 ## API / frontend contract
 

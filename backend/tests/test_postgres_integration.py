@@ -347,3 +347,120 @@ def test_phase6_agent_vertical_slice_on_postgres(pg_session: Session) -> None:
     # Final reload: the promotion gate persisted durable committed truth.
     final = pg_session.get(Decision, draft.id)
     assert final.status == DecisionStatus.COMMITTED.value
+
+
+def test_phase7_tool_harness_vertical_slice_on_postgres(pg_session: Session, tmp_path) -> None:
+    """Phase-7 PostgreSQL slice: internal CSV -> local table.select (persisted
+    derived artifact) -> Evidence -> Decision draft, plus a fake REvoCompute
+    tabular run whose artifact is analyzed by a local REvoLab Tool."""
+    from revolab.content_store import ContentStore
+    from revolab.models import ArtifactReference, ScientificObjectRevision, ToolInvocation
+    from revolab.schemas import ToolInvocationCreate
+    from revolab.secret_store import InMemorySecretStore
+    from revolab.testing.fake_compute import FakeComputeDriver
+    from revolab.tools.registry import build_default_registry
+    from revolab.tools.runtime import LocalToolRuntime
+    from revolab.tools.types import InvocationContext
+
+    registry = DriverRegistry()
+    registry.register(FakeComputeDriver())
+    registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
+    content_store = ContentStore(tmp_path)
+    secrets = InMemorySecretStore()
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG-Tools")
+    runtime = LocalToolRuntime(build_default_registry())
+    ctx = InvocationContext(
+        session=pg_session,
+        registry=registry,
+        secret_store=secrets,
+        content_store=content_store,
+        actor_id=actor,
+        project_id=project.id,
+    )
+
+    series_id = services.create_object(
+        pg_session, actor, project.id, "protein", "PG-Tool-Target", payload={"organism": "PG"}
+    )
+    revision_id = pg_session.scalar(
+        select(ScientificObjectRevision.revision_id)
+        .where(ScientificObjectRevision.series_id == series_id)
+        .order_by(ScientificObjectRevision.revision_seq)
+        .limit(1)
+    )
+
+    artifact = services.create_internal_artifact(
+        pg_session, actor, project.id, content_store, b"x,y\n1,2\n2,4\n", content_type="text/csv"
+    )
+
+    selected = runtime.invoke(
+        ctx,
+        ToolInvocationCreate(
+            tool_id="table.select",
+            input={"artifact_id": str(artifact.artifact_id), "columns": ["x", "y"], "limit": 10},
+            persist=True,
+        ),
+    )
+    assert selected.result_kind.value == "artifact"
+    assert selected.persisted is True
+    assert selected.resource_id is not None
+    assert pg_session.get(ArtifactReference, selected.resource_id) is not None
+    invocation = pg_session.scalar(select(ToolInvocation))
+    assert invocation is not None
+    assert invocation.result_resource_id == selected.resource_id
+
+    evidence = services.create_evidence(
+        pg_session,
+        actor,
+        project.id,
+        kind="computation",
+        polarity="supports",
+        source_kind="artifact_reference",
+        source_id=selected.resource_id,
+        target_kind="scientific_object_revision",
+        target_id=revision_id,
+    )
+    assert evidence.id is not None
+
+    draft = services.create_decision(
+        pg_session,
+        actor,
+        project.id,
+        title="PG tools draft",
+        statement="derived table valid",
+        cites=[{"evidence_id": evidence.id, "cited_as": "supports"}],
+        selects=[{"target_id": series_id, "target_kind": "scientific_object_series"}],
+    )
+    assert draft.status == DecisionStatus.DRAFT.value
+
+    # Remote flow: fake REvoCompute tabular run -> ArtifactReference -> local tool.
+    submitted = services.compute_submit(
+        pg_session,
+        registry,
+        InMemorySecretStore(),
+        content_store,
+        actor,
+        project.id,
+        "fakecompute",
+        "tabular",
+        [],
+        {"rows": 3},
+    )
+    artifacts = services.compute_refresh_artifacts(
+        pg_session,
+        registry,
+        InMemorySecretStore(),
+        actor,
+        project.id,
+        "fakecompute",
+        submitted["run_resource_id"],
+        submitted["native_id"],
+    )
+    external_artifact_id = artifacts[0]["resource_id"]
+    described = runtime.invoke(
+        ctx,
+        ToolInvocationCreate(tool_id="table.describe", input={"artifact_id": str(external_artifact_id)}),
+    )
+    assert described.value is not None
+    assert described.value["rows"] == 3

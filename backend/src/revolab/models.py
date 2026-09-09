@@ -575,3 +575,29 @@ class ExternalProviderCredentialBinding(Base, TimestampMixin):
             f"<ExternalProviderCredentialBinding id={self.id!r} "
             f"actor_id={self.actor_id!r} provider_key={self.provider_key!r} kind={self.kind!r}>"
         )
+
+
+class ToolInvocation(Base, TimestampMixin):
+    """Project-scoped durable record of ONE Local Tool invocation that persisted a
+    derived result (TODO.md sections 17/18: reproducibility, project activity,
+    agent observability). Explicitly NOT a Run model: `RunReference` is the
+    external REvoCompute execution identity card; `ToolInvocation` is the
+    REvoLab-local operation record. `parameters` is the validated, bounded tool
+    input (already schema-checked); secrets never enter it."""
+
+    __tablename__ = "tool_invocations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tool_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    tool_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    actor_id: Mapped[UUID | None] = mapped_column(ForeignKey("actors.actor_id"))
+    input_resource_ids: Mapped[list[str]] = mapped_column(JSONType, nullable=False, default=list)
+    parameters: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
+    result_kind: Mapped[str] = mapped_column(String(50), nullable=False)
+    result_resource_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("global_resource_registry.resource_id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(50), nullable=False)

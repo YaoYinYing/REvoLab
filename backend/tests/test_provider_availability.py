@@ -107,9 +107,9 @@ def test_viewer_is_permitted_for_read_only_capability(session, secret_store):
     services.provision_credential(
         session, secret_store, _credential_registry(), viewer, "fakeprov", "api_key", "SENTINEL"
     )
-    # SEARCH is read-only: any readable membership permits it.
+    # ARTIFACT_RESOLUTION is read-only: any readable membership permits it.
     assert (
-        _availability(session, viewer, project_id, capability_kind=CapabilityKind.SEARCH)
+        _availability(session, viewer, project_id, capability_kind=CapabilityKind.ARTIFACT_RESOLUTION)
         is CapabilityAvailability.AVAILABLE
     )
 
@@ -121,7 +121,7 @@ def test_ready_credential_but_non_member_is_not_authorized(session, secret_store
     services.provision_credential(
         session, secret_store, _credential_registry(), stranger, "fakeprov", "api_key", "SENTINEL"
     )
-    assert _availability(session, stranger, project_id, capability_kind=CapabilityKind.SEARCH) \
+    assert _availability(session, stranger, project_id, capability_kind=CapabilityKind.ARTIFACT_RESOLUTION) \
         is CapabilityAvailability.NOT_AUTHORIZED
 
 
@@ -169,7 +169,7 @@ def test_revocation_changes_next_query_availability_without_stored_state(session
 
 def test_provider_vocabulary_does_not_enter_core_enums():
     core_values = {kind.value for kind in CapabilityKind}
-    assert core_values == {"compute", "search", "artifact_resolution", "design", "interactive_handoff"}
+    assert core_values == {"compute", "artifact_resolution"}
     # Credential kinds are provider-declared; no vendor-specific term is a Core enum.
     assert "api_key" not in core_values
     assert "organization_token" not in core_values

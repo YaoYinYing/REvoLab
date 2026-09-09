@@ -28,6 +28,7 @@ truth. See `docs/architecture/SYSTEM_ARCHITECTURE.md` and the ADRs for the full 
 8. A Project is a namespace and membership boundary, not the owner of objects; deleting a Project removes links, never the underlying objects or provenance. ScientificObjects/references and the global provenance edges (#1–7) are global; the project knowledge edges (#8–10 selects/supersedes/cites) and Evidence/Decision are project-scoped. Read visibility is not mutation authority: `ProjectResourceLink` grants the read lens; `ResourceStewardship` alone authorizes mutation of a global resource, and global provenance edges are created only by typed authoritative domain operations (never a generic writer).
 9. The Agent is a consumer, not an owner: read context -> reason -> propose -> typed tool -> domain validation -> persisted truth.
 10. Credentials are owned by the credential store; a provider is callable iff its driver is READY and every required credential kind is present **for the calling Actor** and project policy permits — all queries, never stored truth.
+11. Tool is a first-class Project Harness abstraction, not a provider abstraction: a Driver/Capability is only an implementation detail behind a Tool that crosses an external boundary. Local tools run in a closed, typed runtime; local lightweight analysis and remote REvoCompute execution remain distinct runtimes projected through ONE ToolCatalog consumed by both human and Agent. Tool output never automatically becomes Evidence or Decision truth.
 
 ## Engineering principles
 

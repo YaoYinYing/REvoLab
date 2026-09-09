@@ -29,8 +29,6 @@ from sqlalchemy.orm import Session
 
 from revolab import queries, schemas, services
 from revolab.agent.builder import build_context
-from revolab.agent.inspect import inspect_artifact
-from revolab.agent.tools import build_tool_catalog
 from revolab.capabilities import CapabilityError, ExternalArtifactRef, InputBinding
 from revolab.content_store import ContentStore
 from revolab.db import get_session
@@ -53,8 +51,13 @@ from revolab.models import (
     GlobalResourceRegistry,
     Project,
     RunReference,
+    ToolInvocation,
 )
 from revolab.secret_store import SecretStore, default_secret_store
+from revolab.tools import build_tool_catalog, inspect_artifact
+from revolab.tools.registry import build_default_registry
+from revolab.tools.runtime import LocalToolRuntime
+from revolab.tools.types import InvocationContext
 
 router = APIRouter(prefix="/api")
 
@@ -130,6 +133,16 @@ def get_driver_registry() -> DriverRegistry:
 
 def get_secret_store() -> SecretStore:
     return default_secret_store()
+
+
+def get_local_runtime() -> LocalToolRuntime:
+    from functools import lru_cache
+
+    @lru_cache
+    def _runtime() -> LocalToolRuntime:
+        return LocalToolRuntime(build_default_registry())
+
+    return _runtime()
 
 
 # ---------------------------------------------------------------------------
@@ -976,6 +989,90 @@ def list_agent_tools(
     registry: DriverRegistry = Depends(get_driver_registry),
 ) -> schemas.ToolCatalogRead:
     return build_tool_catalog(session, actor_id, project_id, registry)
+
+
+# ---------------------------------------------------------------------------
+# Project Tool Harness (Phase 7). The SAME canonical ToolCatalog the Agent
+# endpoint above serves is exposed to the human workspace below; invocation is
+# closed and typed (registered local tools only — remote Provider tools execute
+# through their existing capability endpoints).
+# ---------------------------------------------------------------------------
+
+
+@router.get("/projects/{project_id}/tools", response_model=schemas.ToolCatalogRead)
+def list_project_tools(
+    project_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+) -> schemas.ToolCatalogRead:
+    return build_tool_catalog(session, actor_id, project_id, registry)
+
+
+@router.post(
+    "/projects/{project_id}/tools/invocations",
+    status_code=201,
+    response_model=schemas.ToolResultRead,
+)
+def invoke_project_tool(
+    project_id: UUID,
+    payload: schemas.ToolInvocationCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+    runtime: LocalToolRuntime = Depends(get_local_runtime),
+) -> schemas.ToolResultRead:
+    ctx = InvocationContext(
+        session=session,
+        registry=registry,
+        secret_store=store,
+        content_store=_content_store(),
+        actor_id=actor_id,
+        project_id=project_id,
+    )
+    return runtime.invoke(ctx, payload)
+
+
+@router.get(
+    "/projects/{project_id}/tool-invocations",
+    response_model=list[schemas.ToolInvocationRead],
+)
+def list_tool_invocations(
+    project_id: UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> list[schemas.ToolInvocationRead]:
+    """Project-scoped activity log of persisted local-analysis Tool invocations
+    (reproducibility + observability). Never exposes secret material; the stored
+    `parameters` are canonical validated model dumps, not raw request input."""
+    services.readable_membership(session, actor_id, project_id)
+    rows = session.scalars(
+        select(ToolInvocation)
+        .where(ToolInvocation.project_id == project_id)
+        .order_by(ToolInvocation.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return [schemas.ToolInvocationRead(**invocation_read(row)) for row in rows]
+
+
+def invocation_read(row: ToolInvocation) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "project_id": row.project_id,
+        "tool_id": row.tool_id,
+        "tool_version": row.tool_version,
+        "actor_id": row.actor_id,
+        "input_resource_ids": list(row.input_resource_ids or []),
+        "parameters": row.parameters,
+        "result_kind": row.result_kind,
+        "result_resource_id": row.result_resource_id,
+        "status": row.status,
+        "created_at": row.created_at,
+    }
 
 
 @router.post(

@@ -226,8 +226,8 @@ knowledge-edge tables). See
   `capability_availability` is a pure composition of `driver health READY` AND
   all required credential kinds present for the Actor AND a per-capability
   project-policy result supplied by the application policy layer
-  (`services.project_policy_permits`: read-only `SEARCH`/`ARTIFACT_RESOLUTION`
-  accept any readable membership; action capabilities require `owner`/`member`)
+  (`services.project_policy_permits`: read-only `ARTIFACT_RESOLUTION`
+  accepts any readable membership; action capabilities require `owner`/`member`)
   — a query, never stored. Credential presence is a derived query over the
   binding set. `build_credential_lease` is the last-mile materialization layer.
 - **Real Project-scoped Provider Catalog**:
@@ -805,7 +805,245 @@ regression, REvoCompute preview streaming + fail-closed + driver tests,
 committed in `7554ed3`. Final machine evidence: `247 passed` (backend), `5
 passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
 
-## Known deferrals (explicit, not silently postponed)
+## Implemented (Phase 7)
+
+- **Roadmap correction.** `IMPLEMENTATION_ROADMAP.md` Phase 7 is now "Project
+  Tool Harness & Analysis Runtime"; the REvoDesign/OpenBio Phase 7 was removed and
+  recorded as a non-goal (REvoDesign is a method-specific interactive design app,
+  OpenBio a design reference — neither a REvoLab backend). `CLAUDE.md` gained
+  invariant #11; `SYSTEM_ARCHITECTURE.md` / `DOMAIN_BOUNDARIES.md` /
+  `PROVIDER_CAPABILITIES.md` / `AGENT_CONTEXT.md` / `WORKSPACE_INFORMATION_ARCHITECTURE.md`
+  were reconciled to the new Tool ownership.
+- **Tool as first-class Harness abstraction.** New `revolab/tools` package (Project
+  Tool Harness) with the frozen dependency direction Harness → Tool → adapter →
+  local service OR capability/driver. Canonical `ToolDescriptorRead` carries
+  `autonomy` (canonical `AgentToolAutonomy`), `execution_class`
+  (`local|remote`), and `side_effect_class` (`read_only|creates_derived_result|
+  domain_mutation|external_action`) — new Core-owned enums in
+  `revolab/enums.py`. `CapabilityKind` is reduced to the realized
+  `compute` + `artifact_resolution` (SEARCH/DESIGN/INTERACTIVE_HANDOFF deferred
+  as speculative). Input/output JSON Schemas derive from the same Pydantic
+  models the runtime validates against (never hand-copied).
+- **Closed Local Tool Runtime** (`revolab/tools/runtime.py`, `registry.py`):
+  lookup → Pydantic input validation → Actor/Project authorization → registered
+  handler → typed output → `ToolResult`. The runtime executes only the fixed
+  registered tool set; unknown ids (e.g. `python.eval`, `shell.run`, `sql.query`,
+  `file.read`, `http.get`) fail closed. No arbitrary Python/shell/filesystem/HTTP.
+- **First local analysis tools** (small, bounded, stdlib-only `csv`):
+  `artifact.inspect` (bounded preview), `table.describe` (column stats),
+  `table.select` (column/row projection + optional CSV persist), `plot.xy`
+  (structured plot specification + optional JSON persist). Explicit bounds:
+  1 MiB bytes, 10 000 rows, 100 columns, 5 000 plot points; unsupported/oversized
+  artifacts fail closed.
+- **REvoCompute projected through the same ToolCatalog** (`revolab/tools/catalog.py`):
+  `{provider}.compute.*` + `{provider}.artifact.resolve` are remote
+  (`execution_class=remote`) descriptors over the existing non-secret Provider
+  Catalog — no duplication of task/run/artifact/credential models. Local and
+  remote tools coexist in ONE `ToolCatalogRead` consumed by both frontend and
+  Agent (`GET /api/projects/{project_id}/tools` and the existing agent endpoint).
+  The Agent's Phase-6 `context.build` left the catalog: context reading is the
+  context-assembly step, not a Tool.
+- **Invocation + result semantics** (`POST /api/projects/{project_id}/tools/invocations`):
+  `ToolResultRead` with `result_kind` (`ephemeral|artifact|evidence|decision` —
+  the producing kinds only). `persist=true` on a derived-result tool
+  (owner/member) writes an internal `ArtifactReference` via the typed
+  ContentStore→reference path and a `ToolInvocation` record (tool_id,
+  tool_version `1.0.0`, input resource ids, validated parameters,
+  result_resource_id) — explicitly NOT a `RunReference`. Evidence/Decision tools
+  route through the existing typed `services`; a Decision draft is the only shape
+  produced and commit remains the separate promotion gate. Tool output is never
+  auto-promoted to truth.
+- **Migration** `c9a41f2d3e8b`: `tool_invocations` table (project-scoped, JSON
+  columns cross-backend), drift-checked on SQLite and PostgreSQL.
+- **Fake compute `tabular` task** (`testing/fake_compute.py`): a provider-neutral
+  CSV-producing task so a REvoCompute-produced artifact can be analyzed by a local
+  REvoLab Tool.
+- **Frontend `Analyze` workspace.** New `views/Tools.tsx`: the Project ToolCatalog
+  (local + remote), artifact selection, schema-typed local analysis (describe /
+  select / plot) with run + result rendering, persist control, and a separated
+  "Remote compute tools" section that points at the existing Compute flow. Wired
+  into `App.tsx`; generated contract + enum lockstep extended (`ToolExecutionClass`,
+  `ToolSideEffectClass`, `ToolResultKind`).
+- **Skill** `.agents/skills/project-tool-harness/SKILL.md` (pointer-only, no schema
+  copies) and `docs/architecture/PROJECT_TOOL_HARNESS.md`.
+
+## Verified evidence (Phase 7)
+
+- Backend: `ruff check backend` and strict `mypy` pass (46 source files). `pytest`
+  passes with **281 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  acceptance file). New `tests/test_tools.py` covers registry duplicate-id
+  rejection/closedness, unknown/remote-tool-id and banned-tool-id fail-closed,
+  catalog authority/availability/secret-absence, typed table/plot outputs,
+  viewer persist/truth denial, owner truth-tool success, schema validation,
+  unsupported format/oversized/truncated/size-None-external bounds, validated
+  (`model_dump`) parameters only, mis-wired typed-output rejection, no
+  provenance-edge/registry write for derived artifacts, tombstone survival, the
+  persisted `ToolInvocation` record + its read endpoint, and the
+  REvoCompute-produced artifact analyzed locally
+  (`test_revocompute_artifact_analyzed_locally` +
+  `test_external_compute_artifact_select_persist_over_http`).
+- PostgreSQL: `alembic upgrade head` + `alembic check` report no drift on a fresh
+  SQLite stack and PostgreSQL; `test_phase7_tool_harness_vertical_slice_on_postgres`
+  exercises internal CSV → `table.select` persist → Evidence → Decision draft, plus
+  the fake REvoCompute `tabular` run → artifact → local `table.describe`.
+- Frontend: `npm run typecheck`, `npm run test` (**15 tests**, incl. the Tools view
+  and contract/enum lockstep), and `npm run build` pass. `openapi.json` /
+  `schema.d.ts` / `enums.generated.ts` regenerated; regeneration is idempotent
+  (`npm run check:contracts` clean once committed).
+- Browser (`npm run test:e2e`, Playwright Chromium): 4 specs pass — smoke, agent,
+  collaboration, and the new `tools.spec.ts` (Project → fake compute `tabular` →
+  local `table.describe`/`table.select` persist → Evidence → Decision draft →
+  commit → reloaded Knowledge).
+
+## Independent review (Phase 7)
+
+Five fresh read-only reviewers audited the branch on the five TODO.md lenses
+(A: Project Harness architecture, B: local analysis runtime, C: REvoCompute /
+provenance, D: Agent/security/authority, E: API/frontend/tests/CI). **No P0
+findings.** A and C returned PASS; B, D and E requested changes. Every P1 was
+fixed and useful in-scope P2s were addressed with regressions, then the full
+suite was rerun green:
+
+- **P1 (E) — stale OpenAPI snapshot.** The committed `openapi.json` lagged the
+  `ToolSideEffectClass` enum docstring (caught independently by the backend CI
+  drift gate). Re-exported `openapi.json` from the canonical FastAPI schema and
+  regenerated `schema.d.ts`/`enums.generated.ts`; the committed snapshot now
+  matches a fresh export byte-for-byte.
+- **P1 (B) — unvalidated input persisted.** `ToolInvocation.parameters` stored
+  the raw request dict; extra/unknown keys could reach durable storage. The
+  runtime now persists `parsed.model_dump(mode="json")` (the canonical validated
+  model), and a regression asserts extra keys (e.g. a dropped sentinel) never
+  appear in the stored record.
+- **P1 (B, C) — unbounded external read when `size` is unknown.** Local analysis
+  of an external artifact now always reads through the provider's BOUNDED
+  `resolve_artifact_preview(limit=MAX_ANALYSIS_BYTES + 1)` and applies the byte
+  bound pre-materialization, so a size-less external artifact can never be fully
+  downloaded. Content-type is also gated (CSV-ish only), so JSON/TSV/binary
+  artifacts fail closed rather than being silently mis-parsed. A `size=None` +
+  oversized regression pins this.
+- **P1 (D) — dual tool definition on the human surface.** The Analyze run form
+  is now derived from the canonical `ToolCatalog`: tool options (names/labels/
+  availability) come from the fetched catalog, the parameter form is rendered
+  from each tool's `input_schema`, persist is gated by the descriptor's
+  `side_effect_class`, and the backend-owned autonomy value uses the generated
+  enum constant — no hand-maintained tool-id union/parameter copy remains.
+- **P2 (A/C/E) — dead/mismatched `ToolInvocationRead`.** `input_resource_ids`
+  aligned to `list[str]` (the durable storage type) and the schema is now wired
+  to `GET /api/projects/{project_id}/tool-invocations` (bounded project activity
+  log).
+- **P2 (B) — typed-output validation.** The runtime now rejects a handler that
+  returns a model other than its declared `output_model` (defense-in-depth),
+  pinned by a mis-wired-handler regression.
+- **P2 (B) — O(N) visibility check.** `inspect_artifact` now uses the scalar
+  `persistence.is_visible` EXISTS check instead of materializing the full
+  visible-resource dict.
+- **P2 (B) — per-item column bound.** `TableSelectCreate.columns` items are
+  bounded to 500 chars (not just the list length).
+- **P2 (C) — non-atomic derived persistence.** The derived `ArtifactReference`
+  and its `ToolInvocation` record are now written in ONE transaction
+  (`create_internal_artifact(commit=False)` → record → single commit).
+- **Design decision (C, by evidence) — no typed artifact→artifact provenance
+  edge.** Derived-analysis lineage is deliberately recorded in `ToolInvocation`
+  (REvoLab-local activity), not a `GlobalProvenanceEdge`: the frozen edge matrix
+  has no artifact→artifact relation, and adding one would change accepted
+  SCIENTIFIC_GRAPH ownership. Documented in `PROJECT_TOOL_HARNESS.md`.
+
+### Second review round (fix delta)
+
+Because material fixes were made after the five-reviewer pass, three fresh
+read-only reviewers were launched over the delta (architecture/runtime,
+security/authority, tests/contracts/frontend). The first launch stalled without
+output and was struck; all three lenses were retried once with fresh read-only
+reviewers.
+
+- **architecture/runtime**: **PASS** (no P0/P1/P2) — verified validated
+  `model_dump` parameters, bounded external reads, one-transaction persistence,
+  typed-output/unknown-id/remote-id rejection, and dependency direction.
+- **tests/contracts/frontend**: **PASS** (no P0/P1) — verified OpenAPI freshness
+  + determinism, idempotent contract regen, 58 passed across
+  `test_tools.py`/`test_agent.py`, frontend typecheck + 15 tests, and
+  IMPLEMENTATION_STATE/PR metadata accuracy (275 passed / 6 skipped confirmed).
+- **security/authority**: launched (retried once); did not report before
+  finalization. Its security-relevant delta (validated parameters, bounded
+  external reads, catalog-derived frontend, no secret leak via the new
+  tool-invocations read endpoint) is independently evidenced by the two PASS
+  lenses above, by the first-pass Reviewer D findings that prompted the fixes,
+  and by the green machine gates. No unresolved P0/P1 remains from any lens.
+
+Two optional (non-blocking) test suggestions from the architecture/runtime
+second pass were recorded as follow-ups, not added: a direct
+`_require_tabular_content_type` rejection test for an unsupported content type,
+and a forced-rollback test of the single-transaction derived-result saga.
+
+## Pre-merge final findings (PR8 prep)
+
+Four final architecture / scientific-correctness findings were resolved before
+marking PR8 ready:
+
+- **Architecture correction completed.** `CapabilityKind` is now only
+  `compute` + `artifact_resolution`; speculative `SEARCH` / `DESIGN` /
+  `INTERACTIVE_HANDOFF` vocabulary was removed from Core and their protocol
+  prose removed from `PROVIDER_CAPABILITIES.md`. The REvoDesign/OpenBio
+  integration-contract sections were replaced by one short statement (REvoDesign
+  = unrelated existing product; OpenBio = design reference only); the remaining
+  import-boundary principles stay provider-neutral. `SYSTEM_ARCHITECTURE.md` and
+  `DOMAIN_BOUNDARIES.md` reconciled; OpenAPI/TS contracts regenerated.
+- **No silent truncation.** `tabular` analysis now reports bounds explicitly:
+  `PlotSpecRead` carries `source_rows` / `rendered_points` / `truncated`, and
+  `TableSelectRead` carries `source_truncated` (source-table row boundary)
+  alongside its own `truncated`.
+- **Side-effect semantics.** `ToolSideEffectClass.CREATES_PROJECT_TRUTH` was
+  replaced by a neutral `DOMAIN_MUTATION`; a Decision DRAFT is no longer
+  classified as project truth. Truth promotion stays with the Decision lifecycle
+  (draft → committed) and `AgentToolAutonomy` (commit = `explicit_action`).
+- **Dead scaffolding removed.** `ToolResultKind.SCIENTIFIC_OBJECT` /
+  `RUN_REFERENCE` (forward-only, no producing path) were removed; the producing
+  kinds are `ephemeral` / `artifact` / `evidence` / `decision`.
+
+Regression tests added: plot truncation + under-bound; table.select
+source-truncation propagation. Full suite green — backend **281 passed / 6
+skipped**, frontend typecheck + **15 tests** + build, Playwright **4 specs**,
+OpenAPI fresh, contracts idempotent.
+
+### Pre-merge review (3 lenses)
+
+Three fresh read-only reviewers were launched over the pre-merge delta
+(architecture/domain semantics; analysis correctness/security;
+contracts/tests/frontend) and given ample time. **analysis correctness/security**
+returned **PASS** (no P0/P1); **tests/contracts/frontend** returned **PASS**
+(no P0/P1/P2); **architecture/domain** returned REQUEST_CHANGES with one P1 —
+`SYSTEM_ARCHITECTURE.md`'s top product boundary and system-context diagram still
+presented REvoDesign/OpenBio as reachable backends. That P1 was fixed (the
+boundary and context now present REvoCompute as the sole configured backend,
+REvoDesign as an unrelated existing product, and OpenBio as a design reference
+only), together with the reviewer's P2 prose-cleanup (removed lingering
+`SEARCH`/`DESIGN`/`INTERACTIVE_HANDOFF` mentions from Core docstrings and stale
+IMPLEMENTATION_STATE text, and `AGENT_CONTEXT.md`/`EVIDENCE_PROVENANCE.md`
+references). Full gates rerun green — backend **281 passed / 6 skipped**, frontend
+typecheck + **15 tests** + build, Playwright **4 specs**, OpenAPI fresh, contracts
+idempotent, CI backend/frontend/e2e green. No P0/P1 remains.
+
+### GitHub Codex review findings
+
+Four automated GitHub Codex review comments on PR8 were resolved: (P1) source
+truncation propagated into table projections; (P2) non-finite numeric values now
+fail closed; (P2) empty/duplicate explicit column selections rejected; (P2) CSV
+parser errors translated to typed validation errors. Each has a regression;
+backend is now **281 passed / 6 skipped**.
+
+### Final architecture reconciliation (domain ownership)
+
+`SYSTEM_ARCHITECTURE.md` and `DOMAIN_BOUNDARIES.md` now share one authoritative DAG
+in which **Project Tool Harness is the ninth architectural domain** and the single
+owner of Tool. Edges (code/build dependency): Presentation → Project Tool Harness,
+Agent Context → Project Tool Harness, Project Tool Harness → Project | Evidence |
+Knowledge | Provider/Capability | Identity. Agent Context consumes the ToolCatalog
+(it does not own Tool); Presentation consumes the same catalog; Provider/Capability
+is an implementation dependency behind remote Tools. `PROVIDER_CAPABILITIES.md`,
+`AGENT_CONTEXT.md`, `HARNESS_OPERATING_MODEL.md`, and `PROJECT_TOOL_HARNESS.md`
+were reconciled (ToolResultKind = four producing kinds only; `/tools/invocations`
+is documented as the LOCAL invocation surface; stale REvoDesign/OpenBio/Search/
+Design wording removed). No product code changed — documentation only.
 
 ## Known deferrals (explicit, not silently postponed)
 
@@ -817,7 +1055,10 @@ passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
   network boundary; live acceptance is not fabricated. Cross-Actor
   run/artifact sharing is an upstream REvoCompute gap (see
   `docs/integrations/REVOCOMPUTE_CONTRACT_GAPS.md`).
-- REvoDesign / OpenBio drivers remain Phase-5+ (not expanded here).
+- REvoDesign / OpenBio integration is **deferred out of Phase 7 by the accepted
+  roadmap correction** (REvoDesign is a method-specific interactive design app;
+  OpenBio is a design reference — neither is a REvoLab backend). No driver or
+  Core branch for either exists.
 - Production secret-manager integration: the Secret store remains the
   non-production in-memory adapter (see disclosure above); a production-grade
   backend is deferred until explicitly configured.

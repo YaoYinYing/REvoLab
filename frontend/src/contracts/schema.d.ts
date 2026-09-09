@@ -831,6 +831,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/tool-invocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Tool Invocations
+         * @description Project-scoped activity log of persisted local-analysis Tool invocations
+         *     (reproducibility + observability). Never exposes secret material; the stored
+         *     `parameters` are canonical validated model dumps, not raw request input.
+         */
+        get: operations["list_tool_invocations_api_projects__project_id__tool_invocations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Tools */
+        get: operations["list_project_tools_api_projects__project_id__tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/tools/invocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Invoke Project Tool */
+        post: operations["invoke_project_tool_api_projects__project_id__tools_invocations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -871,6 +927,11 @@ export interface components {
          *     - `explicit_action`: an operation with side effects or truth-promotion that
          *       is never auto-executed by the Agent loop — it requires an explicit,
          *       authorized Actor action (e.g. committing a Decision, submitting compute).
+         *
+         *     This is the SINGLE canonical authority truth for Project Tools. The
+         *     `never_agent` class (membership, credential, destructive operations) is
+         *     represented by never projecting such an operation as a Tool at all — it is
+         *     not a fourth wire value.
          * @enum {string}
          */
         AgentToolAutonomy: "automatic" | "policy" | "explicit_action";
@@ -963,9 +1024,13 @@ export interface components {
          * CapabilityKind
          * @description Core-owned closed capability vocabulary (ADR-0012). Core categorizes
          *     realized capabilities by these kinds; it never parses provider vocabulary.
+         *
+         *     Only the two realized capability kinds exist. Any additional kind is added
+         *     only when a concrete, provider-neutral use case forces it — never pre-
+         *     projected as speculative vocabulary.
          * @enum {string}
          */
-        CapabilityKind: "compute" | "search" | "artifact_resolution" | "design" | "interactive_handoff";
+        CapabilityKind: "compute" | "artifact_resolution";
         /** CitationCreate */
         CitationCreate: {
             /** @default supports */
@@ -2066,8 +2131,10 @@ export interface components {
         };
         /**
          * ToolCatalogRead
-         * @description Project-scoped, Actor-contextual projection of the tools this Actor may
-         *     use. Unavailable provider capabilities are never exposed as executable.
+         * @description Project-scoped, Actor-contextual projection of the Project ToolCatalog:
+         *     local tools plus available remote Provider tools. It is the ONE catalog both
+         *     frontend and Agent consume; unavailable remote capabilities are never exposed
+         *     as executable.
          */
         ToolCatalogRead: {
             /**
@@ -2080,9 +2147,11 @@ export interface components {
         };
         /**
          * ToolDescriptorRead
-         * @description One typed Agent tool. Input/output schemas are derived from the canonical
-         *     domain/OpenAPI/provide schemas (never hand-copied). Nothing here is secret:
-         *     no credentials, no raw SQL/HTTP/shell, no generic writer.
+         * @description One typed Project Tool — the single canonical descriptor consumed by both
+         *     the human workspace and the Agent (TODO.md section 16). Input/output schemas
+         *     are derived from the canonical domain/OpenAPI/provider schemas (never
+         *     hand-copied). Nothing here is secret: no credentials, no raw
+         *     SQL/HTTP/shell, no generic writer.
          */
         ToolDescriptorRead: {
             autonomy: components["schemas"]["AgentToolAutonomy"];
@@ -2093,6 +2162,7 @@ export interface components {
             capability_kind?: components["schemas"]["CapabilityKind"] | null;
             /** Description */
             description: string;
+            execution_class: components["schemas"]["ToolExecutionClass"];
             /** Id */
             id: string;
             /** Input Schema */
@@ -2107,12 +2177,128 @@ export interface components {
             };
             /** Provider Key */
             provider_key?: string | null;
+            side_effect_class: components["schemas"]["ToolSideEffectClass"];
             source: components["schemas"]["ToolSource"];
         };
         /**
+         * ToolExecutionClass
+         * @description Where a Project Tool actually runs (TODO.md section 3/6).
+         *
+         *     `local` tools are bounded, closed, in-process REvoLab operations (the Local
+         *     Tool Runtime). `remote` tools are projected Provider capabilities whose
+         *     execution truth stays with the external system (REvoCompute); they are
+         *     invoked through the existing capability endpoints, never the local runtime.
+         * @enum {string}
+         */
+        ToolExecutionClass: "local" | "remote";
+        /** ToolInvocationCreate */
+        ToolInvocationCreate: {
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Persist
+             * @default false
+             */
+            persist: boolean;
+            /** Tool Id */
+            tool_id: string;
+        };
+        /**
+         * ToolInvocationRead
+         * @description Durable local-tool activity record for persisted derived results (TODO.md
+         *     sections 17/18): which Tool/version, from which input resources, with which
+         *     typed parameters, and the derived artifact's identity. Not a Run model.
+         */
+        ToolInvocationRead: {
+            /** Actor Id */
+            actor_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Input Resource Ids */
+            input_resource_ids?: string[];
+            /** Parameters */
+            parameters?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            result_kind: components["schemas"]["ToolResultKind"];
+            /** Result Resource Id */
+            result_resource_id?: string | null;
+            /** Status */
+            status: string;
+            /** Tool Id */
+            tool_id: string;
+            /** Tool Version */
+            tool_version: string;
+        };
+        /**
+         * ToolResultKind
+         * @description The durable kind of a ToolResult: what the invocation produced (TODO.md
+         *     section 7). `ephemeral` results are never persisted; every other kind names a
+         *     durable REvoLab resource recorded through a typed domain operation.
+         *
+         *     Only producing kinds are present: `ephemeral`, `artifact` (persisted derived
+         *     result), `evidence`, and `decision`.
+         * @enum {string}
+         */
+        ToolResultKind: "ephemeral" | "artifact" | "evidence" | "decision";
+        /**
+         * ToolResultRead
+         * @description The typed invocation result. `result_kind` distinguishes ephemeral output
+         *     from durable REvoLab resources; `value` is the typed ephemeral payload; a
+         *     persisted result exposes its `resource_id` (never auto-promoted to truth).
+         */
+        ToolResultRead: {
+            /**
+             * Persisted
+             * @default false
+             */
+            persisted: boolean;
+            /** Resource Id */
+            resource_id?: string | null;
+            resource_kind?: components["schemas"]["ResourceKind"] | null;
+            result_kind: components["schemas"]["ToolResultKind"];
+            /** Status */
+            status: string;
+            /** Tool Id */
+            tool_id: string;
+            /** Value */
+            value?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * ToolSideEffectClass
+         * @description What a successful Project Tool invocation may durably produce (TODO.md
+         *     section 3/8). Persistence semantics are declared by the tool and enforced by
+         *     the runtime — a ToolResult is never promoted to project truth automatically.
+         *
+         *     `creates_derived_result` covers any durable NON-truth resource the tool
+         *     persists through a typed domain operation — locally derived analysis
+         *     artifacts (CSV/plot spec), or harvested external reference identity cards.
+         *     `domain_mutation` is a neutral typed-domain write (Evidence, Decision
+         *     draft/commit). Truth promotion is expressed by the Decision lifecycle
+         *     (draft → committed) and `AgentToolAutonomy` (commit is `explicit_action`),
+         *     NOT by this side-effect class — a Decision DRAFT is never "project truth".
+         * @enum {string}
+         */
+        ToolSideEffectClass: "read_only" | "creates_derived_result" | "domain_mutation" | "external_action";
+        /**
          * ToolSource
-         * @description Where a Phase-6 Agent tool descriptor originates (TODO.md section 3):
-         *     a REvoLab typed domain operation or an available Provider capability.
+         * @description Where a Project Tool descriptor originates (TODO.md section 3): a REvoLab
+         *     typed domain/analysis operation (`domain`) or an available Provider
+         *     capability (`provider`). Not secret-bearing; presentation metadata only.
          * @enum {string}
          */
         ToolSource: "domain" | "provider";
@@ -4313,6 +4499,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceShareRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tool_invocations_api_projects__project_id__tool_invocations_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolInvocationRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_tools_api_projects__project_id__tools_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolCatalogRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    invoke_project_tool_api_projects__project_id__tools_invocations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolInvocationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolResultRead"];
                 };
             };
             /** @description Validation Error */

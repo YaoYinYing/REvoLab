@@ -16,14 +16,18 @@ REvoLab
     scientific context / project knowledge layer
 
 REvoCompute
-    scientific execution layer
+    scientific execution layer (primary heavyweight backend)
 
 REvoDesign
-    interactive molecular design / analysis layer
+    an unrelated existing interactive-design product (not a REvoLab backend)
 
-External providers
-    biological databases, literature, models, instruments, services
+External knowledge sources
+    biological databases, literature, models — design references only, not
+    configured backends
 ```
+
+OpenBio is mentioned only as a **design reference**; it is not a REvoLab
+dependency or backend.
 
 ### Canonical invariant
 
@@ -44,20 +48,19 @@ flowchart LR
     Human["Human (scientist)"]
     Agent["REvoLab Agent"]
     RL["REvoLab<br/>scientific context / knowledge"]
-    RC["REvoCompute<br/>execution layer"]
-    RD["REvoDesign<br/>interactive design / analysis"]
-    OB["OpenBio + external providers<br/>databases, literature, models, services"]
+    RC["REvoCompute<br/>scientific execution layer"]
 
     Human --> RL
     Agent --> RL
     RL --> RC
-    RL --> RD
-    RL --> OB
 ```
 
-- REvoLab is the hub of *context*. All three external families are reachable only
-  through REvoLab's Provider/Capability layer; neither the Human nor the Agent
-  bypasses REvoLab to reach them for project work.
+- REvoLab is the hub of *context*. REvoCompute (the heavyweight execution
+  backend) is reached through REvoLab's Provider/Capability layer; neither the
+  Human nor the Agent bypasses REvoLab to reach it for project work.
+- REvoDesign is an **unrelated existing product** (not a REvoLab backend) and
+  OpenBio is a **design reference only**; neither is a configured external
+  provider and neither has a driver or capability in Core.
 - REvoLab **records durable references** to external work; it **does not copy**
   external mutable execution state.
 
@@ -82,6 +85,10 @@ flowchart TB
         PC["Provider / Capability Domain"]
     end
 
+    subgraph Harness
+        PT["Project Tool Harness Domain"]
+    end
+
     subgraph Interaction
         AC["Agent Context Domain"]
         IC["Identity / Collaboration Domain"]
@@ -94,13 +101,21 @@ flowchart TB
     PW --> KD
     PW --> PC
     PW --> AC
+    PW --> PT
     PW --> IC
 
     AC --> P
     AC --> EP
     AC --> KD
     AC --> PC
+    AC --> PT
     AC --> IC
+
+    PT --> P
+    PT --> EP
+    PT --> KD
+    PT --> PC
+    PT --> IC
 
     P --> IC
     P --> SO
@@ -118,11 +133,12 @@ flowchart TB
 contract**. It is a code/build dependency direction, not a data-flow direction.
 Global leaves `ScientificObject` and `Identity/Collaboration` have **no outgoing
 edges** (they depend on nothing in Core); `Agent` and `Presentation` consume the
-application-facing contracts of the domains below them. This graph is the **single**
+application-facing contracts of the domains below them, and both consume the
+Project Tool Harness's `ToolCatalog`. This graph is the **single**
 authoritative dependency DAG — it is repeated verbatim in `DOMAIN_BOUNDARIES.md` and no
 other document draws a competing one.
 
-The eight domains and their one-line purpose (detailed in
+The nine domains and their one-line purpose (detailed in
 `DOMAIN_BOUNDARIES.md`):
 
 | Domain | Owns |
@@ -132,13 +148,17 @@ The eight domains and their one-line purpose (detailed in
 | Evidence / Provenance | references, evidence claims, and lineage edges |
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
 | Provider / Capability | providers, drivers, capabilities, capability schemas |
-| Agent Context | project-scoped context, tools, skills, and the agent loop |
+| Project Tool Harness | the first-class `Tool` abstraction: `ToolCatalog`, the closed `LocalToolRuntime`, the local tool registry, and the `ToolInvocation` reproducibility record |
+| Agent Context | project-scoped context, skill resolution, and the agent loop (the Agent **consumes** the Project Tool Harness's canonical ToolCatalog) |
 | Identity / Collaboration | actors, authentication identities, membership, roles, credential **bindings** (`ExternalProviderCredentialBinding`: actor + provider + kind + `secret_ref`; the secret **material** lives in the Secret store) |
 | Presentation / Workspace | API surface and the user workspace information architecture |
 
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
-Knowledge) never depend on the Agent Context domain. The Agent is a *consumer*,
-not an owner, of project truth. Provider-vocabulary never leaks into Core.
+Knowledge) never depend on the Agent Context domain or the Project Tool Harness
+domain. The Agent is a *consumer*, not an owner, of both project truth and Tool:
+the Project Tool Harness is the single owner of Tool, and Provider/Capability is
+its implementation dependency for remote Tools — never the product-facing owner.
+Provider-vocabulary never leaks into Core.
 
 ---
 
@@ -163,15 +183,26 @@ Knowledge / Decision -----------------> Project             (project-scoped deci
 
 Provider / Capability -----------------> Identity           (credential contract: consumes the binding as an opaque handle; reaches material through the Secret store)
 
-Agent Context ----> Project | Evidence | Knowledge | Provider | Identity   (consumer)
+Project Tool Harness ----> Project | Evidence | Knowledge | Provider | Identity
+                            (typed domain commands + authority + remote-tool projection)
+
+Agent Context ----> Project | Evidence | Knowledge | Provider | Project Tool Harness | Identity   (consumer)
 Presentation ----> Project | Scientific Object | Evidence | Knowledge |
-                   Provider | Agent | Identity                              (all app-facing)
+                   Provider | Project Tool Harness | Agent | Identity                              (all app-facing)
 ```
+
+The `Project Tool Harness` row is realized by `revolab/tools/`, which imports the
+application/domain services (`revolab.services`) for typed commands, the
+Provider/Capability layer (`revolab.domain.provider`, `revolab.domain.compute`,
+`revolab.drivers`, `revolab.capabilities`) for remote-tool projection, and the
+authority contract through those services. It never imports `revolab.agent` — the
+Agent consumes it, not vice versa.
 
 This is the **same single DAG** as the mermaid diagram above; `A --> B` always means
 "imports/consumes B's public contract". The direction is acyclic: only `Scientific
 Object` and `Identity / Collaboration` are global leaves, Core never depends on the
-Agent, and no domain depends on a downstream sibling in a cycle.
+Agent or the Project Tool Harness, and no domain depends on a downstream sibling in
+a cycle.
 
 ---
 
@@ -248,9 +279,9 @@ frozen legal source/target sets live in `SCIENTIFIC_GRAPH.md`.)
 flowchart LR
     Core["REvoLab Core<br/>(domain services)"]
     Cat["Provider Catalog<br/>(read-only, schema-driven)"]
-    Cap["Capability Protocols<br/>Compute · Search · Artifact · Design/HO"]
+    Cap["Capability Protocols<br/>Compute · Artifact"]
     Drv["Driver<br/>(provider vocabulary / transport)"]
-    Prov["External Provider<br/>(REvoCompute · REvoDesign · OpenBio · ...)"]
+    Prov["External Provider<br/>(REvoCompute · ...)"]
     Cred["Credential Store<br/>(owned secrets)"]
 
     Core -- calls typed Capability --> Cap
@@ -346,7 +377,8 @@ direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 | `SCIENTIFIC_OBJECT_MODEL.md` | What a ScientificObject is; extension, version, lifecycle |
 | `SCIENTIFIC_GRAPH.md` | Relation/edge semantics and the knowledge graph |
 | `EVIDENCE_PROVENANCE.md` | Evidence, Run/Artifact/Literature references, Decision, promotion |
-| `PROVIDER_CAPABILITIES.md` | Provider/Driver/Capability/Tool/Credential; REvoCompute/REvoDesign/OpenBio contracts |
+| `PROVIDER_CAPABILITIES.md` | Provider/Driver/Capability/Tool/Credential; the REvoCompute contract |
+| `PROJECT_TOOL_HARNESS.md` | The first-class Tool abstraction, ToolCatalog, local vs remote execution, authority, result semantics, Agent/frontend projection |
 | `AGENT_CONTEXT.md` | Context selection, tools, skills, safety/authority |
 | `COLLABORATION_IDENTITY.md` | Identity, sharing, persistence, lifecycle/deletion, event/audit |
 | `WORKSPACE_INFORMATION_ARCHITECTURE.md` | The product surface and API/frontend contract |

@@ -25,7 +25,14 @@ proposer*, never the owner. Chat is working memory; the DB is durable truth.
 | **ContextSelection** | the declarative query describing what to include (project + selected object subtree + relation/evidence/decision filters + artifact REFERENCE list) | implicit prompt-stuffing; enables an auditable /context fetch contract |
 | **ContextBuilder** | the read-only assembler that executes a ContextSelection against the domain read API and returns a ProjectContext; the only place truth becomes context | unbounded dumps; reference-not-embed; whole-project sends |
 | **AgentSession** | ephemeral conversation container (prompt + ProjectContext + catalogs). Explicitly not persistent, not truth | chat becoming durable truth |
-| **ToolCatalog / SkillCatalog** | thin mappers: typed, capability-derived tool calls; task → which skills load (never a content DB) | raw agent writes; always-on skill encyclopedia |
+| **SkillCatalog** | thin mapper: task → which skills load (never a content DB) | raw agent writes; always-on skill encyclopedia |
+| **ToolCatalog (consumed, not owned)** | the Project Tool Harness's canonical catalog, fed to the Agent as its typed tool surface | a second Agent-only tool definition; dual tool truth |
+
+> Phase 7 reframing: the canonical `ToolCatalog` is owned by the **Project Tool
+> Harness** (`docs/architecture/PROJECT_TOOL_HARNESS.md`). The Agent consumes the
+> exact same catalog as the human workspace — there is no separate Agent-tool truth.
+> "Read context" is the context-assembly step (the `/context` fetch), not a Tool
+> inside the catalog.
 
 **Explicitly rejected** (overengineering): no AgentMemory DB wrapper, no RAG/
 semantic-index pipeline, no generic AgentGateway, no always-on skill encyclopedia.
@@ -125,7 +132,7 @@ policy-gated per the authority matrix).
 |---|---|---|---|---|
 | **Constitutional** (how to develop REvoLab) | project-architecture, engineering-workflow, architecture-review, security-boundaries | CLAUDE.md + docs/architecture + ADRs | handwritten, rarely changes | review against invariants |
 | **Domain** (what REvoLab means) | scientific-object-model, provenance-lineage, project-context, decision-record, artifact-inspection | backend schema + OpenAPI | written; POINT at schema, never copy | drift-checked against generated schema |
-| **Integration** (how to use an external capability) | revocompute, revodesign, openbio | the driver's capability contract + OpenAPI | procedural + generated capability/param reference | drift-checked against generated schema |
+| **Integration** (how to use an external capability) | revocompute | the driver's capability contract + OpenAPI | procedural + generated capability/param reference | drift-checked against generated schema |
 
 **Decision on which skills to add/revise/keep** (from the review):
 - **KEEP:** engineering-workflow, decision-record, artifact-inspection,
@@ -135,10 +142,12 @@ policy-gated per the authority matrix).
   provenance-lineage (harden reference semantics), project-context (make it the real
   agent-context skill teaching ContextSelection + promotion).
 - **ADD:** `security-boundaries` (constitutional, procedural) and
-  `architecture-review` (constitutional, near-empty procedural). The integration
-  skills (**revocompute / revodesign / openbio**) are **staged and MUST NOT be
-  pre-created** — they exist only when the provider actually exists (creating them
-  now is a premature-plugin failure).
+  `architecture-review` (constitutional, near-empty procedural). The only
+  integration skill is **revocompute**; it is **staged and MUST NOT be
+  pre-created** — it exists only when the provider actually exists (creating it
+  now is a premature-plugin failure). No revodesign/openbio skill exists or is
+  staged: REvoDesign is an unrelated product and OpenBio is a design reference
+  only.
 
 The **SkillCatalog** resolves *task → which skills load*; it is not a database of
 skill content.

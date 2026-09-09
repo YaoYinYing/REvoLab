@@ -181,6 +181,21 @@ export function useAgentTools(
   )
 }
 
+export function useTools(
+  actorId: string | null,
+  projectId: string | null,
+): AsyncState<ToolCatalogRead | null> {
+  return useAsync(
+    () =>
+      actorId && projectId
+        ? projectApi(actorId)
+            .listTools(projectId)
+            .then((res) => value<ToolCatalogRead>(res as ApiResult<ToolCatalogRead>))
+        : Promise.resolve(null),
+    [actorId, projectId],
+  )
+}
+
 export function useProjectContext(
   actorId: string | null,
   projectId: string | null,

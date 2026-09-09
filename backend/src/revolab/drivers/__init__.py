@@ -40,8 +40,9 @@ class DriverState(StrEnum):
 class Capability(Protocol):
     """Base capability identity: `(provider_key, kind)`.
 
-    Per-kind method protocols (Compute/Search/…) are added in Phase 4 when the
-    first real driver forces them — not before.
+    Per-kind method protocols (Compute / ArtifactResolution) exist for the two
+    realized capability kinds; additional kinds are added only when forced by a
+    concrete provider.
     """
 
     provider_key: str

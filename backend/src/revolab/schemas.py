@@ -7,7 +7,7 @@ is duplicated by hand into the frontend or into project skills.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
@@ -32,8 +32,15 @@ from revolab.enums import (
     RelationType,
     ResourceKind,
     Role,
+    ToolExecutionClass,
+    ToolResultKind,
+    ToolSideEffectClass,
     ToolSource,
 )
+
+# Upper bound on the number of columns a table.select tool invocation may name in
+# one call (keeps the tool input itself bounded and closed).
+MAX_SELECT_COLUMNS = 100
 
 # ---------------------------------------------------------------------------
 # Identity / Project
@@ -677,9 +684,11 @@ class ProjectContextRead(BaseModel):
 
 
 class ToolDescriptorRead(BaseModel):
-    """One typed Agent tool. Input/output schemas are derived from the canonical
-    domain/OpenAPI/provide schemas (never hand-copied). Nothing here is secret:
-    no credentials, no raw SQL/HTTP/shell, no generic writer."""
+    """One typed Project Tool — the single canonical descriptor consumed by both
+    the human workspace and the Agent (TODO.md section 16). Input/output schemas
+    are derived from the canonical domain/OpenAPI/provider schemas (never
+    hand-copied). Nothing here is secret: no credentials, no raw
+    SQL/HTTP/shell, no generic writer."""
 
     id: str
     name: str
@@ -688,6 +697,8 @@ class ToolDescriptorRead(BaseModel):
     provider_key: str | None = None
     capability_kind: CapabilityKind | None = None
     autonomy: AgentToolAutonomy
+    execution_class: ToolExecutionClass
+    side_effect_class: ToolSideEffectClass
     available: bool
     availability_reason: str | None = None
     input_schema: dict[str, Any]
@@ -695,11 +706,168 @@ class ToolDescriptorRead(BaseModel):
 
 
 class ToolCatalogRead(BaseModel):
-    """Project-scoped, Actor-contextual projection of the tools this Actor may
-    use. Unavailable provider capabilities are never exposed as executable."""
+    """Project-scoped, Actor-contextual projection of the Project ToolCatalog:
+    local tools plus available remote Provider tools. It is the ONE catalog both
+    frontend and Agent consume; unavailable remote capabilities are never exposed
+    as executable."""
 
     project_id: UUID
     tools: list[ToolDescriptorRead] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Project Tool Harness (Phase 7): invocation request/results and the small typed
+# local-analysis output shapes. Tool invocation is closed and typed: the only
+# request surface is a registered `tool_id` plus a JSON `input` object — never
+# arbitrary code, paths, URLs, or SQL.
+# ---------------------------------------------------------------------------
+
+
+class ToolInvocationCreate(BaseModel):
+    tool_id: str = Field(min_length=1, max_length=200, pattern=r"^[a-z0-9][a-z0-9._-]*$")
+    input: dict[str, Any] = Field(default_factory=dict)
+    # Persist a derived result (table.select / plot.xy) as a durable internal
+    # ArtifactReference + ToolInvocation record. Requires owner/member authority;
+    # read-only tools and viewers may keep results ephemeral.
+    persist: bool = False
+
+
+class ToolResultRead(BaseModel):
+    """The typed invocation result. `result_kind` distinguishes ephemeral output
+    from durable REvoLab resources; `value` is the typed ephemeral payload; a
+    persisted result exposes its `resource_id` (never auto-promoted to truth)."""
+
+    tool_id: str
+    status: str
+    result_kind: ToolResultKind
+    resource_id: UUID | None = None
+    resource_kind: ResourceKind | None = None
+    value: dict[str, Any] | None = None
+    persisted: bool = False
+
+
+class ToolInvocationRead(BaseModel):
+    """Durable local-tool activity record for persisted derived results (TODO.md
+    sections 17/18): which Tool/version, from which input resources, with which
+    typed parameters, and the derived artifact's identity. Not a Run model."""
+
+    id: UUID
+    project_id: UUID
+    tool_id: str
+    tool_version: str
+    actor_id: UUID | None = None
+    input_resource_ids: list[str] = Field(default_factory=list)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    result_kind: ToolResultKind
+    result_resource_id: UUID | None = None
+    status: str
+    created_at: datetime | None = None
+
+
+class ColumnStatRead(BaseModel):
+    """One column's bounded descriptive statistics (locally decoded, never a
+    memory-unbounded parse). Non-numeric columns report counts/uniques only."""
+
+    column: str
+    count: int
+    non_null: int
+    unique: int
+    numeric: bool
+    min: float | None = None
+    max: float | None = None
+    mean: float | None = None
+    std: float | None = None
+
+
+class TableDescribeRead(BaseModel):
+    source_artifact_id: UUID
+    rows: int
+    columns: int
+    truncated: bool = False
+    columns_stats: list[ColumnStatRead] = Field(default_factory=list)
+
+
+class TableSelectRead(BaseModel):
+    """Bounded table projection: selected columns plus at most `limit` rows.
+    `source_truncated` conservatively propagates that the SOURCE table itself was
+    capped by the analysis row bound (never silently hides upstream truncation);
+    `truncated` means the projection hit its own `limit`."""
+
+    source_artifact_id: UUID
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, str]] = Field(default_factory=list)
+    row_count: int = 0
+    truncated: bool = False
+    source_truncated: bool = False
+
+
+class PlotSeriesRead(BaseModel):
+    name: str
+    x: list[float | str] = Field(default_factory=list)
+    y: list[float] = Field(default_factory=list)
+
+
+class PlotSpecRead(BaseModel):
+    """Structured plot data/specification (no opaque image file). The frontend
+    renders it; the Tool never owns scientific interpretation.
+
+    Bounded rendering is explicit: `source_rows` is the table row count actually
+    decoded this invocation, `rendered_points` the number of points returned, and
+    `truncated` is True when the source table hit the analysis row bound OR more
+    rows existed than `rendered_points` — never silently dropped."""
+
+    source_artifact_id: UUID
+    kind: str = "xy"
+    x_axis: str | None = None
+    title: str | None = None
+    source_rows: int = 0
+    rendered_points: int = 0
+    truncated: bool = False
+    series: list[PlotSeriesRead] = Field(default_factory=list)
+
+
+# Canonical tool input models (single source of truth for the local-tool input
+# JSON Schemas). These are the SAME Pydantic models the invocation runtime
+# validates against — tools.py derives `input_schema` from them, never by hand.
+
+
+class ArtifactInspectCreate(BaseModel):
+    artifact_id: UUID
+    preview_limit: int = Field(default=2048, ge=0, le=65536)
+
+
+class TableDescribeCreate(BaseModel):
+    artifact_id: UUID
+
+
+class TableSelectCreate(BaseModel):
+    artifact_id: UUID
+    columns: list[Annotated[str, Field(max_length=500)]] | None = Field(
+        default=None, max_length=MAX_SELECT_COLUMNS
+    )
+    filter_column: str | None = Field(default=None, max_length=500)
+    filter_value: str | None = Field(default=None, max_length=500)
+    limit: int = Field(default=50, ge=1, le=1000)
+
+    @model_validator(mode="after")
+    def _columns_nonempty_unique(self) -> TableSelectCreate:
+        if self.columns is not None:
+            if len(self.columns) == 0:
+                raise ValueError("columns must not be empty when supplied")
+            if len(set(self.columns)) != len(self.columns):
+                raise ValueError("columns must be unique")
+        return self
+
+
+class PlotXyCreate(BaseModel):
+    artifact_id: UUID
+    x_column: str = Field(min_length=1, max_length=500)
+    y_columns: list[str] = Field(min_length=1, max_length=10)
+    title: str | None = Field(default=None, max_length=300)
+
+
+class DecisionCommitCreate(BaseModel):
+    decision_id: UUID
 
 
 class ArtifactInspectRead(BaseModel):

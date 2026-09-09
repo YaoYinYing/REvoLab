@@ -90,12 +90,10 @@ def _is_frozen(session: Session, evidence_id: UUID) -> bool:
 # ---------------------------------------------------------------------------
 
 # Capability kinds whose "requested operation" is a read/projection. Action
-# capabilities (compute submission, design export, interactive handoff) require a
-# mutation-capable membership. This is the Phase-3 minimal policy, not an RBAC
-# engine: the ONLY authorization truth remains Phase-1 ProjectMembership roles.
-READ_ONLY_CAPABILITY_KINDS = frozenset(
-    {CapabilityKind.SEARCH, CapabilityKind.ARTIFACT_RESOLUTION}
-)
+# capabilities (compute submission) require a mutation-capable membership. This
+# is the Phase-3 minimal policy, not an RBAC engine: the ONLY authorization
+# truth remains Phase-1 ProjectMembership roles.
+READ_ONLY_CAPABILITY_KINDS = frozenset({CapabilityKind.ARTIFACT_RESOLUTION})
 
 
 def project_policy_permits(
@@ -686,11 +684,14 @@ def _require_link(session: Session, project_id: UUID, resource_id: UUID) -> Proj
 # ---------------------------------------------------------------------------
 
 
-def _finalize_reference(session: Session, project_id: UUID, resource_id: UUID, row: Any) -> Any:
+def _finalize_reference(
+    session: Session, project_id: UUID, resource_id: UUID, row: Any, *, commit: bool = True
+) -> Any:
     persistence.link(session, project_id, resource_id)
     persistence.steward(session, project_id, resource_id)
-    session.commit()
-    session.refresh(row)
+    if commit:
+        session.commit()
+        session.refresh(row)
     return row
 
 
@@ -758,11 +759,16 @@ def _persist_artifact_reference_trusted(
     size: int | None = None,
     checksum: str | None = None,
     version_id: str = "",
+    commit: bool = True,
 ) -> Any:
     """Trusted internal get-or-create for an artifact that either (a) the Actor's
     capability call just enumerated, or (b) the Actor just furnished the bytes
     for (ContentStore `authority == revolab`). Independent authority; never
-    reached from a client-controlled identity input."""
+    reached from a client-controlled identity input.
+
+    `commit=False` leaves the link/stewardship uncommitted so a caller in the
+    same process (the Local Tool Runtime) can record the ToolInvocation row in
+    the SAME transaction, then commit once."""
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
     if existing is not None:
@@ -770,8 +776,9 @@ def _persist_artifact_reference_trusted(
             existing, checksum=checksum, size=size, content_type=content_type
         )
         persistence.link(session, project_id, existing.artifact_id)
-        session.commit()
-        session.refresh(existing)
+        if commit:
+            session.commit()
+            session.refresh(existing)
         return existing
     row = provenance.create_artifact_reference_row(
         session,
@@ -782,7 +789,7 @@ def _persist_artifact_reference_trusted(
         checksum=checksum,
         version_id=version_id,
     )
-    return _finalize_reference(session, project_id, row.artifact_id, row)
+    return _finalize_reference(session, project_id, row.artifact_id, row, commit=commit)
 
 
 def create_run_reference(
@@ -1144,6 +1151,7 @@ def create_internal_artifact(
     data: bytes,
     *,
     content_type: str | None = None,
+    commit: bool = True,
 ) -> Any:
     mutation_capable_membership(session, actor_id, project_id)
     result = store.put(data, content_type=content_type)
@@ -1156,6 +1164,7 @@ def create_internal_artifact(
         content_type=result["content_type"],
         size=result["size"],
         checksum=result["checksum"],
+        commit=commit,
     )
 
 

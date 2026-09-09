@@ -18,6 +18,8 @@ type ContextSelectionCreate = NonNullable<
 >['content']['application/json']
 type AgentProposalCreate =
   paths['/api/projects/{project_id}/agent/proposals']['post']['requestBody']['content']['application/json']
+type ToolInvocationCreate =
+  paths['/api/projects/{project_id}/tools/invocations']['post']['requestBody']['content']['application/json']
 
 export type {
   AgentProposalCreate,
@@ -33,6 +35,7 @@ export type {
   ProjectCreate,
   ProjectPatch,
   ResourceShareCreate,
+  ToolInvocationCreate,
 }
 
 /**
@@ -223,6 +226,19 @@ export function projectApi(actorId: string) {
       api.GET('/api/projects/{project_id}/agent/tools', {
         headers,
         params: { path: { project_id: projectId } },
+      }),
+
+    listTools: (projectId: string) =>
+      api.GET('/api/projects/{project_id}/tools', {
+        headers,
+        params: { path: { project_id: projectId } },
+      }),
+
+    invokeTool: (projectId: string, body: ToolInvocationCreate) =>
+      api.POST('/api/projects/{project_id}/tools/invocations', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
       }),
 
     createAgentProposal: (projectId: string, body: AgentProposalCreate) =>

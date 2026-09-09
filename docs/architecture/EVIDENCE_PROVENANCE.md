@@ -22,7 +22,7 @@ external mutable execution truth. **Identity is durable; state is refreshable.**
 |---|---|---|
 | **ScientificObject** | a typed scientific entity REvoLab owns | `scientific_object_series` + `scientific_object_revision` + per-type tables |
 | **RunReference** | durable, namespaced pointer to an external execution (identity card) | `run_references` |
-| **SessionReference** | durable, namespaced pointer to an external interactive session (REvoDesign) | `session_references` |
+| **SessionReference** | durable, namespaced pointer to an external interactive session (identity card) | `session_references` |
 | **ArtifactReference** | durable, namespaced pointer to an external output (identity card) | `artifact_references` |
 | **LiteratureReference** | durable citation to an external publication | `literature_references` |
 | **ExternalReference** | resolver/cache metadata record that **references** an `ExternalIdentity` (`external_identity_id` FK) — checksum/as_of/bounded validated metadata, never a copy of the external payload | `external_references` |
@@ -147,8 +147,8 @@ ScientificObjectRevision
 ```
 
 **Never identity:** a filesystem path, a mutable container tag (`:latest`), a bare
-bucket name, a mutable username, or a *resolver provider* (OpenBio vs a direct API).
-Paths and resolver names are access/location hints, not identity.
+bucket name, a mutable username, or a *resolver provider* (an aggregator vs a
+direct API). Paths and resolver names are access/location hints, not identity.
 
 **Immutable on the REvoLab side:** reference ID, authority, authority-native ID,
 checksum/size, input digest, timestamps. Write-once provenance nodes.
