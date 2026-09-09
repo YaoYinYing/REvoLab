@@ -10,6 +10,11 @@ import type {
   ObjectSummaryRead,
 } from '../api/types'
 import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
+import {
+  CAPABILITY_AVAILABILITY_AVAILABLE,
+  CAPABILITY_KIND_COMPUTE,
+  RESOURCE_KIND_REVISION,
+} from '../contracts/enums'
 
 type JsonSchema = Record<string, unknown> & {
   type?: string
@@ -149,7 +154,9 @@ export function ComputeView({
     () =>
       (providers.data ?? []).filter((provider) =>
         (provider.capabilities ?? []).some(
-          (capability) => capability.kind === 'compute' && capability.availability === 'available',
+          (capability) =>
+            capability.kind === CAPABILITY_KIND_COMPUTE &&
+            capability.availability === CAPABILITY_AVAILABILITY_AVAILABLE,
         ),
       ),
     [providers.data],
@@ -173,7 +180,7 @@ export function ComputeView({
     const res = await projectApi(actorId).createComputeSubmission(projectId, {
       provider_key: effectiveProvider,
       task_kind: effectiveKind,
-      inputs: [{ kind: 'scientific_object_revision', resource_id: latestInput }],
+      inputs: [{ kind: RESOURCE_KIND_REVISION, resource_id: latestInput }],
       params: params as Record<string, string | number | boolean>,
     })
     setBusy(false)
@@ -232,6 +239,7 @@ export function ComputeView({
                 onChange={(event) => {
                   setProviderKey(event.target.value)
                   setKindId(null)
+                  setParams({})
                   setSubmission(null)
                 }}
               >
@@ -243,7 +251,13 @@ export function ComputeView({
               </select>
             </Field>
             <Field label="Task kind">
-              <select value={effectiveKind ?? ''} onChange={(event) => setKindId(event.target.value)}>
+              <select
+                value={effectiveKind ?? ''}
+                onChange={(event) => {
+                  setKindId(event.target.value)
+                  setParams({})
+                }}
+              >
                 {effectiveKind ? null : <option value="">—</option>}
                 {(taskKinds.data ?? []).map((kind) => (
                   <option key={kind.kind_id} value={kind.kind_id}>

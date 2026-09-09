@@ -105,3 +105,27 @@ duplicates of REvoCompute execution truth.
   when the target manifest entry exists and the artifact checks pass.
 - **Phase 4 impact:** **non-blocking.** This is a reviewer-facing convenience for
   future workflows; it has no effect on the Phase 4 finished-run flow.
+
+## 6. ScientificObjectRevision serialization into task input formats
+
+- **Required semantic operation:** submit a `ScientificObjectRevision` as a
+  compute input in whatever format the selected task accepts.
+- **Current behavior:** a revision is a typed JSONB payload, not bytes. Phase 4
+  materializes it as canonical JSON (checksum-verified) at the Core boundary.
+  That neutral default is only valid for REvoCompute tasks whose advertised
+  `input_extensions` include JSON; a FASTA/PDB task would reject it.
+  The driver therefore validates each byte input's file extension against the
+  task's advertised `input_extensions` before submission and fails with a typed
+  `INVALID_PARAM` rather than sending bytes the provider will reject.
+- **Why a workaround would violate ownership:** Core must not learn FASTA/PDB
+  serialization (provider/task vocabulary); a per-task, per-object-type
+  serializer would also be speculative until a second concrete task needs it.
+- **Smallest upstream/architectural change:** either REvoCompute accepts the
+  typed JSON for these tasks, or the driver grows an explicit, task-scoped
+  serializer (inside the driver, not Core). The practical Phase-4 input for
+  non-JSON tasks is a preformatted `ArtifactReference`.
+- **Phase 4 impact:** **non-blocking but explicit.** The revision→compute path
+  works end-to-end for JSON-accepting tasks (and the in-process fake); for
+  non-JSON task kinds the submission fails fast with `INVALID_PARAM` and the
+  operator supplies an artifact instead.
+

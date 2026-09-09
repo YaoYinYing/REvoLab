@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -53,14 +54,30 @@ def _sanitize_task_id(value: Any) -> str | None:
     return text[:32]
 
 
+_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+def _same_origin(base_url: str, target: str) -> bool:
+    """A redirect target is followable only from the configured origin. The
+    driver never follows off-origin redirects, so the X-API-Key credential is
+    never replayed to another host."""
+    try:
+        base = urlsplit(base_url)
+        location = urlsplit(target)
+    except ValueError:
+        return False
+    return base.scheme == location.scheme and base.netloc == location.netloc
+
+
 class REvoComputeComputeCapability:
     """`CapabilityKind.COMPUTE` realization over REvoCompute's HTTP API."""
 
     provider_key = _PROVIDER_KEY
     kind = CapabilityKind.COMPUTE
 
-    def __init__(self, client: httpx.Client) -> None:
+    def __init__(self, client: httpx.Client, base_url: str) -> None:
         self._client = client
+        self._base_url = base_url
 
     # -- discovery -----------------------------------------------------------------
 
@@ -165,17 +182,27 @@ class REvoComputeComputeCapability:
         params: Mapping[str, Any],
         credentials: CredentialLease,
     ) -> RunHandle:
+        schema = self.task_kind_schema(kind_id, credentials)
+        accepted = {ext.lower() for ext in schema.input_spec.accepted_extensions}
         data: dict[str, Any] = {"task_type": kind_id}
         for key, value in params.items():
             # REvoCompute reads flat `params[key]=value` form fields. Scalars only.
             data[f"params[{key}]"] = self._form_value(value)
         files: list[tuple[str, tuple[str, bytes, str]]] = []
         artifact_refs: list[str] = []
-        for index, item in enumerate(inputs):
+        for item in inputs:
             if item.data is not None:
-                field_name = "file" if index == 0 else f"file{index + 1}"
+                extension = os.path.splitext(item.filename)[1].lower()
+                if accepted and extension not in accepted:
+                    raise self._error(
+                        CapabilityErrorKind.INVALID_PARAM,
+                        f"input {item.filename!r} is not an accepted format for task {kind_id!r}",
+                        None,
+                    )
                 content_type = item.content_type or "application/octet-stream"
-                files.append((field_name, (item.filename, item.data, content_type)))
+                # REvoCompute reads the REPEATED `files` form field for every byte
+                # input (its canonical client appends each part under `files`).
+                files.append(("files", (item.filename, item.data, content_type)))
             elif item.external is not None:
                 reference = self._artifact_reference(item.external)
                 if reference is None:
@@ -194,6 +221,7 @@ class REvoComputeComputeCapability:
             data["artifact_references"] = "\n".join(artifact_refs)
 
         response = self._post_form("/compute/api/post", data, files, credentials)
+        self._raise_on_error(response)
         task_id = self._extract_task_id(response)
         if task_id is None:
             raise self._error(
@@ -248,13 +276,13 @@ class REvoComputeComputeCapability:
     def list_artifacts(self, native_id: str, credentials: CredentialLease) -> list[ArtifactHandle]:
         task_id = self._normalize_owned_task_id(native_id)
         response = self._request("GET", f"/compute/api/results/{task_id}", credentials)
+        if response.status_code in _REDIRECT_STATUSES:
+            # REvoCompute redirects to the running endpoint while the run is not
+            # finished: there is no artifact manifest to enumerate yet.
+            return []
         self._raise_on_error(response)
         body = self._json_body(response)
         if not isinstance(body, dict) or "artifacts" not in body:
-            # The run is not finished yet: REvoCompute redirected to the running
-            # endpoint, so there is no artifact manifest to enumerate.
-            if isinstance(body, dict) and body.get("status") is not None:
-                return []
             raise self._error(CapabilityErrorKind.UNKNOWN, "unexpected results payload", response)
         handles: list[ArtifactHandle] = []
         for artifact in body.get("artifacts") or []:
@@ -340,7 +368,7 @@ class REvoComputeComputeCapability:
 
     def _raise_on_error(self, response: httpx.Response) -> None:
         status = response.status_code
-        if 200 <= status < 300 or status == 302:
+        if 200 <= status < 300 or status in _REDIRECT_STATUSES:
             return
         if status in {401, 403}:
             raise self._error(CapabilityErrorKind.AUTH, "REvoCompute rejected the credential", response)
@@ -398,7 +426,7 @@ class REvoComputeComputeCapability:
             if normalized:
                 return normalized
         location = response.headers.get("Location")
-        if location and "/running/" in location:
+        if location and "/running/" in location and _same_origin(self._base_url, location):
             normalized = _sanitize_task_id(location.rsplit("/running/", 1)[-1])
             if normalized:
                 return normalized
@@ -424,13 +452,24 @@ class REvoComputeArtifactResolutionCapability:
         )
         self._raise_on_error(response)
         data = response.content
+        digest = hashlib.sha256(data).hexdigest()
+        if (artifact.checksum and digest != artifact.checksum) or (
+            artifact.size is not None and len(data) != artifact.size
+        ):
+            raise CapabilityError(
+                CapabilityErrorKind.UNKNOWN,
+                "artifact bytes failed the recorded integrity check",
+                provider_key=_PROVIDER_KEY,
+                capability_kind=CapabilityKind.ARTIFACT_RESOLUTION,
+                upstream_status=response.status_code,
+            )
         return ArtifactHandle(
             authority=REVOCOMPUTE_AUTHORITY,
             native_id=f"{task_id}:{path}",
             version_id="",
             content_type=artifact.content_type,
-            size=artifact.size,
-            checksum=hashlib.sha256(data).hexdigest(),
+            size=len(data),
+            checksum=digest,
             data=data,
         )
 
@@ -452,6 +491,13 @@ class REvoComputeArtifactResolutionCapability:
                 provider_key=_PROVIDER_KEY,
                 capability_kind=CapabilityKind.ARTIFACT_RESOLUTION,
             )
+        if path.startswith("/") or ".." in path.split("/") or "\\" in path:
+            raise CapabilityError(
+                CapabilityErrorKind.INVALID_PARAM,
+                "invalid REvoCompute artifact path",
+                provider_key=_PROVIDER_KEY,
+                capability_kind=CapabilityKind.ARTIFACT_RESOLUTION,
+            )
         return normalized, path
 
     def _raise_on_error(self, response: httpx.Response) -> None:
@@ -462,6 +508,8 @@ class REvoComputeArtifactResolutionCapability:
             raise self._error(CapabilityErrorKind.AUTH, "REvoCompute rejected the credential", response)
         if status == 404:
             raise self._error(CapabilityErrorKind.NOT_FOUND, "artifact not found in REvoCompute", response)
+        if status in {400, 422}:
+            raise self._error(CapabilityErrorKind.INVALID_PARAM, "REvoCompute rejected the request", response)
         if status >= 500 or status == 429:
             raise self._error(
                 CapabilityErrorKind.PROVIDER_UNAVAILABLE,
@@ -535,14 +583,17 @@ class REvoComputeDriver:
             )
         self._base_url = base_url
         self._timeout = float(context.settings.get("revocompute_timeout_seconds", 30.0))
+        # Follow redirects is OFF: the credential is a custom header that httpx
+        # would replay cross-origin. The driver reads the 302 Location itself and
+        # only accepts same-origin targets (see `_extract_task_id`).
         self._client = httpx.Client(
             base_url=base_url,
             timeout=self._timeout,
-            follow_redirects=True,
+            follow_redirects=False,
             transport=self._transport,
         )
         self.capabilities = {
-            CapabilityKind.COMPUTE: REvoComputeComputeCapability(self._client),
+            CapabilityKind.COMPUTE: REvoComputeComputeCapability(self._client, base_url),
             CapabilityKind.ARTIFACT_RESOLUTION: REvoComputeArtifactResolutionCapability(self._client),
         }
 

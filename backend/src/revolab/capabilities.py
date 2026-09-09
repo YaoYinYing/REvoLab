@@ -138,15 +138,21 @@ class ResolvedInput:
 class InputBinding:
     """REvoLab-neutral input declaration for a compute invocation.
 
-    `kind` is the Core `ResourceKind` of the referenced global resource (only
-    `scientific_object_revision` and `artifact_reference` are legal); `resource_id`
-    is its opaque GlobalResourceRegistry identity; `role` is an optional role
-    named by the provider task-kind schema.
+    `kind` is the Core `ResourceKind` of the referenced global resource; only
+    `LEGAL_COMPUTE_INPUT_KINDS` are legal; `resource_id` is its opaque
+    GlobalResourceRegistry identity; `role` is an optional role named by the
+    provider task-kind schema.
     """
 
     kind: ResourceKind
     resource_id: UUID
     role: str | None = None
+
+
+# The single canonical "compute input" subset of the registry kinds.
+LEGAL_COMPUTE_INPUT_KINDS = frozenset(
+    {ResourceKind.SCIENTIFIC_OBJECT_REVISION, ResourceKind.ARTIFACT_REFERENCE}
+)
 
 
 @dataclass(frozen=True)

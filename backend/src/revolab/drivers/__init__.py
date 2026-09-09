@@ -57,6 +57,9 @@ class Driver(Protocol):
     description: str | None
     required_credential_kinds: tuple[str, ...]  # provider-declared, never Core vocabulary
     capabilities: Mapping[CapabilityKind, Capability]
+    # Durable identity authority namespaces this driver resolves. Explicitly
+    # declared so Core never assumes authority == provider key.
+    authorities: tuple[str, ...]
 
     def start(self, context: DriverContext) -> None: ...
 
@@ -113,6 +116,13 @@ class DriverRegistry:
                     f"capability kind {capability.kind!r} does not match its "
                     f"registry key {kind!r} for driver {driver.name!r}"
                 )
+        for authority in driver.authorities:
+            for existing_name, existing_handle in self._drivers.items():
+                if authority in existing_handle.driver.authorities:
+                    raise ValueError(
+                        f"authority {authority!r} is already resolved by driver "
+                        f"{existing_name!r}; refused for driver {driver.name!r}"
+                    )
         handle = DriverHandle(driver=driver)
         self._drivers[driver.name] = handle
         return handle

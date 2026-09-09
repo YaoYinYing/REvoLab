@@ -2955,11 +2955,17 @@
         "responses": {
           "200": {
             "content": {
+              "*/*": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
               "application/json": {
                 "schema": {}
               }
             },
-            "description": "Successful Response"
+            "description": "Live external artifact bytes (not implicitly ingested)."
           },
           "422": {
             "content": {

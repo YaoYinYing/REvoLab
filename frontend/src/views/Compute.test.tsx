@@ -86,6 +86,8 @@ describe('Compute view', () => {
     expect(screen.getByText('Message')).toBeInTheDocument() // schema title as data
     expect(screen.queryByText('revocompute')).not.toBeInTheDocument()
     expect(screen.queryByText('alphafold')).not.toBeInTheDocument()
+    expect(screen.queryByText('colabfold')).not.toBeInTheDocument()
+    expect(screen.queryByText('slurm')).not.toBeInTheDocument()
   })
 
   it('renders an honest empty state when no compute provider is available', () => {

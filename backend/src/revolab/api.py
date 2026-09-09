@@ -1071,8 +1071,9 @@ def get_compute_run_status(
         )
     except CapabilityError as exc:
         # A transient provider outage must not invalidate the stored reference:
-        # live resolution is simply unavailable. Authorization/credential
-        # failures propagate as their own typed 4xx, never as "unavailable".
+        # live resolution is simply unavailable. Authorization and
+        # credential-missing failures raise AuthorizationError and propagate as
+        # their own typed status, never as "unavailable".
         if exc.kind in {CapabilityErrorKind.PROVIDER_UNAVAILABLE, CapabilityErrorKind.NETWORK}:
             return schemas.ComputeRunStatusRead(
                 run_resource_id=run_id,
@@ -1123,7 +1124,15 @@ def refresh_compute_run_artifacts(
     return [schemas.ComputeArtifactRead(**item) for item in artifacts]
 
 
-@router.get("/projects/{project_id}/artifacts/{artifact_id}/resolve")
+@router.get(
+    "/projects/{project_id}/artifacts/{artifact_id}/resolve",
+    responses={
+        200: {
+            "description": "Live external artifact bytes (not implicitly ingested).",
+            "content": {"*/*": {"schema": {"type": "string", "format": "binary"}}},
+        }
+    },
+)
 def resolve_compute_artifact(
     project_id: UUID,
     artifact_id: UUID,

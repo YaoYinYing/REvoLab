@@ -7,6 +7,7 @@ unable to name any REvoCompute task/runner vocabulary.
 from __future__ import annotations
 
 from types import MappingProxyType
+from uuid import UUID, uuid4
 
 from revolab.drivers import DriverContext, DriverRegistry
 from revolab.main import app
@@ -215,11 +216,83 @@ def test_compute_params_are_not_persisted_as_revolab_truth(client, session) -> N
 
     # REvoLab persists only RunReference/ArtifactReference identity cards: the
     # provider parameter vocabulary is never copied into Core.
-    from uuid import UUID
-
     from revolab.models import RunReference
 
     run = session.get(RunReference, UUID(run_resource_id))
     assert run is not None
     identity_state = [run.authority, run.native_id, run.task_type or "", run.input_parameter_digest or ""]
     assert not any(SENTINEL in value for value in identity_state)
+
+
+def test_viewer_read_policy_and_non_member_resolve(client) -> None:
+    _override_registry(client, _registry())
+    owner = _actor(client)
+    project = _project(client, owner)
+    obj = _object(client, owner, project["id"])
+    revision_id = obj["visible_revisions"][0]["revision_id"]
+    submitted = client.post(
+        f"/api/projects/{project['id']}/compute/submissions",
+        json={"provider_key": "fakecompute", "task_kind": "echo",
+              "inputs": [{"kind": "scientific_object_revision", "resource_id": revision_id}], "params": {}},
+        headers=_headers(owner),
+    ).json()
+    artifact = client.post(
+        f"/api/projects/{project['id']}/runs/{submitted['run_resource_id']}/artifacts",
+        headers=_headers(owner),
+    ).json()[0]
+
+    viewer = _actor(client)
+    client.post(
+        f"/api/projects/{project['id']}/members",
+        json={"actor_id": viewer, "role": "viewer"},
+        headers=_headers(owner),
+    )
+
+    # COMPUTE task-kind discovery is an action kind: viewers are not permitted.
+    listing = client.get(
+        f"/api/projects/{project['id']}/providers/fakecompute/compute/task-kinds",
+        headers=_headers(viewer),
+    )
+    assert listing.status_code == 403
+
+    # ARTIFACT_RESOLUTION is a read-only kind: a viewer (project member) may use it.
+    resolved = client.get(
+        f"/api/projects/{project['id']}/artifacts/{artifact['resource_id']}/resolve",
+        headers=_headers(viewer),
+    )
+    assert resolved.status_code == 200
+
+    stranger = _actor(client)
+    denied = client.get(
+        f"/api/projects/{project['id']}/artifacts/{artifact['resource_id']}/resolve",
+        headers=_headers(stranger),
+    )
+    assert denied.status_code == 403
+
+
+def test_compute_422_does_not_echo_sentinel_in_params(client) -> None:
+    _override_registry(client, _registry())
+    actor = _actor(client)
+    project = _project(client, actor)
+
+    response = client.post(
+        f"/api/projects/{project['id']}/compute/submissions",
+        json={"provider_key": "fakecompute", "task_kind": "echo",
+              "inputs": [{"kind": "scientific_object_series", "resource_id": str(uuid4())}],
+              "params": {"message": SENTINEL}},
+        headers=_headers(actor),
+    )
+    assert response.status_code == 422
+    assert SENTINEL not in response.text
+
+
+def test_capability_error_status_mapping_is_pinned() -> None:
+    from revolab.api import _CAPABILITY_ERROR_STATUS
+    from revolab.enums import CapabilityErrorKind
+
+    assert _CAPABILITY_ERROR_STATUS[CapabilityErrorKind.AUTH] == 502
+    assert _CAPABILITY_ERROR_STATUS[CapabilityErrorKind.NOT_FOUND] == 404
+    assert _CAPABILITY_ERROR_STATUS[CapabilityErrorKind.INVALID_PARAM] == 422
+    assert _CAPABILITY_ERROR_STATUS[CapabilityErrorKind.PROVIDER_UNAVAILABLE] == 503
+    assert _CAPABILITY_ERROR_STATUS[CapabilityErrorKind.NETWORK] == 502
+    assert _CAPABILITY_ERROR_STATUS[CapabilityErrorKind.UNKNOWN] == 502

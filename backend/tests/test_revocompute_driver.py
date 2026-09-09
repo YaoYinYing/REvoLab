@@ -8,6 +8,7 @@ URLs, query strings, other headers, or logged/error surfaces.
 
 from __future__ import annotations
 
+import hashlib
 from urllib.parse import unquote
 
 import httpx
@@ -168,6 +169,8 @@ def test_task_kind_schema_translation_is_json_schema() -> None:
 def test_submit_follows_redirect_and_extracts_task_id() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         _assert_sentinel_only_in_api_key(request)
+        if request.url.path == "/compute/api/types/echo":
+            return httpx.Response(200, json=_schema_payload())
         if request.url.path == "/compute/api/post":
             body = request.content.decode()
             assert "task_type" in body
@@ -196,6 +199,8 @@ def test_submit_follows_redirect_and_extracts_task_id() -> None:
 def test_submit_references_prior_artifact_without_uploading_bytes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         _assert_sentinel_only_in_api_key(request)
+        if request.url.path == "/compute/api/types/echo":
+            return httpx.Response(200, json=_schema_payload())
         if request.url.path == "/compute/api/post":
             body = unquote(request.content.decode())
             assert f"@{TASK_ID}/out.pdb" in body
@@ -303,4 +308,106 @@ def test_malformed_upstream_response_maps_to_unknown() -> None:
     driver = _driver(handler)
     with pytest.raises(CapabilityError) as excinfo:
         _compute(driver).list_task_kinds(_lease())
+    assert excinfo.value.kind is CapabilityErrorKind.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("status", "kind"),
+    [(400, CapabilityErrorKind.INVALID_PARAM), (422, CapabilityErrorKind.INVALID_PARAM),
+     (401, CapabilityErrorKind.AUTH), (403, CapabilityErrorKind.AUTH),
+     (429, CapabilityErrorKind.PROVIDER_UNAVAILABLE), (503, CapabilityErrorKind.PROVIDER_UNAVAILABLE)],
+)
+def test_submit_maps_upstream_status_to_typed_kind(status: int, kind: CapabilityErrorKind) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        _assert_sentinel_only_in_api_key(request)
+        if request.url.path == "/compute/api/types/echo":
+            return httpx.Response(200, json=_schema_payload())
+        if request.url.path == "/compute/api/post":
+            return httpx.Response(status, json={"error": "upstream says no"})
+        return httpx.Response(404)
+
+    driver = _driver(handler)
+    with pytest.raises(CapabilityError) as excinfo:
+        _compute(driver).submit(
+            "echo",
+            [ResolvedInput(role=None, filename="input.fasta", content_type="text/plain", data=b">x\nAC")],
+            {},
+            _lease(),
+        )
+    assert excinfo.value.kind is kind
+    assert SENTINEL not in str(excinfo.value)
+
+
+def test_submit_rejects_input_extension_not_accepted_by_task() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        _assert_sentinel_only_in_api_key(request)
+        if request.url.path == "/compute/api/types/echo":
+            return httpx.Response(200, json=_schema_payload())  # accepts only .fasta
+        return httpx.Response(404)
+
+    driver = _driver(handler)
+    with pytest.raises(CapabilityError) as excinfo:
+        _compute(driver).submit(
+            "echo",
+            [ResolvedInput(role=None, filename="revision-abc.json", content_type="application/json", data=b"{}")],
+            {},
+            _lease(),
+        )
+    assert excinfo.value.kind is CapabilityErrorKind.INVALID_PARAM
+
+
+def test_submit_does_not_forward_credential_on_cross_origin_redirect() -> None:
+    seen_hosts: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        _assert_sentinel_only_in_api_key(request)
+        seen_hosts.append(str(request.url.host))
+        if request.url.path == "/compute/api/types/echo":
+            return httpx.Response(200, json=_schema_payload())
+        if request.url.path == "/compute/api/post":
+            return httpx.Response(
+                302, headers={"Location": f"https://evil.example/compute/api/running/{TASK_ID}"}
+            )
+        return httpx.Response(404)
+
+    driver = _driver(handler)
+    with pytest.raises(CapabilityError) as excinfo:
+        _compute(driver).submit(
+            "echo",
+            [ResolvedInput(role=None, filename="input.fasta", content_type="text/plain", data=b">x\nAC")],
+            {},
+            _lease(),
+        )
+    assert excinfo.value.kind is CapabilityErrorKind.UNKNOWN  # cross-origin location is untrusted
+    assert set(seen_hosts) == {"revocompute.test"}
+
+
+def test_resolve_rejects_path_traversal() -> None:
+    driver = _driver(lambda request: httpx.Response(404))
+    cap = driver.capabilities[CapabilityKind.ARTIFACT_RESOLUTION]
+    with pytest.raises(CapabilityError) as excinfo:
+        cap.resolve(
+            ExternalArtifactRef(authority="revocompute", native_id=f"{TASK_ID}:../secret", version_id=""),
+            _lease(),
+        )
+    assert excinfo.value.kind is CapabilityErrorKind.INVALID_PARAM
+
+
+def test_resolve_verifies_checksum_and_size() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        _assert_sentinel_only_in_api_key(request)
+        return httpx.Response(200, content=b"WRONG")
+
+    driver = _driver(handler)
+    cap = driver.capabilities[CapabilityKind.ARTIFACT_RESOLUTION]
+
+    right = hashlib.sha256(b"RIGHT").hexdigest()
+    with pytest.raises(CapabilityError) as excinfo:
+        cap.resolve(
+            ExternalArtifactRef(
+                authority="revocompute", native_id=f"{TASK_ID}:out.pdb", version_id="",
+                checksum=right, size=len(b"RIGHT"),
+            ),
+            _lease(),
+        )
     assert excinfo.value.kind is CapabilityErrorKind.UNKNOWN

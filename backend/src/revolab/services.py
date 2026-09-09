@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from revolab.capabilities import (
+    LEGAL_COMPUTE_INPUT_KINDS,
     ArtifactHandle,
     ExternalArtifactRef,
     InputBinding,
@@ -725,9 +726,13 @@ def create_internal_artifact(
 # ---------------------------------------------------------------------------
 
 
-_LEGAL_COMPUTE_INPUT_KINDS = frozenset(
-    {ResourceKind.SCIENTIFIC_OBJECT_REVISION, ResourceKind.ARTIFACT_REFERENCE}
-)
+def _compute_input_anchor(session: Session, binding: InputBinding) -> UUID:
+    """The resource whose stewardship authorizes the consumed_as_input_by edge
+    for this binding: the owning series for a revision, the artifact row itself
+    for an artifact reference."""
+    if binding.kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        return persistence.revision_series_id(session, binding.resource_id)
+    return binding.resource_id
 
 
 def resolve_compute_input(
@@ -745,7 +750,7 @@ def resolve_compute_input(
     immutable identity card — its bytes remain owned by the external provider
     (the driver decides whether to reference or re-resolve them).
     """
-    if binding.kind not in _LEGAL_COMPUTE_INPUT_KINDS:
+    if binding.kind not in LEGAL_COMPUTE_INPUT_KINDS:
         raise ValidationError("compute input kind must be a revision or an artifact reference")
     persistence.require_visible(session, project_id, binding.resource_id)
 
@@ -816,7 +821,7 @@ def record_compute_run(
 ) -> dict[str, Any]:
     """Persist the immutable RunReference identity card plus the
     `consumed_as_input_by` edges for the external run. This stores only
-    reference identity + scientific provenance — never REvoCompute mutable
+    reference identity + scientific provenance — never the provider's mutable
     execution state."""
     run = create_run_reference(
         session,
@@ -850,7 +855,7 @@ def record_compute_artifacts(
 ) -> list[dict[str, Any]]:
     """Persist immutable ArtifactReference identity cards + `produced` edges for
     an external run's results. Byte identity facts (checksum/size/content type)
-    are recorded only when REvoCompute provides them."""
+    are recorded only when the provider reports them."""
     recorded: list[dict[str, Any]] = []
     for handle in artifacts:
         artifact = create_artifact_reference(
@@ -886,6 +891,17 @@ def compute_submit(
     external side effect, then the live provider call, then REvoLab-side
     RunReference + input provenance."""
     permitted = project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE)
+    # Validate the per-input stewardship requirement for the consumed_as_input_by
+    # edge UP FRONT. Doing it after the driver call would allow an external run
+    # to be created while REvoLab cannot persist its input provenance.
+    for binding in bindings:
+        can_mutate(
+            session,
+            actor_id,
+            project_id,
+            _compute_input_anchor(session, binding),
+            purpose="consumed_as_input_by",
+        )
     resolved_inputs = [
         resolve_compute_input(session, project_id, binding, store=content_store)
         for binding in bindings

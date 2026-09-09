@@ -28,8 +28,9 @@ def build_driver_context(settings: Settings) -> DriverContext:
 
 
 def install_drivers(registry: DriverRegistry, context: DriverContext, settings: Settings) -> None:
-    """Register configured drivers. Called once at startup; idempotent by
-    construction because the registry rejects duplicate keys."""
+    """Register configured drivers. Must be called exactly once per process at
+    startup; registering the same driver key twice is a hard error (fail-closed),
+    which is what keeps a repeated lifespan from silently double-installing."""
     if settings.revocompute_base_url:
         from revolab.drivers.revocompute import REvoComputeDriver
 

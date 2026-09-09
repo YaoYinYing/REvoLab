@@ -47,6 +47,7 @@ class _Driver:
     display_name = "Fake Provider"
     description = "synthetic driver for PostgreSQL acceptance"
     required_credential_kinds = ("api_key",)
+    authorities = ("fakeprov",)
     capabilities: Mapping[CapabilityKind, Capability] = {CapabilityKind.COMPUTE: _Capability("fakeprov")}
 
     def start(self, context: DriverContext) -> None:

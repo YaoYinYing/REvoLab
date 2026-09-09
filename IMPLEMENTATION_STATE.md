@@ -390,22 +390,60 @@ own typed status). The `revocompute_*` settings in `revolab.config` are the
 sanctioned bootstrap-configuration surface explicitly permitted by TODO.md for
 concrete driver installation.
 
+### Second review round (three fresh reviewers + PR codex)
+
+Three additional independent reviewers (architecture, security, driver/frontend/
+contracts) plus the PR's Codex review were reconciled; findings were resolved:
+
+- **P1 multipart submission:** the driver now uploads every byte input under the
+  repeated `files` form field REvoCompute actually reads (previously the first
+  input was `file` and later inputs were `file2…`, which the server drops).
+- **P1 submission error classification:** `submit` now applies `_raise_on_error`
+  before extracting the task id, so upstream 400/422/401/403/429/503 map to the
+  typed `CapabilityErrorKind` instead of `UNKNOWN`.
+- **P1 input-format honesty (revision→non-JSON tasks):** the driver validates
+  each byte input's file extension against the task's advertised
+  `input_extensions` and fails fast with `INVALID_PARAM` instead of sending JSON
+  to a FASTA/PDB task; recorded in
+  `docs/integrations/REVOCOMPUTE_CONTRACT_GAPS.md` (section 6).
+- **Security P2 cross-origin redirect:** the HTTP client no longer follows
+  redirects automatically; the driver reads the `302 Location` itself and only
+  accepts same-origin targets, and a test proves the sentinel is never replayed
+  to another host.
+- **Authorization P2 preflight:** compute submissions pre-validate the per-input
+  stewardship anchor (`consumed_as_input_by` authority) before the external
+  call, so a visible-but-not-stewarded input fails before any provider side
+  effect; tested.
+- **Other P2/info:** `authorities` is now a required `Driver` Protocol field with
+  duplicate-authority registration rejection; scenario resolution verifies
+  checksum and size; artifact paths reject traversal; the artifact-resolve
+  endpoint declares a binary `*/*` OpenAPI response; the frontend consumes the
+  generated `CAPABILITY_KINDS`/`CAPABILITY_AVAILABILITIES`/`RESOURCE_KINDS`
+  constants rather than bare wire literals and resets parameters on provider or
+  task-kind change; the `AUTH→502` status mapping is pinned by a test; and
+  driver/API security test gaps (submit error mapping, cross-origin, path
+  traversal, viewer read policy, compute 422 no-echo, mapping pin) were added.
+
 ## Verified evidence (Phase 4)
 
 - Backend: `ruff check backend` and strict `mypy` pass (31 source files).
-  `pytest` passes with **158 passed, 3 skipped** (the three skips are the opt-in
+  `pytest` passes with **173 passed, 3 skipped** (the three skips are the opt-in
   PostgreSQL acceptance file). New tests cover: the REvoCompute driver against
   an HTTP fake at the network boundary (discovery/schema translation, submit
   redirect + multipart + artifact-reference input, failed-on-404 run state,
   artifact identity encoding, resolve, auth/not-found/invalid-param/
-  unavailable/network/malformed error mapping, and the sentinel
-  only-in-X-API-Key assertion), Core/domain compute with a provider-neutral fake
-  (submit → RunReference + consumed input, artifact discovery + produced edge,
-  resolve bytes, provider-disappearance leaves references intact, and
-  invalid-input-kind / missing-credential / not-authorized / input-not-visible
-  all fail before the external side effect), the project-scoped compute HTTP
-  surface, and the bootstrap/lifecycle + explicit authority-resolution guards
-  (production refuses the fake provider; the real driver requires a base URL).
+  unavailable/network/malformed error mapping, cross-origin redirect
+  no-forward, input-extension fail-fast, path-traversal rejection, resolve
+  checksum/size verification, and the sentinel only-in-X-API-Key assertion),
+  Core/domain compute with a provider-neutral fake (submit → RunReference +
+  consumed input, artifact discovery + produced edge, resolve bytes,
+  provider-disappearance leaves references intact, repeated refresh produces
+  exactly one produced edge, and invalid-input-kind / missing-credential /
+  not-authorized / input-not-visible / input-not-stewarded all fail before the
+  external side effect), the project-scoped compute HTTP surface (including
+  viewer read policy, non-member denial, and compute 422 no-echo), and the
+  bootstrap/lifecycle + explicit authority-resolution guards (production refuses
+  the fake provider; the real driver requires a base URL).
 - Migrations: no Phase-4 schema change is required (RunReference/ArtifactReference
   and the two provenance edges already exist). `alembic upgrade head` +
   `alembic check` report **no drift** on SQLite and on a fresh PostgreSQL 16

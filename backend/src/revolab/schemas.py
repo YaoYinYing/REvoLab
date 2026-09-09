@@ -12,6 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
+from revolab.capabilities import LEGAL_COMPUTE_INPUT_KINDS
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
     PROVIDER_KEY_PATTERN,
@@ -449,10 +450,7 @@ class ComputeInputCreate(BaseModel):
 
     @model_validator(mode="after")
     def _legal_input_kind(self) -> ComputeInputCreate:
-        if self.kind not in {
-            ResourceKind.SCIENTIFIC_OBJECT_REVISION,
-            ResourceKind.ARTIFACT_REFERENCE,
-        }:
+        if self.kind not in LEGAL_COMPUTE_INPUT_KINDS:
             raise ValueError("compute input kind must be a revision or an artifact reference")
         return self
 

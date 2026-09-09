@@ -1977,12 +1977,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Successful Response */
+            /** @description Live external artifact bytes (not implicitly ingested). */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
+                    "*/*": string;
                     "application/json": unknown;
                 };
             };
