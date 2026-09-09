@@ -148,15 +148,14 @@ ToolInvocationRequest { tool_id, input, persist }
     -> ToolResult { result_kind, value, resource_id?, resource_kind?, persisted }
 ```
 
-`ToolResultKind` distinguishes the durable kind of what an invocation produced:
+`ToolResultKind` distinguishes the durable kind of what a LOCAL Tool produced (the
+canonical enum has only the four producing kinds):
 
 ```text
 ephemeral           not persisted
 artifact            a durable derived ArtifactReference (persist=true)
 evidence            a typed Evidence row
 decision            a typed Decision (draft or committed)
-scientific_object   a ScientificObject / revision
-run_reference       an external RunReference (remote submit, via its own endpoint)
 ```
 
 Persistence semantics are declared by the tool's side-effect class and enforced by
@@ -207,7 +206,10 @@ frontend         Agent
 
 `GET /api/projects/{project_id}/tools` and the Agent's catalog endpoint serve the
 same `ToolCatalogRead`. `POST /api/projects/{project_id}/tools/invocations` is the
-only invocation surface, and it accepts only registered local tool ids.
+**local** Tool invocation surface, and it accepts only registered local tool ids.
+Remote REvoCompute Tools are listed in the same catalog (`execution_class=remote`)
+but are **not** executed by the local runtime: they execute through their existing
+typed compute/capability endpoints (submit, run status, artifact discover/resolve).
 
 ## Reproducibility
 

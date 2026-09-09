@@ -1031,6 +1031,20 @@ fail closed; (P2) empty/duplicate explicit column selections rejected; (P2) CSV
 parser errors translated to typed validation errors. Each has a regression;
 backend is now **281 passed / 6 skipped**.
 
+### Final architecture reconciliation (domain ownership)
+
+`SYSTEM_ARCHITECTURE.md` and `DOMAIN_BOUNDARIES.md` now share one authoritative DAG
+in which **Project Tool Harness is the ninth architectural domain** and the single
+owner of Tool. Edges (code/build dependency): Presentation → Project Tool Harness,
+Agent Context → Project Tool Harness, Project Tool Harness → Project | Evidence |
+Knowledge | Provider/Capability | Identity. Agent Context consumes the ToolCatalog
+(it does not own Tool); Presentation consumes the same catalog; Provider/Capability
+is an implementation dependency behind remote Tools. `PROVIDER_CAPABILITIES.md`,
+`AGENT_CONTEXT.md`, `HARNESS_OPERATING_MODEL.md`, and `PROJECT_TOOL_HARNESS.md`
+were reconciled (ToolResultKind = four producing kinds only; `/tools/invocations`
+is documented as the LOCAL invocation surface; stale REvoDesign/OpenBio/Search/
+Design wording removed). No product code changed — documentation only.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

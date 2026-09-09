@@ -48,8 +48,9 @@ ambiguity the review found):
      **consumes the credential as an opaque handle**. It never owns or materializes
      the secret itself; it uses the binding's handle to retrieve material **on-demand
      through the Credential store**.
-  4. **Agent Context domain** owns the **Tool projection** (the set of tools the
-     agent may call) — **not** the credential.
+  4. **Project Tool Harness domain** owns the **Tool projection** (the canonical
+     `ToolCatalog` the Agent and the human workspace both consume) — **not** the
+     credential, and **not** the capability/driver.
 - **`ExternalReference` is a stored data shape in the Evidence domain**, not a
   driver concept. The driver side only needs a stable `(authority, native_id)` and
   a resolution interface (see "Authority vs provider" below).
@@ -94,8 +95,8 @@ resolver / provider     → who you reach it through: an aggregator, a direct AP
 ## The capability protocols
 
 A provider may expose one or more of the **realized** capabilities. Only the
-protocols with a concrete provider-neutral use case exist; speculative
-`SEARCH` / `DESIGN` / `INTERACTIVE_HANDOFF` vocabulary is deliberately absent.
+protocols with a concrete provider-neutral use case exist; any unrealized
+capability kind is deliberately absent until forced by a real provider.
 
 ```python
 class Capability(Protocol):            # base
@@ -313,8 +314,8 @@ neutral reference, never a copy.
 REvoDesign is an **unrelated existing product** — a method-specific, PyMOL-heavy
 enzyme-design application — and is not a REvoLab backend. OpenBio is a **design
 reference only**: its product ideas may inform REvoLab, but REvoLab does not
-integrate with it. No `DesignCapability`, `InteractiveHandoffCapability`,
-`SearchCapability`, or `revodesign`/`openbio` driver exists in Core.
+integrate with it. No design/search capability, no unrelated-provider driver, and
+no `revodesign` / `openbio` branch exists in Core.
 
 The provider-neutral import boundary those deferred directions would have needed —
 `ExternalIdentity` (`(authority, native_id)` registry) + `ExternalReference`

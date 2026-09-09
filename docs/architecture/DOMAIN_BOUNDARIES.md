@@ -26,7 +26,7 @@ External systems own their capabilities and execution truth.
 
 ---
 
-## The eight domains
+## The nine domains
 
 ### 1. Project Domain
 
@@ -157,7 +157,8 @@ External systems own their capabilities and execution truth.
 
 ### 5. Provider / Capability Domain
 
-- **Purpose:** the boundary between Core and external execution/lookup/design.
+- **Purpose:** the boundary between Core and external execution / artifact
+  resolution.
 - **Owned concepts:** Provider, Driver, Capability, capability discovery, typed
   CapabilityError. **Not owned here:** `Tool` (the Project Tool Harness owns the
   first-class Tool abstraction + the closed Local Tool Runtime; the Agent and the
@@ -230,8 +231,38 @@ External systems own their capabilities and execution truth.
 - **Owned invariants:** the frontend consumes generated contracts; no manually
   duplicated enums.
 - **Public contracts:** the HTTP API and its generated client.
-- **Dependencies:** every Core/Presentation-facing domain surface.
+- **Dependencies:** every Core/Presentation-facing domain surface, including the
+  Project Tool Harness (`/tools`, `/tools/invocations`).
 - **Non-responsibilities:** business logic; scientific semantics.
+
+### 9. Project Tool Harness Domain
+
+- **Purpose:** make **Tool a first-class Project Harness abstraction**: a typed,
+  closed execution surface over Project resources that both the human workspace and
+  the Agent use.
+- **Owned concepts** (the single owner of Tool): canonical **Tool descriptor**
+  (`ToolDescriptorRead`), **`ToolCatalog`** (the one projection for frontend +
+  Agent), **`LocalToolRuntime`** (lookup → schema validation → authorization →
+  registered handler → typed output), the fixed **local tool registry**, and the
+  **`ToolInvocation`** reproducibility record. **Not owned here:** Drivers and
+  Capabilities (Provider/Capability owns those), and the Agent loop (Agent Context
+  owns that).
+- **Owned mutable state:** `tool_invocations` (project-scoped activity/reproducibility
+  record) and persisted derived-artifact rows created through the ContentStore →
+  ArtifactReference path.
+- **Owned invariants:** Tool schemas derive from canonical Pydantic models (never
+  hand-copied); local execution is closed and bounded (no arbitrary
+  Python/shell/filesystem/HTTP/SQL); a `ToolResult` is never auto-promoted to
+  Evidence/Decision truth; remote REvoCompute Tools are projected, never re-implemented
+  here.
+- **Public contracts:** `build_tool_catalog`, `LocalToolRuntime.invoke`, and the
+  `revolab/tools` package API consumed by Presentation and Agent Context.
+- **Dependencies:** Project, Evidence/Provenance, Knowledge/Decision (typed domain
+  commands via the shared application command boundary `revolab.services`),
+  Provider/Capability (remote-tool projection via `catalog_entries`/`drivers`/
+  `domain.compute`), and Identity/Collaboration (authority via membership).
+- **Non-responsibilities:** owning Drivers/Capabilities/credentials; executing
+  remote compute; being the Agent's context builder; owning project truth.
 
 ---
 
@@ -245,6 +276,7 @@ public contract** (a code/build dependency direction, not data flow). This is th
 flowchart TB
     PW["Presentation / Workspace"]
     AC["Agent Context"]
+    PT["Project Tool Harness"]
     PC["Provider / Capability"]
     IC["Identity / Collaboration"]
     KD["Knowledge / Decision"]
@@ -258,13 +290,21 @@ flowchart TB
     PW --> KD
     PW --> PC
     PW --> AC
+    PW --> PT
     PW --> IC
 
     AC --> PJ
     AC --> EP
     AC --> KD
     AC --> PC
+    AC --> PT
     AC --> IC
+
+    PT --> PJ
+    PT --> EP
+    PT --> KD
+    PT --> PC
+    PT --> IC
 
     PJ --> IC
     PJ --> SO
@@ -280,9 +320,11 @@ flowchart TB
 
 `Scientific Object` and `Identity / Collaboration` are **global leaves** with no
 outgoing edges (they depend on nothing in Core). The graph is acyclic: Core domains
-never depend on the Agent, and no domain depends on a downstream sibling in a cycle.
-`PJ --> IC` (Project consumes the Identity membership contract) is one direction only —
-Identity owns membership and depends on nothing in Core, so there is no cycle.
+never depend on the Agent or the Project Tool Harness, and no domain depends on a
+downstream sibling in a cycle. `PJ --> IC` (Project consumes the Identity membership
+contract) is one direction only — Identity owns membership and depends on nothing in
+Core, so there is no cycle. `Tool` has exactly one owner (Project Tool Harness);
+`Presentation` and `Agent Context` only consume its `ToolCatalog`.
 
 ---
 

@@ -85,6 +85,10 @@ flowchart TB
         PC["Provider / Capability Domain"]
     end
 
+    subgraph Harness
+        PT["Project Tool Harness Domain"]
+    end
+
     subgraph Interaction
         AC["Agent Context Domain"]
         IC["Identity / Collaboration Domain"]
@@ -97,13 +101,21 @@ flowchart TB
     PW --> KD
     PW --> PC
     PW --> AC
+    PW --> PT
     PW --> IC
 
     AC --> P
     AC --> EP
     AC --> KD
     AC --> PC
+    AC --> PT
     AC --> IC
+
+    PT --> P
+    PT --> EP
+    PT --> KD
+    PT --> PC
+    PT --> IC
 
     P --> IC
     P --> SO
@@ -121,11 +133,12 @@ flowchart TB
 contract**. It is a code/build dependency direction, not a data-flow direction.
 Global leaves `ScientificObject` and `Identity/Collaboration` have **no outgoing
 edges** (they depend on nothing in Core); `Agent` and `Presentation` consume the
-application-facing contracts of the domains below them. This graph is the **single**
+application-facing contracts of the domains below them, and both consume the
+Project Tool Harness's `ToolCatalog`. This graph is the **single**
 authoritative dependency DAG — it is repeated verbatim in `DOMAIN_BOUNDARIES.md` and no
 other document draws a competing one.
 
-The eight domains and their one-line purpose (detailed in
+The nine domains and their one-line purpose (detailed in
 `DOMAIN_BOUNDARIES.md`):
 
 | Domain | Owns |
@@ -135,13 +148,17 @@ The eight domains and their one-line purpose (detailed in
 | Evidence / Provenance | references, evidence claims, and lineage edges |
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
 | Provider / Capability | providers, drivers, capabilities, capability schemas |
-| Agent Context | project-scoped context, skill resolution, and the agent loop (the Agent consumes the Project Tool Harness's canonical ToolCatalog) |
+| Project Tool Harness | the first-class `Tool` abstraction: `ToolCatalog`, the closed `LocalToolRuntime`, the local tool registry, and the `ToolInvocation` reproducibility record |
+| Agent Context | project-scoped context, skill resolution, and the agent loop (the Agent **consumes** the Project Tool Harness's canonical ToolCatalog) |
 | Identity / Collaboration | actors, authentication identities, membership, roles, credential **bindings** (`ExternalProviderCredentialBinding`: actor + provider + kind + `secret_ref`; the secret **material** lives in the Secret store) |
 | Presentation / Workspace | API surface and the user workspace information architecture |
 
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
-Knowledge) never depend on the Agent Context domain. The Agent is a *consumer*,
-not an owner, of project truth. Provider-vocabulary never leaks into Core.
+Knowledge) never depend on the Agent Context domain or the Project Tool Harness
+domain. The Agent is a *consumer*, not an owner, of both project truth and Tool:
+the Project Tool Harness is the single owner of Tool, and Provider/Capability is
+its implementation dependency for remote Tools — never the product-facing owner.
+Provider-vocabulary never leaks into Core.
 
 ---
 
@@ -166,15 +183,26 @@ Knowledge / Decision -----------------> Project             (project-scoped deci
 
 Provider / Capability -----------------> Identity           (credential contract: consumes the binding as an opaque handle; reaches material through the Secret store)
 
-Agent Context ----> Project | Evidence | Knowledge | Provider | Identity   (consumer)
+Project Tool Harness ----> Project | Evidence | Knowledge | Provider | Identity
+                            (typed domain commands + authority + remote-tool projection)
+
+Agent Context ----> Project | Evidence | Knowledge | Provider | Project Tool Harness | Identity   (consumer)
 Presentation ----> Project | Scientific Object | Evidence | Knowledge |
-                   Provider | Agent | Identity                              (all app-facing)
+                   Provider | Project Tool Harness | Agent | Identity                              (all app-facing)
 ```
+
+The `Project Tool Harness` row is realized by `revolab/tools/`, which imports the
+application/domain services (`revolab.services`) for typed commands, the
+Provider/Capability layer (`revolab.domain.provider`, `revolab.domain.compute`,
+`revolab.drivers`, `revolab.capabilities`) for remote-tool projection, and the
+authority contract through those services. It never imports `revolab.agent` — the
+Agent consumes it, not vice versa.
 
 This is the **same single DAG** as the mermaid diagram above; `A --> B` always means
 "imports/consumes B's public contract". The direction is acyclic: only `Scientific
 Object` and `Identity / Collaboration` are global leaves, Core never depends on the
-Agent, and no domain depends on a downstream sibling in a cycle.
+Agent or the Project Tool Harness, and no domain depends on a downstream sibling in
+a cycle.
 
 ---
 
