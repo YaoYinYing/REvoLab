@@ -748,7 +748,7 @@ E2E **2 passed**.
 ## Verified evidence (Phase 6)
 
 - Backend: `ruff check backend` and strict `mypy` pass (37 source files).
-  `pytest` passes with **236 passed, 5 skipped** (the five skips are the opt-in
+  `pytest` passes with **247 passed, 5 skipped** (the five skips are the opt-in
   PostgreSQL acceptance file run separately below).
 - Migrations: `alembic upgrade head` + `alembic check` report **no drift** on a
   clean SQLite database and on a clean PostgreSQL 16 database (`revolab_p6`). The
@@ -792,8 +792,18 @@ PASS (no P0; one P1 test-strength gap + P2s fixed in `12ab928`). The
 tests/PostgreSQL/CI second-pass reviewer stalled and was not replaced a second
 time; that lens is covered by the first-pass Reviewer E (PASS, full machine
 evidence) and by the primary integrator re-running the complete gate suite after
-every reconciliation — `236 passed` (backend), `5 passed` (PostgreSQL), `14
-passed` (frontend), `3 passed` (Playwright E2E).
+every reconciliation.
+
+Codex review head `5748774` requested changes; the four findings (packaged skill
+root; bounded artifact inspection materializing full bytes; revision-only sibling
+expansion; graph_depth edge leak) were fixed in `9b6dad4`. A third review round
+(three fresh read-only reviewers over that delta) returned PASS for
+Agent/context architecture and security/boundary (no P0/P1), and PASS for
+packaging/tests/CI with non-blocking follow-ups. Those follow-ups (env wiring
+regression, REvoCompute preview streaming + fail-closed + driver tests,
+`resolve_artifact_preview` byte-bound enforcement, `limit==0` short-circuit) are
+committed in `7554ed3`. Final machine evidence: `247 passed` (backend), `5
+passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
 
 ## Known deferrals (explicit, not silently postponed)
 
