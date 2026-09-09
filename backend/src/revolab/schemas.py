@@ -13,6 +13,8 @@ from uuid import UUID
 from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from revolab.enums import (
+    CREDENTIAL_KIND_PATTERN,
+    PROVIDER_KEY_PATTERN,
     CapabilityAvailability,
     CapabilityKind,
     CitedAs,
@@ -28,13 +30,6 @@ from revolab.enums import (
     ResourceKind,
     Role,
 )
-
-# URL-safe shape for credential-management path/body identifiers. `provider_key`
-# is the stable lowercase provider slug; `kind` is provider-declared free
-# vocabulary constrained only so it can embed in a URL path — it is deliberately
-# NOT a Core enum.
-PROVIDER_KEY_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,99}$"
-CREDENTIAL_KIND_PATTERN = r"^[A-Za-z0-9._-]{1,100}$"
 
 # ---------------------------------------------------------------------------
 # Identity / Project

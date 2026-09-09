@@ -7,7 +7,26 @@ API contracts. Nothing in Core may duplicate them (see ADR-0007/0010/0014).
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
+
+# Canonical identifier grammar for Provider/credential identity. This is the ONE
+# place these shapes are defined: driver registration, API/Pydantic validation,
+# and credential-management path parameters all reference these — never their own
+# copies of the same literals.
+PROVIDER_KEY_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,99}$"
+CREDENTIAL_KIND_PATTERN = r"^[A-Za-z0-9._-]{1,100}$"
+
+_PROVIDER_KEY_RE = re.compile(PROVIDER_KEY_PATTERN)
+_CREDENTIAL_KIND_RE = re.compile(CREDENTIAL_KIND_PATTERN)
+
+
+def is_valid_provider_key(value: str) -> bool:
+    return bool(_PROVIDER_KEY_RE.fullmatch(value))
+
+
+def is_valid_credential_kind(value: str) -> bool:
+    return bool(_CREDENTIAL_KIND_RE.fullmatch(value))
 
 
 class Role(StrEnum):

@@ -89,6 +89,18 @@ def test_register_rejects_capability_kind_not_matching_registry_key() -> None:
         DriverRegistry().register(driver)
 
 
+def test_register_rejects_provider_key_outside_credential_grammar() -> None:
+    with pytest.raises(ValueError, match="provider key is not representable"):
+        DriverRegistry().register(RecordingDriver("Bad Provider!"))
+
+
+def test_register_rejects_required_credential_kind_outside_grammar() -> None:
+    driver = RecordingDriver("stub")
+    driver.required_credential_kinds = ("api-key!",)
+    with pytest.raises(ValueError, match="required credential kind is not representable"):
+        DriverRegistry().register(driver)
+
+
 def test_start_all_rolls_back_ready_drivers_when_a_later_driver_fails() -> None:
     first = RecordingDriver("first")
     failing = RecordingDriver("failing", fail_on_start=True)

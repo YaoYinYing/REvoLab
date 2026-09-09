@@ -83,6 +83,31 @@ def test_duplicate_active_binding_same_actor_provider_kind_rejected(session, sec
         services.provision_credential(session, secret_store, registry, actor, "fakeprov", "api_key", "other")
 
 
+def test_duplicate_provisioning_maps_database_unique_conflict_to_conflict(
+    session, secret_store, monkeypatch
+):
+    """A race that slips past the pre-check must hit the database uniqueness
+    boundary and still surface the domain ConflictError — never SQLAlchemy
+    IntegrityError — with the newly materialized secret compensated."""
+    actor = _actor(session)
+    registry = _registry()
+    services.provision_credential(session, secret_store, registry, actor, "fakeprov", "api_key", SENTINEL)
+
+    # Bypass only the optimistic pre-check so `session.flush()` reaches the
+    # database UNIQUE constraint (the real boundary the translation defends).
+    from revolab.domain import identity as identity_mod
+
+    monkeypatch.setattr(identity_mod, "binding_for", lambda *args, **kwargs: None)
+
+    before = dict(secret_store._material)
+    with pytest.raises(ConflictError):
+        services.provision_credential(
+            session, secret_store, registry, actor, "fakeprov", "api_key", "other-secret"
+        )
+    # Secret-first ordering: the just-materialized secret must be compensated.
+    assert secret_store._material == before
+
+
 def test_same_actor_may_hold_multiple_providers_and_kinds(session, secret_store):
     actor = _actor(session)
     registry = _registry()

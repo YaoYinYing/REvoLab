@@ -32,7 +32,7 @@ from revolab.db import get_session
 from revolab.domain import provider as provider_domain
 from revolab.domain.errors import DomainError
 from revolab.drivers import DriverRegistry
-from revolab.enums import ResourceKind
+from revolab.enums import CREDENTIAL_KIND_PATTERN, PROVIDER_KEY_PATTERN, ResourceKind
 from revolab.models import (
     Actor,
     ArtifactReference,
@@ -876,8 +876,8 @@ def create_credential(
 @router.put("/credentials/{provider_key}/{kind}", response_model=schemas.CredentialBindingRead)
 def replace_credential(
     payload: schemas.CredentialReplace,
-    provider_key: str = Path(pattern=schemas.PROVIDER_KEY_PATTERN),
-    kind: str = Path(pattern=schemas.CREDENTIAL_KIND_PATTERN),
+    provider_key: str = Path(pattern=PROVIDER_KEY_PATTERN),
+    kind: str = Path(pattern=CREDENTIAL_KIND_PATTERN),
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
     store: SecretStore = Depends(get_secret_store),
@@ -897,8 +897,8 @@ def replace_credential(
 
 @router.delete("/credentials/{provider_key}/{kind}", status_code=204)
 def revoke_credential(
-    provider_key: str = Path(pattern=schemas.PROVIDER_KEY_PATTERN),
-    kind: str = Path(pattern=schemas.CREDENTIAL_KIND_PATTERN),
+    provider_key: str = Path(pattern=PROVIDER_KEY_PATTERN),
+    kind: str = Path(pattern=CREDENTIAL_KIND_PATTERN),
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
     store: SecretStore = Depends(get_secret_store),

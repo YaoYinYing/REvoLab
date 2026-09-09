@@ -244,8 +244,11 @@ knowledge-edge tables). See
   (`DELETE`), presence-only list (`GET`); routed through the trusted
   `X-Actor-Id` seam (a query-scoping seam, NOT authentication — OIDC remains
   deferred). Provisioning validates the provider exists in the registry and the
-  kind is one of its `required_credential_kinds`. Responses never echo submitted
-  secrets.
+  kind is one of its `required_credential_kinds`, using ONE canonical
+  provider-key/credential-kind grammar (`revolab.enums`) shared by Pydantic
+  validation and driver registration; a duplicate race at the database
+  uniqueness boundary maps deterministically to `ConflictError` (409) with the
+  materialized secret compensated. Responses never echo submitted secrets.
 - **Frontend**: the static Phase-2 provider surface is replaced by the real
   Project-scoped Provider Catalog rendered from the generated contract
   (`useProviders` → `ProvidersView`), showing the derived availability and the
@@ -254,18 +257,22 @@ knowledge-edge tables). See
 
 ## Verified evidence (Phase 3)
 
-- Backend: `pytest` passes with **122 passed, 2 skipped** (the two skips are the
+- Backend: `pytest` passes with **125 passed, 2 skipped** (the two skips are the
   opt-in PostgreSQL acceptance file, run explicitly in CI with a migrated PG).
   New regressions cover credential-binding CRUD/uniqueness/rotation/revocation +
-  unknown-provider/unknown-kind rejection, secret-boundary sentinel absence (DB
-  rows, reprs, logs, error envelopes), ephemeral/unpicklable lease, plural-kind
-  lease materialization, the full availability matrix (incl. per-capability
-  read-only vs action policy, two Actors observing different availability in one
-  Project, and revocation flipping the next query with no stored repair), the
-  two-state registry + capability projection + key/kind mismatch rejection +
-  lazy health probe, catalog Actor-scoping, credential-query scoping by the
-  trusted Actor seam, and the 422 no-echo gate that preserves the standard
-  `HTTPValidationError` envelope. `ruff check backend` and strict `mypy` pass.
+  unknown-provider/unknown-kind rejection + the database-uniqueness boundary
+  mapping a duplicate race to `ConflictError` (with secret compensation), a
+  canonical provider-key/credential-kind grammar enforced fail-closed at driver
+  registration and reused by API validation, secret-boundary sentinel absence
+  (DB rows, reprs, logs, error envelopes), ephemeral/unpicklable lease,
+  plural-kind lease materialization, the full availability matrix (incl.
+  per-capability read-only vs action policy, two Actors observing different
+  availability in one Project, and revocation flipping the next query with no
+  stored repair), the two-state registry + capability projection + key/kind
+  mismatch rejection + lazy health probe, catalog Actor-scoping,
+  credential-query scoping by the trusted Actor seam, and the 422 no-echo gate
+  that preserves the standard `HTTPValidationError` envelope. `ruff check
+  backend` and strict `mypy` pass.
 - Migrations: `alembic upgrade head` + `alembic check` report **no drift** on a
   clean **SQLite** database and on a **clean PostgreSQL 16** database (fresh
   `revolab_p3`). The Phase-3 credential/availability vertical slice passes

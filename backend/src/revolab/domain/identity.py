@@ -11,6 +11,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from revolab.domain.errors import AuthorizationError, ConflictError
@@ -172,6 +173,9 @@ def add_credential_binding(
     """Persist the non-secret binding row (secret material lives in the store.
 
     `secret_ref` is an opaque locator — this domain never reads the material.
+    A race that slips past the pre-check and hits the database uniqueness
+    constraint is translated to the domain `ConflictError`; callers that have
+    already materialized a secret compensate it on the exception path.
     """
     if binding_for(session, actor_id, provider_key, kind) is not None:
         raise ConflictError("credential binding already exists for this provider and kind")
@@ -182,5 +186,28 @@ def add_credential_binding(
         secret_ref=secret_ref,
     )
     session.add(binding)
-    session.flush()
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        if _is_binding_uniqueness_conflict(exc):
+            raise ConflictError(
+                "credential binding already exists for this provider and kind"
+            ) from exc
+        raise
     return binding
+
+
+def _is_binding_uniqueness_conflict(exc: IntegrityError) -> bool:
+    """Narrow, backend-aware detection of the binding table's ONE unique
+    constraint. Unrelated integrity failures are re-raised untouched."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(
+            diagnostics.constraint_name == "uq_credential_binding_actor_provider_kind"
+        )
+    message = str(orig)
+    return (
+        "UNIQUE constraint failed" in message
+        and "external_provider_credential_bindings" in message
+    )

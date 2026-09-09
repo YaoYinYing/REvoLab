@@ -22,7 +22,12 @@ from importlib.metadata import entry_points
 from types import MappingProxyType
 from typing import Any, Protocol
 
-from revolab.enums import CapabilityKind, ProviderRuntimeHealth
+from revolab.enums import (
+    CapabilityKind,
+    ProviderRuntimeHealth,
+    is_valid_credential_kind,
+    is_valid_provider_key,
+)
 
 
 class DriverState(StrEnum):
@@ -82,6 +87,21 @@ class DriverRegistry:
     def register(self, driver: Driver) -> DriverHandle:
         if driver.name in self._drivers:
             raise ValueError(f"driver already registered: {driver.name}")
+        # Fail closed when provider/credential identity is not representable by
+        # the credential-management contract (shared canonical grammar): a driver
+        # whose key or required kinds could never be addressed through the API
+        # must not register.
+        if not is_valid_provider_key(driver.name):
+            raise ValueError(
+                f"provider key is not representable by the credential contract: "
+                f"{driver.name!r}"
+            )
+        for required_kind in driver.required_credential_kinds:
+            if not is_valid_credential_kind(required_kind):
+                raise ValueError(
+                    f"required credential kind is not representable by the "
+                    f"credential contract: {required_kind!r}"
+                )
         for kind, capability in driver.capabilities.items():
             if capability.provider_key != driver.name:
                 raise ValueError(
