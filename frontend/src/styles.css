@@ -169,6 +169,9 @@ h3 { margin: 0 0 8px; font-size: 12px; }
 .list-row-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 13px; }
 .list-row small { color: #87938e; font-family: 'DM Mono', monospace; font-size: 9px; display: block; margin-top: 2px; }
 
+/* Phase-6 truth boundary: a proposal is not committed Project Knowledge. */
+.truth-boundary { border-left: 3px solid #b5813f; background: var(--panel); color: #6b5c24; font-size: 12px; line-height: 1.55; padding: 10px 12px; margin: 12px 0 0; border-radius: 0 8px 8px 0; }
+
 .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
 .metric { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
 .metric strong { font-size: 20px; letter-spacing: -0.03em; }

@@ -226,3 +226,27 @@ class ArtifactResolutionCapability(Protocol):
     def resolve(
         self, artifact: ExternalArtifactRef, credentials: CredentialLease
     ) -> ArtifactHandle: ...
+
+
+class ArtifactPreviewCapability(Protocol):
+    """The BOUNDED external-artifact read boundary (Phase 6 inspect_artifact).
+
+    A driver may realize bounded preview alongside `ArtifactResolutionCapability`.
+    Phase 6 Agent inspection uses this so a large artifact is never fully
+    materialized into ProjectContext/Agent memory: the returned `ArtifactHandle`
+    must carry only the requested slice (its `data` is the preview, not the whole
+    artifact). If a provider cannot honor a bounded read, inspection fails closed
+    rather than falling back to a full `resolve`.
+    """
+
+    provider_key: str
+    kind: CapabilityKind
+
+    def preview(
+        self,
+        artifact: ExternalArtifactRef,
+        credentials: CredentialLease,
+        *,
+        offset: int = 0,
+        limit: int,
+    ) -> ArtifactHandle: ...

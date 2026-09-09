@@ -28,6 +28,8 @@ const enumNames = [
   'CapabilityAvailability',
   'Role',
   'ProjectVisibility',
+  'ToolSource',
+  'AgentToolAutonomy',
 ]
 
 const constName = (name) =>
@@ -47,6 +49,8 @@ const constName = (name) =>
     CapabilityAvailability: 'CAPABILITY_AVAILABILITIES',
     Role: 'ROLES',
     ProjectVisibility: 'PROJECT_VISIBILITIES',
+    ToolSource: 'TOOL_SOURCES',
+    AgentToolAutonomy: 'AGENT_TOOL_AUTONOMIES',
   })[name]
 
 const lines = [

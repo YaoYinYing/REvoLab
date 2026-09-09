@@ -15,6 +15,105 @@
         "title": "ActorRead",
         "type": "object"
       },
+      "AgentToolAutonomy": {
+        "description": "The executable agent-autonomy classification (ADR-0013 authority matrix):\n\n- `automatic`: safe reads/proposals the Agent may perform without further\n  authorization;\n- `policy`: a typed domain mutation gated by project policy (the current\n  policy is `owner`/`member` membership);\n- `explicit_action`: an operation with side effects or truth-promotion that\n  is never auto-executed by the Agent loop \u2014 it requires an explicit,\n  authorized Actor action (e.g. committing a Decision, submitting compute).",
+        "enum": [
+          "automatic",
+          "policy",
+          "explicit_action"
+        ],
+        "title": "AgentToolAutonomy",
+        "type": "string"
+      },
+      "ArtifactInspectRead": {
+        "description": "Bounded artifact-preview result. `preview` is a small head slice of the\nresolved bytes, never a copy into Core and never credential material.",
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "binary": {
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checksum"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          },
+          "preview_size": {
+            "title": "Preview Size",
+            "type": "integer"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "authority",
+          "native_id",
+          "preview",
+          "preview_size",
+          "truncated",
+          "binary"
+        ],
+        "title": "ArtifactInspectRead",
+        "type": "object"
+      },
       "Body_upload_artifact_api_projects__project_id__artifacts_post": {
         "properties": {
           "file": {
@@ -27,6 +126,48 @@
           "file"
         ],
         "title": "Body_upload_artifact_api_projects__project_id__artifacts_post",
+        "type": "object"
+      },
+      "BudgetReportRead": {
+        "description": "Counts actually assembled for this turn and whether any cap truncated.",
+        "properties": {
+          "decision_count": {
+            "default": 0,
+            "title": "Decision Count",
+            "type": "integer"
+          },
+          "evidence_count": {
+            "default": 0,
+            "title": "Evidence Count",
+            "type": "integer"
+          },
+          "reference_count": {
+            "default": 0,
+            "title": "Reference Count",
+            "type": "integer"
+          },
+          "relation_count": {
+            "default": 0,
+            "title": "Relation Count",
+            "type": "integer"
+          },
+          "revision_count": {
+            "default": 0,
+            "title": "Revision Count",
+            "type": "integer"
+          },
+          "series_count": {
+            "default": 0,
+            "title": "Series Count",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "title": "BudgetReportRead",
         "type": "object"
       },
       "CapabilityAvailability": {
@@ -451,6 +592,119 @@
         "title": "Confidence",
         "type": "string"
       },
+      "ContextSelectionCreate": {
+        "description": "Declarative description of what one Agent turn may read.\n\nThe selection is a bounded, Project-scoped list of resource identities and\nexplicit category/budget switches. It contains no query syntax and never\nrequests material from another Project; the ContextBuilder validates every\nselected identity against this Project's read lens and fails closed.",
+        "properties": {
+          "graph_depth": {
+            "default": 1,
+            "maximum": 3.0,
+            "minimum": 0.0,
+            "title": "Graph Depth",
+            "type": "integer"
+          },
+          "include_decisions": {
+            "default": true,
+            "title": "Include Decisions",
+            "type": "boolean"
+          },
+          "include_evidence": {
+            "default": true,
+            "title": "Include Evidence",
+            "type": "boolean"
+          },
+          "include_provider_capabilities": {
+            "default": false,
+            "title": "Include Provider Capabilities",
+            "type": "boolean"
+          },
+          "include_references": {
+            "default": true,
+            "title": "Include References",
+            "type": "boolean"
+          },
+          "include_relations": {
+            "default": true,
+            "title": "Include Relations",
+            "type": "boolean"
+          },
+          "max_decisions": {
+            "default": 100,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Max Decisions",
+            "type": "integer"
+          },
+          "max_evidence": {
+            "default": 100,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Max Evidence",
+            "type": "integer"
+          },
+          "max_references": {
+            "default": 100,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Max References",
+            "type": "integer"
+          },
+          "max_relations": {
+            "default": 200,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Max Relations",
+            "type": "integer"
+          },
+          "max_revisions": {
+            "default": 200,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Max Revisions",
+            "type": "integer"
+          },
+          "max_series": {
+            "default": 50,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Max Series",
+            "type": "integer"
+          },
+          "revision_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 400,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Ids"
+          },
+          "series_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Series Ids"
+          }
+        },
+        "title": "ContextSelectionCreate",
+        "type": "object"
+      },
       "CredentialBindingRead": {
         "description": "Presence/status only \u2014 no `secret_ref`, no secret material.",
         "properties": {
@@ -536,6 +790,7 @@
             "items": {
               "$ref": "#/components/schemas/CitationCreate"
             },
+            "maxItems": 500,
             "title": "Cites",
             "type": "array"
           },
@@ -543,6 +798,7 @@
             "items": {
               "type": "string"
             },
+            "maxItems": 200,
             "title": "Next Actions",
             "type": "array"
           },
@@ -550,10 +806,12 @@
             "items": {
               "$ref": "#/components/schemas/SelectTargetCreate"
             },
+            "maxItems": 500,
             "title": "Selects",
             "type": "array"
           },
           "statement": {
+            "maxLength": 50000,
             "minLength": 1,
             "title": "Statement",
             "type": "string"
@@ -619,6 +877,7 @@
           "statement": {
             "anyOf": [
               {
+                "maxLength": 50000,
                 "minLength": 1,
                 "type": "string"
               },
@@ -744,6 +1003,69 @@
           "selects"
         ],
         "title": "DecisionRead",
+        "type": "object"
+      },
+      "DecisionRefRead": {
+        "description": "Contextual Decision ref. A draft is a proposal, never committed truth.",
+        "properties": {
+          "decision_id": {
+            "format": "uuid",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "evidence_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Evidence Ids",
+            "type": "array"
+          },
+          "selects": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Selects",
+            "type": "array"
+          },
+          "statement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statement"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DecisionStatus"
+          },
+          "superseded_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "title",
+          "status"
+        ],
+        "title": "DecisionRefRead",
         "type": "object"
       },
       "DecisionStatus": {
@@ -1123,6 +1445,81 @@
           "target_id"
         ],
         "title": "EvidenceRead",
+        "type": "object"
+      },
+      "EvidenceRefRead": {
+        "description": "Contextual Evidence identity + role/polarity, as a typed addressable ref.",
+        "properties": {
+          "evidence_id": {
+            "format": "uuid",
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "frozen": {
+            "default": false,
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "interpretation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Interpretation"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EvidenceKind"
+          },
+          "polarity": {
+            "$ref": "#/components/schemas/Polarity"
+          },
+          "role": {
+            "$ref": "#/components/schemas/EvidenceRole"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/EvidenceTargetKind"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "kind",
+          "role",
+          "target_kind",
+          "target_id",
+          "polarity"
+        ],
+        "title": "EvidenceRefRead",
         "type": "object"
       },
       "EvidenceRole": {
@@ -1677,6 +2074,94 @@
         "title": "ProducedCreate",
         "type": "object"
       },
+      "ProjectContextRead": {
+        "description": "Immutable per-turn context assembled from durable Project truth. It is a\nvalue object (never persisted, never a database connection). Provider\ncapability summaries are the non-secret `ProviderRead` projection; loaded\nskill identifiers point at `.agents/skills/`, never copying skill content.",
+        "properties": {
+          "budget": {
+            "$ref": "#/components/schemas/BudgetReportRead"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionRefRead"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRefRead"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "loaded_skill_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Loaded Skill Ids",
+            "type": "array"
+          },
+          "membership_role": {
+            "$ref": "#/components/schemas/Role"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "provider_capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderRead"
+            },
+            "title": "Provider Capabilities",
+            "type": "array"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceHeaderRead"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/EdgeRead"
+            },
+            "title": "Relations",
+            "type": "array"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/RevisionRefRead"
+            },
+            "title": "Revisions",
+            "type": "array"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ContextSelectionCreate"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/SeriesRefRead"
+            },
+            "title": "Series",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id",
+          "project_name",
+          "membership_role",
+          "selection",
+          "budget"
+        ],
+        "title": "ProjectContextRead",
+        "type": "object"
+      },
       "ProjectCreate": {
         "properties": {
           "description": {
@@ -1888,6 +2373,149 @@
         ],
         "title": "ProviderRuntimeHealth",
         "type": "string"
+      },
+      "ReferenceHeaderRead": {
+        "description": "A reference identity card header \u2014 never artifact bytes. The originating\nrun is the derived `produced` traversal, never a copied execution state.",
+        "properties": {
+          "authority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authority"
+          },
+          "checksum": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checksum"
+          },
+          "content_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Type"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "native_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Native Id"
+          },
+          "originating_run_resource_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originating Run Resource Id"
+          },
+          "resource_id": {
+            "format": "uuid",
+            "title": "Resource Id",
+            "type": "string"
+          },
+          "resource_kind": {
+            "$ref": "#/components/schemas/ResourceKind"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "task_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Type"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "resource_id",
+          "resource_kind"
+        ],
+        "title": "ReferenceHeaderRead",
+        "type": "object"
       },
       "ReferenceRead": {
         "properties": {
@@ -2164,6 +2792,41 @@
         "title": "RevisionRead",
         "type": "object"
       },
+      "RevisionRefRead": {
+        "description": "One addressable revision ref. The payload is content, not context, and is\ndeliberately omitted from the automatic assembly.",
+        "properties": {
+          "object_type": {
+            "$ref": "#/components/schemas/ObjectType"
+          },
+          "revision_id": {
+            "format": "uuid",
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "revision_seq": {
+            "title": "Revision Seq",
+            "type": "integer"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "series_id": {
+            "format": "uuid",
+            "title": "Series Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "revision_id",
+          "series_id",
+          "revision_seq",
+          "object_type",
+          "schema_version"
+        ],
+        "title": "RevisionRefRead",
+        "type": "object"
+      },
       "Role": {
         "enum": [
           "owner",
@@ -2343,6 +3006,53 @@
         "title": "SeriesRead",
         "type": "object"
       },
+      "SeriesRefRead": {
+        "description": "The automatic series skeleton: identity + label + object_type only. No\nplacement/organization links (those are ProjectResourceLink UX, not context).",
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "object_type": {
+            "$ref": "#/components/schemas/ObjectType"
+          },
+          "series_id": {
+            "format": "uuid",
+            "title": "Series Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "series_id",
+          "object_type",
+          "name"
+        ],
+        "title": "SeriesRefRead",
+        "type": "object"
+      },
       "SessionReferenceCreate": {
         "properties": {
           "authority": {
@@ -2378,6 +3088,118 @@
         ],
         "title": "SupersedeCreate",
         "type": "object"
+      },
+      "ToolCatalogRead": {
+        "description": "Project-scoped, Actor-contextual projection of the tools this Actor may\nuse. Unavailable provider capabilities are never exposed as executable.",
+        "properties": {
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/ToolDescriptorRead"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "title": "ToolCatalogRead",
+        "type": "object"
+      },
+      "ToolDescriptorRead": {
+        "description": "One typed Agent tool. Input/output schemas are derived from the canonical\ndomain/OpenAPI/provide schemas (never hand-copied). Nothing here is secret:\nno credentials, no raw SQL/HTTP/shell, no generic writer.",
+        "properties": {
+          "autonomy": {
+            "$ref": "#/components/schemas/AgentToolAutonomy"
+          },
+          "availability_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Availability Reason"
+          },
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "capability_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CapabilityKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "output_schema": {
+            "additionalProperties": true,
+            "title": "Output Schema",
+            "type": "object"
+          },
+          "provider_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Key"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ToolSource"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "source",
+          "autonomy",
+          "available",
+          "input_schema",
+          "output_schema"
+        ],
+        "title": "ToolDescriptorRead",
+        "type": "object"
+      },
+      "ToolSource": {
+        "description": "Where a Phase-6 Agent tool descriptor originates (TODO.md section 3):\na REvoLab typed domain operation or an available Provider capability.",
+        "enum": [
+          "domain",
+          "provider"
+        ],
+        "title": "ToolSource",
+        "type": "string"
       },
       "ValidationError": {
         "properties": {
@@ -2994,6 +3816,128 @@
         "summary": "Patch Project"
       }
     },
+    "/api/projects/{project_id}/agent/proposals": {
+      "post": {
+        "operationId": "create_agent_proposal_api_projects__project_id__agent_proposals_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Agent Proposal"
+      }
+    },
+    "/api/projects/{project_id}/agent/tools": {
+      "get": {
+        "operationId": "list_agent_tools_api_projects__project_id__agent_tools_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolCatalogRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Agent Tools"
+      }
+    },
     "/api/projects/{project_id}/artifacts": {
       "post": {
         "operationId": "upload_artifact_api_projects__project_id__artifacts_post",
@@ -3124,6 +4068,84 @@
           }
         },
         "summary": "Resolve Artifact Content"
+      }
+    },
+    "/api/projects/{project_id}/artifacts/{artifact_id}/inspect": {
+      "get": {
+        "operationId": "inspect_project_artifact_api_projects__project_id__artifacts__artifact_id__inspect_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "preview_limit",
+            "required": false,
+            "schema": {
+              "default": 2048,
+              "maximum": 65536,
+              "minimum": 0,
+              "title": "Preview Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactInspectRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Inspect Project Artifact"
       }
     },
     "/api/projects/{project_id}/artifacts/{artifact_id}/resolve": {
@@ -3261,6 +4283,79 @@
           }
         },
         "summary": "Create Compute Submission"
+      }
+    },
+    "/api/projects/{project_id}/context": {
+      "post": {
+        "operationId": "build_project_context_api_projects__project_id__context_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ContextSelectionCreate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectContextRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Build Project Context"
       }
     },
     "/api/projects/{project_id}/decisions": {

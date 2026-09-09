@@ -13,19 +13,26 @@ type ResourceShareCreate = paths['/api/projects/{project_id}/shares']['post']['r
 type PreferredRevisionPut =
   paths['/api/projects/{project_id}/objects/{series_id}/preferred-revision']['put']['requestBody']['content']['application/json']
 type ComputeSubmissionCreate = paths['/api/projects/{project_id}/compute/submissions']['post']['requestBody']['content']['application/json']
+type ContextSelectionCreate = NonNullable<
+  paths['/api/projects/{project_id}/context']['post']['requestBody']
+>['content']['application/json']
+type AgentProposalCreate =
+  paths['/api/projects/{project_id}/agent/proposals']['post']['requestBody']['content']['application/json']
 
 export type {
-  ObjectCreate,
-  EvidenceCreate,
+  AgentProposalCreate,
+  ComputeSubmissionCreate,
+  ContextSelectionCreate,
   DecisionCreate,
   DecisionPatch,
-  ProjectCreate,
-  ProjectPatch,
+  EvidenceCreate,
   MembershipCreate,
   MembershipUpdate,
-  ResourceShareCreate,
+  ObjectCreate,
   PreferredRevisionPut,
-  ComputeSubmissionCreate,
+  ProjectCreate,
+  ProjectPatch,
+  ResourceShareCreate,
 }
 
 /**
@@ -203,6 +210,32 @@ export function projectApi(actorId: string) {
         headers,
         params: { path: { project_id: projectId, artifact_id: artifactId } },
         parseAs: 'text',
+      }),
+
+    buildContext: (projectId: string, body: ContextSelectionCreate) =>
+      api.POST('/api/projects/{project_id}/context', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    listAgentTools: (projectId: string) =>
+      api.GET('/api/projects/{project_id}/agent/tools', {
+        headers,
+        params: { path: { project_id: projectId } },
+      }),
+
+    createAgentProposal: (projectId: string, body: AgentProposalCreate) =>
+      api.POST('/api/projects/{project_id}/agent/proposals', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    inspectArtifact: (projectId: string, artifactId: string, query: { preview_limit?: number } = {}) =>
+      api.GET('/api/projects/{project_id}/artifacts/{artifact_id}/inspect', {
+        headers,
+        params: { path: { project_id: projectId, artifact_id: artifactId }, query },
       }),
   }
 }

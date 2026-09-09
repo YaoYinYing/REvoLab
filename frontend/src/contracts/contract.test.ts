@@ -16,9 +16,31 @@ const spec = JSON.parse(read('./openapi.json')) as OpenApiSpec
 const schemaDts = read('./schema.d.ts')
 const enumsTs = read('./enums.generated.ts')
 
+// Backend-owned closed enum schemas that must appear in the committed OpenAPI
+// snapshot AND be reflected in the generated runtime constant arrays.
+const ENUM_NAMES = [
+  'ObjectType',
+  'RelationType',
+  'EvidenceKind',
+  'EvidenceRole',
+  'Polarity',
+  'Confidence',
+  'CitedAs',
+  'DecisionStatus',
+  'ResourceKind',
+  'EvidenceTargetKind',
+  'CapabilityKind',
+  'ProviderRuntimeHealth',
+  'CapabilityAvailability',
+  'Role',
+  'ProjectVisibility',
+  'ToolSource',
+  'AgentToolAutonomy',
+]
+
 describe('generated API contract boundary', () => {
   it('committed openapi.json carries the backend-owned domain enums', () => {
-    for (const name of ['ObjectType', 'RelationType', 'EvidenceKind', 'EvidenceRole', 'Polarity', 'Confidence', 'CitedAs', 'DecisionStatus', 'ResourceKind', 'EvidenceTargetKind', 'CapabilityKind', 'ProviderRuntimeHealth', 'CapabilityAvailability']) {
+    for (const name of ENUM_NAMES) {
       const schema = spec.components.schemas[name]
       expect(schema, `missing enum schema ${name}`).toBeDefined()
       expect(Array.isArray(schema.enum), `${name} should be a closed enum`).toBe(true)
@@ -35,7 +57,7 @@ describe('generated API contract boundary', () => {
       expect(schemaDts, `schema.d.ts missing schema ${name}`).toContain(`${name}:`)
     }
     // Generated enum arrays stay in lockstep with the committed OpenAPI enum.
-    for (const name of ['ObjectType', 'RelationType', 'EvidenceKind', 'EvidenceRole', 'Polarity', 'Confidence', 'CitedAs', 'DecisionStatus', 'ResourceKind', 'EvidenceTargetKind', 'CapabilityKind', 'ProviderRuntimeHealth', 'CapabilityAvailability']) {
+    for (const name of ENUM_NAMES) {
       const values = spec.components.schemas[name].enum!
       expect(enumsTs, `enums.generated.ts missing ${name} values`).toContain(JSON.stringify(values))
     }
@@ -50,5 +72,16 @@ describe('generated API contract boundary', () => {
     expect(enumsTs).toContain('export const CAPABILITY_KINDS')
     expect(enumsTs).toContain('export const PROVIDER_RUNTIME_HEALTHS')
     expect(enumsTs).toContain('export const CAPABILITY_AVAILABILITIES')
+  })
+
+  it('the Agent proposal request is a single shared DecisionCreate component', () => {
+    // Phase-6 single-source-of-truth: an Agent proposal records a Decision DRAFT
+    // through the same typed request shape as ordinary Decision creation.
+    expect(spec.components.schemas.AgentProposalCreate).toBeUndefined()
+    const proposalPath = spec.paths['/api/projects/{project_id}/agent/proposals'] as {
+      post?: { requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> } }
+    }
+    const schemaRef = proposalPath.post?.requestBody?.content?.['application/json']?.schema?.$ref
+    expect(schemaRef).toBe('#/components/schemas/DecisionCreate')
   })
 })

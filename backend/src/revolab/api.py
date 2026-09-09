@@ -19,6 +19,7 @@ from fastapi import (
     Header,
     HTTPException,
     Path,
+    Query,
     Response,
     UploadFile,
 )
@@ -27,6 +28,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from revolab import queries, schemas, services
+from revolab.agent.builder import build_context
+from revolab.agent.inspect import inspect_artifact
+from revolab.agent.tools import build_tool_catalog
 from revolab.capabilities import CapabilityError, ExternalArtifactRef, InputBinding
 from revolab.content_store import ContentStore
 from revolab.db import get_session
@@ -942,6 +946,87 @@ def graph(
     services.readable_membership(session, actor_id, project_id)
     return queries.bounded_graph(
         session, project_id, from_id, depth=depth, kinds=set(kinds.split(","))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Agent Context & Tools (Phase 6) — the Agent is a consumer, never an owner.
+# Every mutation below routes to the SAME typed domain/application service used
+# by the normal API callers (no Agent-specific persistence; no committed-truth
+# path except the explicit authorized commit endpoint under /decisions).
+# ---------------------------------------------------------------------------
+
+
+@router.post("/projects/{project_id}/context", response_model=schemas.ProjectContextRead)
+def build_project_context(
+    project_id: UUID,
+    payload: schemas.ContextSelectionCreate | None = None,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+) -> schemas.ProjectContextRead:
+    return build_context(session, actor_id, project_id, registry, payload)
+
+
+@router.get("/projects/{project_id}/agent/tools", response_model=schemas.ToolCatalogRead)
+def list_agent_tools(
+    project_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+) -> schemas.ToolCatalogRead:
+    return build_tool_catalog(session, actor_id, project_id, registry)
+
+
+@router.post(
+    "/projects/{project_id}/agent/proposals",
+    status_code=201,
+    response_model=schemas.DecisionRead,
+)
+def create_agent_proposal(
+    project_id: UUID,
+    payload: schemas.AgentProposalCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.DecisionRead:
+    # The proposal wire surface is exactly the `decision.record_draft` typed tool:
+    # it calls the same Decision creation service and can only ever produce a
+    # draft. A committed Decision requires the authorized commit endpoint below.
+    decision = services.create_decision(
+        session,
+        actor_id,
+        project_id,
+        title=payload.title,
+        statement=payload.statement,
+        next_actions=payload.next_actions,
+        cites=[{"evidence_id": c.evidence_id, "cited_as": c.cited_as.value} for c in payload.cites],
+        selects=[{"target_id": s.target_id, "target_kind": s.target_kind.value} for s in payload.selects],
+    )
+    return schemas.DecisionRead(**queries.decision_summary(session, decision))
+
+
+@router.get(
+    "/projects/{project_id}/artifacts/{artifact_id}/inspect",
+    response_model=schemas.ArtifactInspectRead,
+)
+def inspect_project_artifact(
+    project_id: UUID,
+    artifact_id: UUID,
+    preview_limit: int = Query(default=2048, ge=0, le=65536),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.ArtifactInspectRead:
+    return inspect_artifact(
+        session,
+        registry,
+        store,
+        _content_store(),
+        actor_id,
+        project_id,
+        artifact_id,
+        preview_limit=preview_limit,
     )
 
 

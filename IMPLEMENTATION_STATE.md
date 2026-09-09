@@ -689,6 +689,124 @@ Verification after the fix (rerun in full): `ruff`, strict `mypy`, `pytest`
 no drift, frontend typecheck/test(11)/build + `check:contracts` clean, Playwright
 E2E **2 passed**.
 
+## Implemented (Phase 6)
+
+- **Agent as consumer, never owner.** New `revolab/agent/` package (Agent Context
+  domain) consumes Core's public contracts; Core never imports it. The application
+  boundary (`api.py`) composes it as the Presentation-domain consumer.
+- **ContextSelection / ProjectContext / ContextBuilder.** `ContextSelectionCreate`
+  is a declarative, Project-scoped, explicitly bounded request (series/revision
+  identities, include flags, hard budgets). `build_context` validates every selected
+  identity against the Project's read lens (fail-closed on non-member, tombstoned
+  Project, foreign/unknown ids) and assembles an immutable `ProjectContextRead`
+  value object: series skeleton, addressable revision refs (no payload), bounded
+  relations (`EdgeRead`), Evidence/Decision refs, reference headers with the derived
+  originating run (never bytes), provider capability summaries, and loaded skill
+  identifiers. No DB writes, no link/membership changes, no credential resolution.
+- **Context budget.** Deterministic per-category caps; every category reports actual
+  counts and a `truncated` flag. Caps are global across the turn (`max_revisions` is
+  enforced across all selected series, not per-series). Large artifacts are
+  reference headers only.
+- **inspect_artifact tool boundary.** `inspect_artifact` resolves an
+  `ArtifactReference` through the ContentStore (`authority == revolab`) or the
+  existing `ArtifactResolutionCapability`, returns a bounded preview (default 2048,
+  hard max 65536), and never copies bytes into Core or surfaces credential material.
+- **ToolCatalog.** `build_tool_catalog` projects a fixed domain-tool subset (context
+  build, artifact inspect, evidence create, decision record-draft, decision commit)
+  plus available provider capabilities from the existing non-secret
+  `catalog_entries`, omitting non-`AVAILABLE` capabilities entirely. Input/output
+  JSON Schemas derive from canonical Pydantic/OpenAPI models; autonomy is typed as
+  `AgentToolAutonomy` (`automatic` / `policy` / `explicit_action`). No credential,
+  secret, share, membership, raw-SQL/HTTP/shell tool is ever projected.
+- **Authority matrix (executable policy).** Reads automatic; `create_evidence` /
+  `record_decision_draft` policy-gated (owner/member); `decision.commit` and compute
+  submission `explicit_action` — never auto-executed by the Agent loop; sharing and
+  credential operations are never Agent tools.
+- **SkillCatalog.** Pointer-only (`revolab/agent/skills.py`): resolves the canonical
+  `.agents/skills/<name>/SKILL.md` frontmatter for the small Phase-6 subset
+  (`project-context`, `decision-record`, `provenance-lineage`); never copies skill
+  content into context.
+- **Ephemeral session + deterministic proposal.** `AgentSession` is process-local,
+  never persisted, never a truth store; `propose_selection` is a deterministic fake
+  Agent and `record_proposal` routes to the existing `services.create_decision`
+  (draft-only). No committed decision can come from the Agent path.
+- **API surface.** `POST /api/projects/{id}/context`, `GET
+  /api/projects/{id}/agent/tools`, `POST /api/projects/{id}/agent/proposals`
+  (draft-only), and `GET /api/projects/{id}/artifacts/{artifact_id}/inspect`
+  (bounded preview). Commit remains the existing authorized endpoint
+  `POST /api/projects/{id}/decisions/{decision_id}/commit`.
+- **Frontend slice.** `views/Agent.tsx` selects an object, renders the assembled
+  context summary + tool catalog (autonomy badges) + the proposal form and draft
+  status with an explicit commit control; the truth boundary "Agent proposal ≠
+  committed Project Knowledge" is rendered. The write controls (record draft /
+  commit) are gated by the generated `owner`/`member` role vocabulary. No chat UI,
+  no prompt management.
+- **PostgreSQL / browser slice.** `test_postgres_integration.py` gained the
+  Phase-6 vertical slice; `e2e/agent.spec.ts` proves draft → explicit commit →
+  committed Knowledge over the real backend.
+
+## Verified evidence (Phase 6)
+
+- Backend: `ruff check backend` and strict `mypy` pass (37 source files).
+  `pytest` passes with **247 passed, 5 skipped** (the five skips are the opt-in
+  PostgreSQL acceptance file run separately below).
+- Migrations: `alembic upgrade head` + `alembic check` report **no drift** on a
+  clean SQLite database and on a clean PostgreSQL 16 database (`revolab_p6`). The
+  PostgreSQL acceptance pass (**5 passed**) includes the new Phase-6 slice.
+- Frontend: `npm run typecheck`, `npm run test` (**14 tests**, including the
+  Agent view and the contract-boundary lockstep), and `npm run build` pass.
+  `openapi.json` / `schema.d.ts` / `enums.generated.ts` regenerated from the
+  FastAPI schema; `npm run check:contracts` and a fresh
+  `python -m revolab.export_openapi` diff report **no drift**.
+- Browser (`npm run test:e2e`, Playwright Chromium, workers serialized over one
+  database): the Phase-2 smoke, the Phase-5 collaboration slice, and the new
+  Phase-6 agent slice all pass (**3 passed**).
+
+## Independent review (Phase 6)
+
+First pass: five fresh read-only reviewers (architecture/domain, authority/
+security, backend/API/contracts, frontend/context UX, tests/PostgreSQL/CI)
+audited `main...HEAD`. **No P0 findings; all five returned PASS.** Reconciled
+findings (committed in `a359408`, `661f6f3`, `bd5e410`):
+
+- single-sourced the proposal request on `DecisionCreate` (removed the duplicate
+  `AgentProposalCreate` OpenAPI component) and bounded decision statement/list
+  fields; `preview_limit` declared in OpenAPI with ge/le;
+- corrected provider tool input schemas (`kind_id` opaque string; `run_id`
+  REvoLab UUID with resolution documented) and typed the proposal handler;
+- SQL-scoped the edge assembly's double-endpoint visibility filter;
+- typed the deterministic proposal with canonical `ResourceKind`/
+  `CitationCreate`/`SelectTargetCreate`;
+- frontend enum-lockstep test extended, truth-boundary callout styled, tool rows
+  render name/source, inert lint pragma removed;
+- tests hardened: exact closed domain tool-id set, read-only ToolCatalog proof,
+  other-Actor credential non-projection (tool catalog + serialized context),
+  external-artifact inspect credential non-leak, viewer HTTP fail-closed,
+  removed vacuous/tautological assertions; locked the proposal request to the
+  single `DecisionCreate` component;
+- `AGENT_CONTEXT.md` ref terminology reconciled to the durable wire shape.
+
+Second pass (three fresh read-only reviewers over the contract/security/test fix
+delta): contract/schema returned PASS (no P0/P1); security/authority returned
+PASS (no P0; one P1 test-strength gap + P2s fixed in `12ab928`). The
+tests/PostgreSQL/CI second-pass reviewer stalled and was not replaced a second
+time; that lens is covered by the first-pass Reviewer E (PASS, full machine
+evidence) and by the primary integrator re-running the complete gate suite after
+every reconciliation.
+
+Codex review head `5748774` requested changes; the four findings (packaged skill
+root; bounded artifact inspection materializing full bytes; revision-only sibling
+expansion; graph_depth edge leak) were fixed in `9b6dad4`. A third review round
+(three fresh read-only reviewers over that delta) returned PASS for
+Agent/context architecture and security/boundary (no P0/P1), and PASS for
+packaging/tests/CI with non-blocking follow-ups. Those follow-ups (env wiring
+regression, REvoCompute preview streaming + fail-closed + driver tests,
+`resolve_artifact_preview` byte-bound enforcement, `limit==0` short-circuit) are
+committed in `7554ed3`. Final machine evidence: `247 passed` (backend), `5
+passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
+
+## Known deferrals (explicit, not silently postponed)
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

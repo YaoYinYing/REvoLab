@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from revolab.capabilities import (
     ArtifactHandle,
+    ArtifactPreviewCapability,
     ArtifactResolutionCapability,
     CapabilityError,
     ComputeCapability,
@@ -227,11 +228,62 @@ def resolve_artifact(
     return cast(ArtifactResolutionCapability, capability).resolve(artifact, lease)
 
 
+def resolve_artifact_preview(
+    session: Session,
+    registry: DriverRegistry,
+    store: SecretStore,
+    actor_id: UUID,
+    provider_key: str,
+    artifact: ExternalArtifactRef,
+    *,
+    permitted: bool,
+    offset: int = 0,
+    limit: int,
+) -> ArtifactHandle:
+    """Bounded external-artifact read for the Agent inspect path.
+
+    Requires the driver to realize `ArtifactPreviewCapability`; a provider that
+    cannot bound its read fails closed (`PROVIDER_UNAVAILABLE`) instead of
+    silently materializing the whole artifact.
+    """
+    capability, lease = _prepared_capability(
+        session=session,
+        registry=registry,
+        store=store,
+        actor_id=actor_id,
+        provider_key=provider_key,
+        kind=CapabilityKind.ARTIFACT_RESOLUTION,
+        permitted=permitted,
+    )
+    preview = getattr(capability, "preview", None)
+    if not callable(preview):
+        raise CapabilityError(
+            CapabilityErrorKind.PROVIDER_UNAVAILABLE,
+            "provider does not support bounded artifact preview",
+            provider_key=provider_key,
+            capability_kind=CapabilityKind.ARTIFACT_RESOLUTION,
+        )
+    handle = cast(ArtifactPreviewCapability, capability).preview(
+        artifact, lease, offset=offset, limit=limit
+    )
+    # Defense-in-depth: the preview boundary must never let a misbehaving driver
+    # slide a whole artifact into Agent memory even if it ignores the contract.
+    if handle.data is not None and len(handle.data) > max(limit, 0):
+        raise CapabilityError(
+            CapabilityErrorKind.PROVIDER_UNAVAILABLE,
+            "provider returned more than the requested artifact preview bound",
+            provider_key=provider_key,
+            capability_kind=CapabilityKind.ARTIFACT_RESOLUTION,
+        )
+    return handle
+
+
 __all__ = [
     "get_run",
     "list_artifacts",
     "list_task_kinds",
     "resolve_artifact",
+    "resolve_artifact_preview",
     "submit_compute",
     "task_kind_schema",
 ]

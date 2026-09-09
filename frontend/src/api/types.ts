@@ -60,3 +60,18 @@ export type ComputeRunStatusRead =
 
 export type ComputeArtifactRead =
   paths['/api/projects/{project_id}/runs/{run_id}/artifacts']['post']['responses']['201']['content']['application/json'][number]
+
+// Phase-6 Agent Context & Tools.
+export type ProjectContextRead =
+  paths['/api/projects/{project_id}/context']['post']['responses']['200']['content']['application/json']
+
+export type ToolCatalogRead =
+  paths['/api/projects/{project_id}/agent/tools']['get']['responses']['200']['content']['application/json']
+
+export type ToolDescriptorRead = NonNullable<ToolCatalogRead['tools']>[number]
+
+export type ArtifactInspectRead =
+  paths['/api/projects/{project_id}/artifacts/{artifact_id}/inspect']['get']['responses']['200']['content']['application/json']
+
+export type AgentToolAutonomy = components['schemas']['AgentToolAutonomy']
+export type ToolSource = components['schemas']['ToolSource']

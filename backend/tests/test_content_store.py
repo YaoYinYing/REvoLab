@@ -32,6 +32,14 @@ def test_get_missing_raises_not_found(tmp_path):
         store.get("0" * 64)
 
 
+def test_read_range_is_bounded(tmp_path):
+    store = ContentStore(tmp_path / "content")
+    data = b"0123456789abcdef"
+    result = store.put(data)
+    assert store.read_range(str(result["store_handle"]), offset=0, limit=4) == b"0123"
+    assert store.read_range(str(result["store_handle"]), offset=4, limit=6) == b"456789"
+
+
 def test_stored_bytes_are_immutable_and_integrity_checked(tmp_path):
     store = ContentStore(tmp_path / "content")
     result = store.put(b"real-bytes")

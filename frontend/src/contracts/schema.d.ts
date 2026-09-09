@@ -116,6 +116,40 @@ export interface paths {
         patch: operations["patch_project_api_projects__project_id__patch"];
         trace?: never;
     };
+    "/api/projects/{project_id}/agent/proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Agent Proposal */
+        post: operations["create_agent_proposal_api_projects__project_id__agent_proposals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/agent/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent Tools */
+        get: operations["list_agent_tools_api_projects__project_id__agent_tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/artifacts": {
         parameters: {
             query?: never;
@@ -142,6 +176,23 @@ export interface paths {
         };
         /** Resolve Artifact Content */
         get: operations["resolve_artifact_content_api_projects__project_id__artifacts__artifact_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/artifacts/{artifact_id}/inspect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect Project Artifact */
+        get: operations["inspect_project_artifact_api_projects__project_id__artifacts__artifact_id__inspect_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -182,6 +233,23 @@ export interface paths {
         put?: never;
         /** Create Compute Submission */
         post: operations["create_compute_submission_api_projects__project_id__compute_submissions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Build Project Context */
+        post: operations["build_project_context_api_projects__project_id__context_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -792,10 +860,97 @@ export interface components {
              */
             actor_id: string;
         };
+        /**
+         * AgentToolAutonomy
+         * @description The executable agent-autonomy classification (ADR-0013 authority matrix):
+         *
+         *     - `automatic`: safe reads/proposals the Agent may perform without further
+         *       authorization;
+         *     - `policy`: a typed domain mutation gated by project policy (the current
+         *       policy is `owner`/`member` membership);
+         *     - `explicit_action`: an operation with side effects or truth-promotion that
+         *       is never auto-executed by the Agent loop — it requires an explicit,
+         *       authorized Actor action (e.g. committing a Decision, submitting compute).
+         * @enum {string}
+         */
+        AgentToolAutonomy: "automatic" | "policy" | "explicit_action";
+        /**
+         * ArtifactInspectRead
+         * @description Bounded artifact-preview result. `preview` is a small head slice of the
+         *     resolved bytes, never a copy into Core and never credential material.
+         */
+        ArtifactInspectRead: {
+            /**
+             * Artifact Id
+             * Format: uuid
+             */
+            artifact_id: string;
+            /** Authority */
+            authority: string;
+            /** Binary */
+            binary: boolean;
+            /** Checksum */
+            checksum?: string | null;
+            /** Content Type */
+            content_type?: string | null;
+            /** Native Id */
+            native_id: string;
+            /** Preview */
+            preview: string;
+            /** Preview Size */
+            preview_size: number;
+            /** Size */
+            size?: number | null;
+            /** Truncated */
+            truncated: boolean;
+            /** Version Id */
+            version_id?: string | null;
+        };
         /** Body_upload_artifact_api_projects__project_id__artifacts_post */
         Body_upload_artifact_api_projects__project_id__artifacts_post: {
             /** File */
             file: string;
+        };
+        /**
+         * BudgetReportRead
+         * @description Counts actually assembled for this turn and whether any cap truncated.
+         */
+        BudgetReportRead: {
+            /**
+             * Decision Count
+             * @default 0
+             */
+            decision_count: number;
+            /**
+             * Evidence Count
+             * @default 0
+             */
+            evidence_count: number;
+            /**
+             * Reference Count
+             * @default 0
+             */
+            reference_count: number;
+            /**
+             * Relation Count
+             * @default 0
+             */
+            relation_count: number;
+            /**
+             * Revision Count
+             * @default 0
+             */
+            revision_count: number;
+            /**
+             * Series Count
+             * @default 0
+             */
+            series_count: number;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /**
          * CapabilityAvailability
@@ -967,6 +1122,81 @@ export interface components {
          */
         Confidence: "low" | "med" | "high";
         /**
+         * ContextSelectionCreate
+         * @description Declarative description of what one Agent turn may read.
+         *
+         *     The selection is a bounded, Project-scoped list of resource identities and
+         *     explicit category/budget switches. It contains no query syntax and never
+         *     requests material from another Project; the ContextBuilder validates every
+         *     selected identity against this Project's read lens and fails closed.
+         */
+        ContextSelectionCreate: {
+            /**
+             * Graph Depth
+             * @default 1
+             */
+            graph_depth: number;
+            /**
+             * Include Decisions
+             * @default true
+             */
+            include_decisions: boolean;
+            /**
+             * Include Evidence
+             * @default true
+             */
+            include_evidence: boolean;
+            /**
+             * Include Provider Capabilities
+             * @default false
+             */
+            include_provider_capabilities: boolean;
+            /**
+             * Include References
+             * @default true
+             */
+            include_references: boolean;
+            /**
+             * Include Relations
+             * @default true
+             */
+            include_relations: boolean;
+            /**
+             * Max Decisions
+             * @default 100
+             */
+            max_decisions: number;
+            /**
+             * Max Evidence
+             * @default 100
+             */
+            max_evidence: number;
+            /**
+             * Max References
+             * @default 100
+             */
+            max_references: number;
+            /**
+             * Max Relations
+             * @default 200
+             */
+            max_relations: number;
+            /**
+             * Max Revisions
+             * @default 200
+             */
+            max_revisions: number;
+            /**
+             * Max Series
+             * @default 50
+             */
+            max_series: number;
+            /** Revision Ids */
+            revision_ids?: string[] | null;
+            /** Series Ids */
+            series_ids?: string[] | null;
+        };
+        /**
          * CredentialBindingRead
          * @description Presence/status only — no `secret_ref`, no secret material.
          */
@@ -1063,6 +1293,30 @@ export interface components {
              * @default false
              */
             superseded: boolean;
+            /** Superseded By */
+            superseded_by?: string | null;
+            /** Title */
+            title: string;
+        };
+        /**
+         * DecisionRefRead
+         * @description Contextual Decision ref. A draft is a proposal, never committed truth.
+         */
+        DecisionRefRead: {
+            /**
+             * Decision Id
+             * Format: uuid
+             */
+            decision_id: string;
+            /** Evidence Ids */
+            evidence_ids?: string[];
+            /** Selects */
+            selects?: {
+                [key: string]: unknown;
+            }[];
+            /** Statement */
+            statement?: string | null;
+            status: components["schemas"]["DecisionStatus"];
             /** Superseded By */
             superseded_by?: string | null;
             /** Title */
@@ -1174,6 +1428,36 @@ export interface components {
             role: components["schemas"]["EvidenceRole"];
             /** Scope */
             scope?: string | null;
+            /** Source Id */
+            source_id?: string | null;
+            source_kind?: components["schemas"]["ResourceKind"] | null;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+            target_kind: components["schemas"]["EvidenceTargetKind"];
+        };
+        /**
+         * EvidenceRefRead
+         * @description Contextual Evidence identity + role/polarity, as a typed addressable ref.
+         */
+        EvidenceRefRead: {
+            /**
+             * Evidence Id
+             * Format: uuid
+             */
+            evidence_id: string;
+            /**
+             * Frozen
+             * @default false
+             */
+            frozen: boolean;
+            /** Interpretation */
+            interpretation?: string | null;
+            kind: components["schemas"]["EvidenceKind"];
+            polarity: components["schemas"]["Polarity"];
+            role: components["schemas"]["EvidenceRole"];
             /** Source Id */
             source_id?: string | null;
             source_kind?: components["schemas"]["ResourceKind"] | null;
@@ -1400,6 +1684,41 @@ export interface components {
              */
             source_id: string;
         };
+        /**
+         * ProjectContextRead
+         * @description Immutable per-turn context assembled from durable Project truth. It is a
+         *     value object (never persisted, never a database connection). Provider
+         *     capability summaries are the non-secret `ProviderRead` projection; loaded
+         *     skill identifiers point at `.agents/skills/`, never copying skill content.
+         */
+        ProjectContextRead: {
+            budget: components["schemas"]["BudgetReportRead"];
+            /** Decisions */
+            decisions?: components["schemas"]["DecisionRefRead"][];
+            /** Evidence */
+            evidence?: components["schemas"]["EvidenceRefRead"][];
+            /** Loaded Skill Ids */
+            loaded_skill_ids?: string[];
+            membership_role: components["schemas"]["Role"];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Project Name */
+            project_name: string;
+            /** Provider Capabilities */
+            provider_capabilities?: components["schemas"]["ProviderRead"][];
+            /** References */
+            references?: components["schemas"]["ReferenceHeaderRead"][];
+            /** Relations */
+            relations?: components["schemas"]["EdgeRead"][];
+            /** Revisions */
+            revisions?: components["schemas"]["RevisionRefRead"][];
+            selection: components["schemas"]["ContextSelectionCreate"];
+            /** Series */
+            series?: components["schemas"]["SeriesRefRead"][];
+        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Description */
@@ -1480,6 +1799,41 @@ export interface components {
          * @enum {string}
          */
         ProviderRuntimeHealth: "ready" | "degraded" | "unreachable";
+        /**
+         * ReferenceHeaderRead
+         * @description A reference identity card header — never artifact bytes. The originating
+         *     run is the derived `produced` traversal, never a copied execution state.
+         */
+        ReferenceHeaderRead: {
+            /** Authority */
+            authority?: string | null;
+            /** Checksum */
+            checksum?: string | null;
+            /** Content Type */
+            content_type?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Native Id */
+            native_id?: string | null;
+            /** Originating Run Resource Id */
+            originating_run_resource_id?: string | null;
+            /**
+             * Resource Id
+             * Format: uuid
+             */
+            resource_id: string;
+            resource_kind: components["schemas"]["ResourceKind"];
+            /** Revoked At */
+            revoked_at?: string | null;
+            /** Size */
+            size?: number | null;
+            /** Task Type */
+            task_type?: string | null;
+            /** Title */
+            title?: string | null;
+            /** Version Id */
+            version_id?: string | null;
+        };
         /** ReferenceRead */
         ReferenceRead: {
             /** Authority */
@@ -1593,6 +1947,28 @@ export interface components {
             series_id: string;
         };
         /**
+         * RevisionRefRead
+         * @description One addressable revision ref. The payload is content, not context, and is
+         *     deliberately omitted from the automatic assembly.
+         */
+        RevisionRefRead: {
+            object_type: components["schemas"]["ObjectType"];
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Revision Seq */
+            revision_seq: number;
+            /** Schema Version */
+            schema_version: number;
+            /**
+             * Series Id
+             * Format: uuid
+             */
+            series_id: string;
+        };
+        /**
          * Role
          * @enum {string}
          */
@@ -1654,6 +2030,25 @@ export interface components {
              */
             series_id: string;
         };
+        /**
+         * SeriesRefRead
+         * @description The automatic series skeleton: identity + label + object_type only. No
+         *     placement/organization links (those are ProjectResourceLink UX, not context).
+         */
+        SeriesRefRead: {
+            /** Archived At */
+            archived_at?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name: string;
+            object_type: components["schemas"]["ObjectType"];
+            /**
+             * Series Id
+             * Format: uuid
+             */
+            series_id: string;
+        };
         /** SessionReferenceCreate */
         SessionReferenceCreate: {
             /** Authority */
@@ -1669,6 +2064,58 @@ export interface components {
              */
             superseding_decision_id: string;
         };
+        /**
+         * ToolCatalogRead
+         * @description Project-scoped, Actor-contextual projection of the tools this Actor may
+         *     use. Unavailable provider capabilities are never exposed as executable.
+         */
+        ToolCatalogRead: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Tools */
+            tools?: components["schemas"]["ToolDescriptorRead"][];
+        };
+        /**
+         * ToolDescriptorRead
+         * @description One typed Agent tool. Input/output schemas are derived from the canonical
+         *     domain/OpenAPI/provide schemas (never hand-copied). Nothing here is secret:
+         *     no credentials, no raw SQL/HTTP/shell, no generic writer.
+         */
+        ToolDescriptorRead: {
+            autonomy: components["schemas"]["AgentToolAutonomy"];
+            /** Availability Reason */
+            availability_reason?: string | null;
+            /** Available */
+            available: boolean;
+            capability_kind?: components["schemas"]["CapabilityKind"] | null;
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /** Input Schema */
+            input_schema: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
+            /** Output Schema */
+            output_schema: {
+                [key: string]: unknown;
+            };
+            /** Provider Key */
+            provider_key?: string | null;
+            source: components["schemas"]["ToolSource"];
+        };
+        /**
+         * ToolSource
+         * @description Where a Phase-6 Agent tool descriptor originates (TODO.md section 3):
+         *     a REvoLab typed domain operation or an available Provider capability.
+         * @enum {string}
+         */
+        ToolSource: "domain" | "provider";
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -2045,6 +2492,76 @@ export interface operations {
             };
         };
     };
+    create_agent_proposal_api_projects__project_id__agent_proposals_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecisionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_tools_api_projects__project_id__agent_tools_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ToolCatalogRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     upload_artifact_api_projects__project_id__artifacts_post: {
         parameters: {
             query?: never;
@@ -2118,6 +2635,42 @@ export interface operations {
             };
         };
     };
+    inspect_project_artifact_api_projects__project_id__artifacts__artifact_id__inspect_get: {
+        parameters: {
+            query?: {
+                preview_limit?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactInspectRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     resolve_compute_artifact_api_projects__project_id__artifacts__artifact_id__resolve_get: {
         parameters: {
             query?: never;
@@ -2177,6 +2730,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComputeSubmissionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    build_project_context_api_projects__project_id__context_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ContextSelectionCreate"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectContextRead"];
                 };
             };
             /** @description Validation Error */

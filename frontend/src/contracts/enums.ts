@@ -5,6 +5,7 @@
 export * from './enums.generated'
 
 import {
+  AGENT_TOOL_AUTONOMIES,
   CAPABILITY_AVAILABILITIES,
   CAPABILITY_KINDS,
   CITED_AS,
@@ -17,6 +18,7 @@ import {
   PROJECT_VISIBILITIES,
   RESOURCE_KINDS,
   ROLES,
+  TOOL_SOURCES,
 } from './enums.generated'
 
 function pick<T extends string>(values: readonly T[], preferred: T): T {
@@ -48,5 +50,13 @@ export const RESOURCE_KIND_REVISION = pick(RESOURCE_KINDS, 'scientific_object_re
 // visibility are derived from the generated lists, never re-declared as bare
 // string literals in the view layer.
 export const ROLE_OWNER = pick(ROLES, 'owner')
+export const ROLE_MEMBER = pick(ROLES, 'member')
 export const ROLE_VIEWER = pick(ROLES, 'viewer')
 export const PROJECT_VISIBILITY_PRIVATE = pick(PROJECT_VISIBILITIES, 'private')
+
+// Agent-slice aliases (Phase 6): autonomy classification and tool provenance
+// are derived from the generated lists, never re-declared as bare literals.
+export const AGENT_TOOL_AUTONOMY_AUTOMATIC = pick(AGENT_TOOL_AUTONOMIES, 'automatic')
+export const AGENT_TOOL_AUTONOMY_POLICY = pick(AGENT_TOOL_AUTONOMIES, 'policy')
+export const AGENT_TOOL_AUTONOMY_EXPLICIT_ACTION = pick(AGENT_TOOL_AUTONOMIES, 'explicit_action')
+export const TOOL_SOURCE_PROVIDER = pick(TOOL_SOURCES, 'provider')

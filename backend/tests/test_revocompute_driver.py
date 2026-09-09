@@ -296,6 +296,44 @@ def test_resolve_artifact_returns_bytes() -> None:
     assert resolved.native_id == f"{TASK_ID}:out.pdb"
 
 
+def test_preview_artifact_requests_range_and_returns_bounded_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        _assert_sentinel_only_in_api_key(request)
+        assert request.headers.get("Range") == "bytes=0-7"
+        return httpx.Response(206, content=b"ARTIFACT")
+
+    driver = _driver(handler)
+    cap = driver.capabilities[CapabilityKind.ARTIFACT_RESOLUTION]
+    preview = cap.preview(
+        ExternalArtifactRef(authority="revocompute", native_id=f"{TASK_ID}:out.pdb", version_id=""),
+        _lease(),
+        offset=0,
+        limit=8,
+    )
+    assert preview.data == b"ARTIFACT"
+    assert preview.size is None  # partial read is not full byte identity
+
+
+def test_preview_artifact_fails_closed_on_full_response() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        _assert_sentinel_only_in_api_key(request)
+        assert request.headers.get("Range", "").startswith("bytes=")
+        # Upstream ignored Range: 200 full body instead of 206.
+        return httpx.Response(200, content=b"FULL")
+
+    driver = _driver(handler)
+    cap = driver.capabilities[CapabilityKind.ARTIFACT_RESOLUTION]
+    with pytest.raises(CapabilityError) as excinfo:
+        cap.preview(
+            ExternalArtifactRef(authority="revocompute", native_id=f"{TASK_ID}:out.pdb", version_id=""),
+            _lease(),
+            offset=0,
+            limit=4,
+        )
+    assert excinfo.value.kind is CapabilityErrorKind.PROVIDER_UNAVAILABLE
+    assert SENTINEL not in str(excinfo.value)
+
+
 @pytest.mark.parametrize(
     ("status", "kind"),
     [(401, CapabilityErrorKind.AUTH), (403, CapabilityErrorKind.AUTH),

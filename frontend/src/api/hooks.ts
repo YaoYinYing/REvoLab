@@ -1,4 +1,4 @@
-import { projectApi, type ProjectApi } from './backend'
+import { projectApi, type ContextSelectionCreate, type ProjectApi } from './backend'
 import { apiErrorMessage } from './client'
 import type {
   ComputeArtifactRead,
@@ -10,10 +10,12 @@ import type {
   EvidenceRead,
   ObjectDetailRead,
   ObjectSummaryRead,
+  ProjectContextRead,
   ProjectRead,
   ProviderRead,
   ReferenceRead,
   ResourceKind,
+  ToolCatalogRead,
 } from './types'
 import { useAsync, type AsyncState } from '../hooks/useAsync'
 
@@ -161,5 +163,39 @@ export function useComputeTaskKindSchema(
             .then((res) => value<ComputeTaskKindSchemaRead>(res as ApiResult<ComputeTaskKindSchemaRead>))
         : Promise.resolve(null),
     [actorId, projectId, providerKey, kindId],
+  )
+}
+
+export function useAgentTools(
+  actorId: string | null,
+  projectId: string | null,
+): AsyncState<ToolCatalogRead | null> {
+  return useAsync(
+    () =>
+      actorId && projectId
+        ? projectApi(actorId)
+            .listAgentTools(projectId)
+            .then((res) => value<ToolCatalogRead>(res as ApiResult<ToolCatalogRead>))
+        : Promise.resolve(null),
+    [actorId, projectId],
+  )
+}
+
+export function useProjectContext(
+  actorId: string | null,
+  projectId: string | null,
+  selection: ContextSelectionCreate | null,
+): AsyncState<ProjectContextRead | null> {
+  const selectionKey = JSON.stringify(selection ?? {})
+  return useAsync(
+    () =>
+      actorId && projectId && selection
+        ? projectApi(actorId)
+            .buildContext(projectId, selection)
+            .then((res) => value<ProjectContextRead>(res as ApiResult<ProjectContextRead>))
+        : Promise.resolve(null),
+    // `selectionKey` is a stable structural dependency so an inline object
+    // literal does not retrigger the effect on every render.
+    [actorId, projectId, selectionKey],
   )
 }
