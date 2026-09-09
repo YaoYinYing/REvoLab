@@ -27,18 +27,27 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from revolab import queries, schemas, services
+from revolab.capabilities import CapabilityError, ExternalArtifactRef, InputBinding
 from revolab.content_store import ContentStore
 from revolab.db import get_session
+from revolab.domain import compute as compute_domain
 from revolab.domain import provider as provider_domain
 from revolab.domain.errors import DomainError
 from revolab.drivers import DriverRegistry
-from revolab.enums import CREDENTIAL_KIND_PATTERN, PROVIDER_KEY_PATTERN, ResourceKind
+from revolab.enums import (
+    CREDENTIAL_KIND_PATTERN,
+    PROVIDER_KEY_PATTERN,
+    CapabilityErrorKind,
+    CapabilityKind,
+    ResourceKind,
+)
 from revolab.models import (
     Actor,
     ArtifactReference,
     GlobalProvenanceEdge,
     GlobalResourceRegistry,
     Project,
+    RunReference,
 )
 from revolab.secret_store import SecretStore, default_secret_store
 
@@ -62,6 +71,11 @@ def install_exception_handlers(app: FastAPI) -> None:
     async def _domain(request: Request, exc: DomainError):  # type: ignore[no-untyped-def]
         return _json_error(exc.status_code, str(exc))
 
+    @app.exception_handler(CapabilityError)
+    async def _capability(request: Request, exc: CapabilityError):  # type: ignore[no-untyped-def]
+        status = _CAPABILITY_ERROR_STATUS.get(exc.kind, 502)
+        return _json_error(status, str(exc))
+
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError):  # type: ignore[no-untyped-def]
         # Keep FastAPI's documented `HTTPValidationError` envelope (detail = list
@@ -77,6 +91,19 @@ def install_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(LookupError)
     async def _lookup(request: Request, exc: LookupError):  # type: ignore[no-untyped-def]
         return _json_error(404, str(exc))
+
+
+# Stable HTTP envelope for the Core-owned Capability failure vocabulary. All
+# envelope bodies are `{"detail": <string>}` — the ONLY shape the frontend
+# surfaces — and never carry secret material or provider stack traces.
+_CAPABILITY_ERROR_STATUS = {
+    CapabilityErrorKind.AUTH: 502,
+    CapabilityErrorKind.NOT_FOUND: 404,
+    CapabilityErrorKind.INVALID_PARAM: 422,
+    CapabilityErrorKind.PROVIDER_UNAVAILABLE: 503,
+    CapabilityErrorKind.NETWORK: 502,
+    CapabilityErrorKind.UNKNOWN: 502,
+}
 
 
 def _json_error(status_code: int, detail: str) -> JSONResponse:
@@ -905,6 +932,264 @@ def revoke_credential(
 ) -> Response:
     services.revoke_credential(session, store, actor_id, provider_key, kind)
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# Compute vertical slice (Phase 4): task-kind discovery (schema-as-data),
+# submission, live run state, artifact discovery and resolution. Provider
+# vocabulary (task names, parameter names, status strings) flows as data.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/projects/{project_id}/providers/{provider_key}/compute/task-kinds",
+    response_model=list[schemas.ComputeTaskKindRead],
+)
+def list_compute_task_kinds(
+    project_id: UUID,
+    provider_key: str = Path(pattern=PROVIDER_KEY_PATTERN),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> list[schemas.ComputeTaskKindRead]:
+    services.readable_membership(session, actor_id, project_id)
+    task_kinds = compute_domain.list_task_kinds(
+        session,
+        registry,
+        store,
+        actor_id,
+        provider_key,
+        permitted=services.project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE),
+    )
+    return [schemas.ComputeTaskKindRead(**item.__dict__) for item in task_kinds]
+
+
+@router.get(
+    "/projects/{project_id}/providers/{provider_key}/compute/task-kinds/{kind_id}/schema",
+    response_model=schemas.ComputeTaskKindSchemaRead,
+)
+def get_compute_task_kind_schema(
+    project_id: UUID,
+    provider_key: str = Path(pattern=PROVIDER_KEY_PATTERN),
+    kind_id: str = Path(min_length=1, max_length=300),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.ComputeTaskKindSchemaRead:
+    services.readable_membership(session, actor_id, project_id)
+    schema = compute_domain.task_kind_schema(
+        session,
+        registry,
+        store,
+        actor_id,
+        provider_key,
+        kind_id,
+        permitted=services.project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE),
+    )
+    return schemas.ComputeTaskKindSchemaRead(
+        kind_id=schema.kind_id,
+        display_name=schema.display_name,
+        description=schema.description,
+        parameter_schema=dict(schema.parameter_schema),
+        input_spec=schemas.ComputeInputSpecRead(
+            label=schema.input_spec.label,
+            required=schema.input_spec.required,
+            multiple=schema.input_spec.multiple,
+            max_files=schema.input_spec.max_files,
+            accepted_extensions=list(schema.input_spec.accepted_extensions),
+        ),
+    )
+
+
+@router.post(
+    "/projects/{project_id}/compute/submissions",
+    status_code=201,
+    response_model=schemas.ComputeSubmissionRead,
+)
+def create_compute_submission(
+    project_id: UUID,
+    payload: schemas.ComputeSubmissionCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.ComputeSubmissionRead:
+    bindings = [
+        InputBinding(kind=item.kind, resource_id=item.resource_id, role=item.role)
+        for item in payload.inputs
+    ]
+    result = services.compute_submit(
+        session,
+        registry,
+        store,
+        _content_store(),
+        actor_id,
+        project_id,
+        payload.provider_key,
+        payload.task_kind,
+        bindings,
+        payload.params,
+    )
+    return schemas.ComputeSubmissionRead(
+        run_resource_id=result["run_resource_id"],
+        authority=result["authority"],
+        native_id=result["native_id"],
+        task_type=result["task_type"],
+        consumed_edges=result["consumed_edges"],
+    )
+
+
+@router.get(
+    "/projects/{project_id}/runs/{run_id}/status",
+    response_model=schemas.ComputeRunStatusRead,
+)
+def get_compute_run_status(
+    project_id: UUID,
+    run_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.ComputeRunStatusRead:
+    services.readable_membership(session, actor_id, project_id)
+    run = _require_run(session, project_id, run_id)
+    provider_key = registry.driver_for_authority(run.authority)
+    if provider_key is None:
+        raise HTTPException(status_code=404, detail=f"no provider registered for authority {run.authority!r}")
+    permitted = services.project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE)
+    try:
+        view = compute_domain.get_run(
+            session,
+            registry,
+            store,
+            actor_id,
+            provider_key,
+            run.native_id,
+            permitted=permitted,
+        )
+    except CapabilityError as exc:
+        # A transient provider outage must not invalidate the stored reference:
+        # live resolution is simply unavailable. Authorization and
+        # credential-missing failures raise AuthorizationError and propagate as
+        # their own typed status, never as "unavailable".
+        if exc.kind in {CapabilityErrorKind.PROVIDER_UNAVAILABLE, CapabilityErrorKind.NETWORK}:
+            return schemas.ComputeRunStatusRead(
+                run_resource_id=run_id,
+                authority=run.authority,
+                native_id=run.native_id,
+                available=False,
+                detail=str(exc),
+            )
+        raise
+    return schemas.ComputeRunStatusRead(
+        run_resource_id=run_id,
+        authority=view.authority,
+        native_id=view.native_id,
+        available=True,
+        status=view.status,
+        detail=view.status_detail,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/runs/{run_id}/artifacts",
+    status_code=201,
+    response_model=list[schemas.ComputeArtifactRead],
+)
+def refresh_compute_run_artifacts(
+    project_id: UUID,
+    run_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> list[schemas.ComputeArtifactRead]:
+    services.readable_membership(session, actor_id, project_id)
+    run = _require_run(session, project_id, run_id)
+    provider_key = registry.driver_for_authority(run.authority)
+    if provider_key is None:
+        raise HTTPException(status_code=404, detail=f"no provider registered for authority {run.authority!r}")
+    artifacts = services.compute_refresh_artifacts(
+        session,
+        registry,
+        store,
+        actor_id,
+        project_id,
+        provider_key,
+        run_id,
+        run.native_id,
+    )
+    return [schemas.ComputeArtifactRead(**item) for item in artifacts]
+
+
+@router.get(
+    "/projects/{project_id}/artifacts/{artifact_id}/resolve",
+    responses={
+        200: {
+            "description": "Live external artifact bytes (not implicitly ingested).",
+            "content": {"*/*": {"schema": {"type": "string", "format": "binary"}}},
+        }
+    },
+)
+def resolve_compute_artifact(
+    project_id: UUID,
+    artifact_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> StreamingResponse:
+    """Live, on-demand external artifact access. Resolving bytes is NOT implicit
+    ingestion: nothing is copied into REvoLab ContentStore here."""
+    services.readable_membership(session, actor_id, project_id)
+    artifact = _require_artifact(session, project_id, artifact_id)
+    if artifact.authority == "revolab":
+        raise HTTPException(status_code=404, detail="use the internal artifact content endpoint")
+    provider_key = registry.driver_for_authority(artifact.authority)
+    if provider_key is None:
+        raise HTTPException(
+            status_code=404, detail=f"no provider registered for authority {artifact.authority!r}"
+        )
+    resolved = compute_domain.resolve_artifact(
+        session,
+        registry,
+        store,
+        actor_id,
+        provider_key,
+        ExternalArtifactRef(
+            authority=artifact.authority,
+            native_id=artifact.native_id,
+            version_id=artifact.version_id,
+            content_type=artifact.content_type,
+            size=artifact.size,
+            checksum=artifact.checksum,
+        ),
+        permitted=services.project_policy_permits(
+            session, actor_id, project_id, CapabilityKind.ARTIFACT_RESOLUTION
+        ),
+    )
+    return StreamingResponse(
+        iter([resolved.data or b""]),
+        media_type=artifact.content_type or "application/octet-stream",
+    )
+
+
+def _require_run(session: Session, project_id: UUID, run_id: UUID) -> RunReference:
+    services._require_visible(session, project_id, run_id)
+    run = session.get(RunReference, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run reference not found")
+    return run
+
+
+def _require_artifact(session: Session, project_id: UUID, artifact_id: UUID) -> ArtifactReference:
+    services._require_visible(session, project_id, artifact_id)
+    artifact = session.get(ArtifactReference, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="artifact reference not found")
+    return artifact
 
 
 def _credential_read(binding: object) -> schemas.CredentialBindingRead:

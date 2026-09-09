@@ -24,6 +24,7 @@ class RecordingDriver:
         self.display_name = name.title()
         self.description = None
         self.required_credential_kinds: tuple[str, ...] = ("api_key",)
+        self.authorities: tuple[str, ...] = (name,)
         self.capabilities: Mapping[CapabilityKind, Capability] = {
             CapabilityKind.COMPUTE: RecordingCapability(name)
         }

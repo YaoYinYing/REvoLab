@@ -57,6 +57,9 @@ class Driver(Protocol):
     description: str | None
     required_credential_kinds: tuple[str, ...]  # provider-declared, never Core vocabulary
     capabilities: Mapping[CapabilityKind, Capability]
+    # Durable identity authority namespaces this driver resolves. Explicitly
+    # declared so Core never assumes authority == provider key.
+    authorities: tuple[str, ...]
 
     def start(self, context: DriverContext) -> None: ...
 
@@ -113,6 +116,13 @@ class DriverRegistry:
                     f"capability kind {capability.kind!r} does not match its "
                     f"registry key {kind!r} for driver {driver.name!r}"
                 )
+        for authority in driver.authorities:
+            for existing_name, existing_handle in self._drivers.items():
+                if authority in existing_handle.driver.authorities:
+                    raise ValueError(
+                        f"authority {authority!r} is already resolved by driver "
+                        f"{existing_name!r}; refused for driver {driver.name!r}"
+                    )
         handle = DriverHandle(driver=driver)
         self._drivers[driver.name] = handle
         return handle
@@ -160,6 +170,17 @@ class DriverRegistry:
             capability = handle.driver.capabilities.get(kind)
             if capability is not None:
                 yield name, capability
+
+    def driver_for_authority(self, authority: str) -> str | None:
+        """Resolve the durable external identity authority to the READY driver
+        that declares it. The authority is the identity namespace, never a
+        resolver/provider; a driver opts in via its `authorities` tuple."""
+        for name, handle in self._drivers.items():
+            if handle.state is not DriverState.READY:
+                continue
+            if authority in getattr(handle.driver, "authorities", ()):
+                return name
+        return None
 
     def health(self, name: str) -> ProviderRuntimeHealth:
         """Lazily probe, then cache, per-provider runtime health.

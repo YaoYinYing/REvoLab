@@ -149,6 +149,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/artifacts/{artifact_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve Compute Artifact
+         * @description Live, on-demand external artifact access. Resolving bytes is NOT implicit
+         *     ingestion: nothing is copied into REvoLab ContentStore here.
+         */
+        get: operations["resolve_compute_artifact_api_projects__project_id__artifacts__artifact_id__resolve_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/compute/submissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Compute Submission */
+        post: operations["create_compute_submission_api_projects__project_id__compute_submissions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/decisions": {
         parameters: {
             query?: never;
@@ -428,6 +466,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/providers/{provider_key}/compute/task-kinds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Compute Task Kinds */
+        get: operations["list_compute_task_kinds_api_projects__project_id__providers__provider_key__compute_task_kinds_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/providers/{provider_key}/compute/task-kinds/{kind_id}/schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Compute Task Kind Schema */
+        get: operations["get_compute_task_kind_schema_api_projects__project_id__providers__provider_key__compute_task_kinds__kind_id__schema_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/relations/consumed_as_input_by": {
         parameters: {
             query?: never;
@@ -586,6 +658,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/runs/{run_id}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh Compute Run Artifacts */
+        post: operations["refresh_compute_run_artifacts_api_projects__project_id__runs__run_id__artifacts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/runs/{run_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Compute Run Status */
+        get: operations["get_compute_run_status_api_projects__project_id__runs__run_id__status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/sessions": {
         parameters: {
             query?: never;
@@ -666,6 +772,141 @@ export interface components {
          * @enum {string}
          */
         CitedAs: "supports" | "contradicts" | "context";
+        /** ComputeArtifactRead */
+        ComputeArtifactRead: {
+            /** Authority */
+            authority: string;
+            /** Checksum */
+            checksum?: string | null;
+            /** Content Type */
+            content_type?: string | null;
+            /** Native Id */
+            native_id: string;
+            /**
+             * Resource Id
+             * Format: uuid
+             */
+            resource_id: string;
+            /** Revoked At */
+            revoked_at?: string | null;
+            /** Size */
+            size?: number | null;
+            /** Version Id */
+            version_id?: string | null;
+        };
+        /** ComputeInputCreate */
+        ComputeInputCreate: {
+            kind: components["schemas"]["ResourceKind"];
+            /**
+             * Resource Id
+             * Format: uuid
+             */
+            resource_id: string;
+            /** Role */
+            role?: string | null;
+        };
+        /** ComputeInputSpecRead */
+        ComputeInputSpecRead: {
+            /** Accepted Extensions */
+            accepted_extensions?: string[];
+            /** Label */
+            label?: string | null;
+            /** Max Files */
+            max_files?: number | null;
+            /**
+             * Multiple
+             * @default false
+             */
+            multiple: boolean;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+        };
+        /**
+         * ComputeRunStatusRead
+         * @description Live, on-demand run state. `available=False` is the honest representation
+         *     of a provider that is currently unreachable; the stored RunReference is
+         *     never invalidated by a transient outage.
+         */
+        ComputeRunStatusRead: {
+            /** Authority */
+            authority: string;
+            /** Available */
+            available: boolean;
+            /** Detail */
+            detail?: string | null;
+            /** Native Id */
+            native_id: string;
+            /**
+             * Run Resource Id
+             * Format: uuid
+             */
+            run_resource_id: string;
+            /** Status */
+            status?: string | null;
+        };
+        /** ComputeSubmissionCreate */
+        ComputeSubmissionCreate: {
+            /** Inputs */
+            inputs?: components["schemas"]["ComputeInputCreate"][];
+            /** Params */
+            params?: {
+                [key: string]: unknown;
+            };
+            /** Provider Key */
+            provider_key: string;
+            /** Task Kind */
+            task_kind: string;
+        };
+        /** ComputeSubmissionRead */
+        ComputeSubmissionRead: {
+            /** Authority */
+            authority: string;
+            /** Consumed Edges */
+            consumed_edges?: string[];
+            /** Native Id */
+            native_id: string;
+            /**
+             * Run Resource Id
+             * Format: uuid
+             */
+            run_resource_id: string;
+            /** Task Type */
+            task_type?: string | null;
+        };
+        /**
+         * ComputeTaskKindRead
+         * @description One discoverable task kind. All fields are provider data.
+         */
+        ComputeTaskKindRead: {
+            /** Category */
+            category?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Display Name */
+            display_name: string;
+            /** Kind Id */
+            kind_id: string;
+        };
+        /**
+         * ComputeTaskKindSchemaRead
+         * @description Schema-as-data for one task kind (parameters + input contract).
+         */
+        ComputeTaskKindSchemaRead: {
+            /** Description */
+            description?: string | null;
+            /** Display Name */
+            display_name: string;
+            input_spec: components["schemas"]["ComputeInputSpecRead"];
+            /** Kind Id */
+            kind_id: string;
+            /** Parameter Schema */
+            parameter_schema: {
+                [key: string]: unknown;
+            };
+        };
         /**
          * Confidence
          * @enum {string}
@@ -1722,6 +1963,78 @@ export interface operations {
             };
         };
     };
+    resolve_compute_artifact_api_projects__project_id__artifacts__artifact_id__resolve_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Live external artifact bytes (not implicitly ingested). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_compute_submission_api_projects__project_id__compute_submissions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComputeSubmissionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputeSubmissionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_decisions_api_projects__project_id__decisions_get: {
         parameters: {
             query?: {
@@ -2570,6 +2883,75 @@ export interface operations {
             };
         };
     };
+    list_compute_task_kinds_api_projects__project_id__providers__provider_key__compute_task_kinds_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                provider_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputeTaskKindRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_compute_task_kind_schema_api_projects__project_id__providers__provider_key__compute_task_kinds__kind_id__schema_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                provider_key: string;
+                kind_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputeTaskKindSchemaRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     consumed_as_input_by_api_projects__project_id__relations_consumed_as_input_by_post: {
         parameters: {
             query?: never;
@@ -2903,6 +3285,74 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_compute_run_artifacts_api_projects__project_id__runs__run_id__artifacts_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputeArtifactRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_compute_run_status_api_projects__project_id__runs__run_id__status_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComputeRunStatusRead"];
                 };
             };
             /** @description Validation Error */

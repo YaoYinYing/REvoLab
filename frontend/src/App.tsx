@@ -7,6 +7,7 @@ import {
   FlaskConical,
   Home,
   ListTree,
+  Play,
   Server,
 } from 'lucide-react'
 
@@ -16,6 +17,7 @@ import { useObjectDetail, useProjects } from './api/hooks'
 import { ContextInspector } from './components/ContextInspector'
 import { ErrorBox, Loading } from './components/ui'
 import { ProjectPicker } from './components/ProjectPicker'
+import { ComputeView } from './views/Compute'
 import { DecisionsView } from './views/Decisions'
 import { EvidenceView } from './views/Evidence'
 import { KnowledgeView } from './views/Knowledge'
@@ -25,11 +27,12 @@ import { OverviewView } from './views/Overview'
 import { ProvidersView } from './views/Providers'
 import { RunsAndArtifactsView } from './views/RunsAndArtifacts'
 
-type View = 'overview' | 'objects' | 'object' | 'evidence' | 'runs' | 'decisions' | 'knowledge' | 'providers'
+type View = 'overview' | 'objects' | 'object' | 'evidence' | 'runs' | 'decisions' | 'knowledge' | 'providers' | 'compute'
 
 const NAV = [
   { view: 'overview', label: 'Overview', icon: Home },
   { view: 'objects', label: 'Objects', icon: ListTree },
+  { view: 'compute', label: 'Compute', icon: Play },
   { view: 'evidence', label: 'Evidence', icon: Boxes },
   { view: 'runs', label: 'Runs & Artifacts', icon: Server },
   { view: 'decisions', label: 'Decisions', icon: FileText },
@@ -44,6 +47,7 @@ export function App() {
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
   const [view, setView] = useState<View>('overview')
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null)
+  const [computeRevisionId, setComputeRevisionId] = useState<string | null>(null)
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
@@ -101,6 +105,11 @@ export function App() {
   function openObject(seriesId: string) {
     setSelectedSeriesId(seriesId)
     setView('object')
+  }
+
+  function openCompute(revisionId: string | null) {
+    setComputeRevisionId(revisionId)
+    setView('compute')
   }
 
   if (bootError) {
@@ -235,7 +244,11 @@ export function App() {
               error={objectDetail.error}
               onBack={() => setView('objects')}
               onChanged={() => objectDetail.reload()}
+              onCompute={(revisionId) => openCompute(revisionId)}
             />
+          ) : null}
+          {view === 'compute' ? (
+            <ComputeView actorId={actorId} projectId={projectId} initialRevisionId={computeRevisionId} />
           ) : null}
           {view === 'evidence' ? <EvidenceView actorId={actorId} projectId={projectId} /> : null}
           {view === 'runs' ? <RunsAndArtifactsView actorId={actorId} projectId={projectId} /> : null}

@@ -20,14 +20,17 @@ export type ApiErrorBody = {
 } & Record<string, unknown>
 
 export function apiErrorMessage(error: unknown, response?: Response): string {
+  // Prefer the backend's own string `detail` (domain + capability errors) so
+  // typed failures like CapabilityError surface their sanitized message.
+  if (typeof error === 'object' && error !== null && 'detail' in error) {
+    const detail = (error as ApiErrorBody).detail
+    if (typeof detail === 'string' && detail) return detail
+  }
   if (response) {
     if (response.status === 401) return 'Missing or invalid actor identity.'
     if (response.status === 403) return 'Not authorized for this project.'
     if (response.status === 404) return 'Not found in this project.'
-  }
-  if (typeof error === 'object' && error !== null && 'detail' in error) {
-    const detail = (error as ApiErrorBody).detail
-    if (typeof detail === 'string') return detail
+    if (response.status === 422) return 'Invalid request.'
   }
   return 'Request failed.'
 }

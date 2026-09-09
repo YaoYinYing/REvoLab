@@ -33,6 +33,7 @@ class _Driver:
         self.display_name = name.title()
         self.description = "synthetic driver for availability tests"
         self.required_credential_kinds = kinds
+        self.authorities: tuple[str, ...] = (name,)
         self.capabilities: Mapping[CapabilityKind, Capability] = {
             capability_kind: _Capability(name, capability_kind)
         }

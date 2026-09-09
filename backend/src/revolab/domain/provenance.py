@@ -274,21 +274,20 @@ def add_revision_edge(
 
 
 def add_consumed_input(
-    session: Session, grant: MutationGrant, project_id: UUID, source_id: UUID, target_id: UUID
+    session: Session, actor_id: UUID, project_id: UUID, source_id: UUID, target_id: UUID
 ) -> GlobalProvenanceEdge:
+    """The frozen #5 creator authority (SCIENTIFIC_GRAPH.md): task-submission
+    authority + read(input). Authority is checked at the command boundary;
+    this domain command enforces readability of both endpoints and the endpoint
+    shape, never a source stewardship grant."""
     source_kind = persistence.resource_kind(session, source_id)
-    anchor = (
-        persistence.revision_series_id(session, source_id)
-        if source_kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION
-        else source_id
-    )
-    persistence.validate_grant(session, grant, anchor)
+    persistence.require_visible(session, project_id, source_id)
     target_kind = persistence.resource_kind(session, target_id)
     persistence.validate_edge_shape(RelationType.CONSUMED_AS_INPUT_BY, source_kind, target_kind)
     persistence.require_visible(session, project_id, target_id)
     return persistence.insert_edge(
         session,
-        grant.actor_id,
+        actor_id,
         RelationType.CONSUMED_AS_INPUT_BY,
         source_id,
         source_kind,

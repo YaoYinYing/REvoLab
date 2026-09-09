@@ -5,6 +5,8 @@
 export * from './enums.generated'
 
 import {
+  CAPABILITY_AVAILABILITIES,
+  CAPABILITY_KINDS,
   CITED_AS,
   DECISION_STATUSES,
   EVIDENCE_KINDS,
@@ -34,3 +36,8 @@ export const POLARITY_SUPPORTS = pick(POLARITIES, 'supports')
 export const POLARITY_CONTRADICTS = pick(POLARITIES, 'contradicts')
 export const DECISION_STATUS_DRAFT = pick(DECISION_STATUSES, 'draft')
 export const DECISION_STATUS_COMMITTED = pick(DECISION_STATUSES, 'committed')
+
+// Compute-slice aliases over the generated closed vocabularies.
+export const CAPABILITY_KIND_COMPUTE = pick(CAPABILITY_KINDS, 'compute')
+export const CAPABILITY_AVAILABILITY_AVAILABLE = pick(CAPABILITY_AVAILABILITIES, 'available')
+export const RESOURCE_KIND_REVISION = pick(RESOURCE_KINDS, 'scientific_object_revision')

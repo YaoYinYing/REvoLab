@@ -170,3 +170,17 @@ class CapabilityAvailability(StrEnum):
     CREDENTIAL_MISSING = "credential_missing"
     NOT_AUTHORIZED = "not_authorized"
     PROVIDER_UNAVAILABLE = "provider_unavailable"
+
+
+class CapabilityErrorKind(StrEnum):
+    """Core-owned closed failure vocabulary translated at the provider
+    invocation boundary (TODO.md section 10). Drivers translate their
+    transport/API failures into exactly one of these kinds; they never expose
+    raw HTTP-library exceptions or provider stack traces."""
+
+    AUTH = "auth"
+    NOT_FOUND = "not_found"
+    INVALID_PARAM = "invalid_param"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    NETWORK = "network"
+    UNKNOWN = "unknown"
