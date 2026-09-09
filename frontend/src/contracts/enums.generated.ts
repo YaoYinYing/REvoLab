@@ -32,3 +32,7 @@ export const CAPABILITY_AVAILABILITIES: readonly components['schemas']['Capabili
 export const ROLES: readonly components['schemas']['Role'][] = ["owner","member","viewer"] as const
 
 export const PROJECT_VISIBILITIES: readonly components['schemas']['ProjectVisibility'][] = ["private","shared_with_members"] as const
+
+export const TOOL_SOURCES: readonly components['schemas']['ToolSource'][] = ["domain","provider"] as const
+
+export const AGENT_TOOL_AUTONOMIES: readonly components['schemas']['AgentToolAutonomy'][] = ["automatic","policy","explicit_action"] as const

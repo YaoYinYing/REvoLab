@@ -16,6 +16,7 @@ from revolab.capabilities import LEGAL_COMPUTE_INPUT_KINDS
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
     PROVIDER_KEY_PATTERN,
+    AgentToolAutonomy,
     CapabilityAvailability,
     CapabilityKind,
     CitedAs,
@@ -31,6 +32,7 @@ from revolab.enums import (
     RelationType,
     ResourceKind,
     Role,
+    ToolSource,
 )
 
 # ---------------------------------------------------------------------------
@@ -528,3 +530,195 @@ class ComputeArtifactRead(BaseModel):
     checksum: str | None = None
     version_id: str | None = None
     revoked_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Agent Context (Phase 6) — declarative selection, the assembled per-turn
+# ProjectContext value object, the ToolCatalog projection, artifact inspection,
+# and the minimal proposal surface. The Agent is a consumer, never an owner:
+# these are read/typed-tool projections built from existing domain policy.
+# ---------------------------------------------------------------------------
+
+
+class ContextSelectionCreate(BaseModel):
+    """Declarative description of what one Agent turn may read.
+
+    The selection is a bounded, Project-scoped list of resource identities and
+    explicit category/budget switches. It contains no query syntax and never
+    requests material from another Project; the ContextBuilder validates every
+    selected identity against this Project's read lens and fails closed.
+    """
+
+    series_ids: list[UUID] | None = Field(default=None, max_length=200)
+    revision_ids: list[UUID] | None = Field(default=None, max_length=400)
+    include_relations: bool = True
+    include_evidence: bool = True
+    include_decisions: bool = True
+    include_references: bool = True
+    include_provider_capabilities: bool = False
+    # Bounded graph expansion around the selected identities (0 = selected nodes
+    # only, leaving leaves out of context; higher = incident provenance hops).
+    graph_depth: int = Field(default=1, ge=0, le=3)
+    # Deterministic context budget: hard caps on every assembled category. These
+    # are the only mechanism Phase 6 uses to prevent whole-project prompt dumps.
+    max_series: int = Field(default=50, ge=1, le=200)
+    max_revisions: int = Field(default=200, ge=0, le=1000)
+    max_relations: int = Field(default=200, ge=0, le=1000)
+    max_evidence: int = Field(default=100, ge=0, le=1000)
+    max_decisions: int = Field(default=100, ge=0, le=1000)
+    max_references: int = Field(default=100, ge=0, le=1000)
+
+
+class SeriesRefRead(BaseModel):
+    """The automatic series skeleton: identity + label + object_type only. No
+    placement/organization links (those are ProjectResourceLink UX, not context)."""
+
+    series_id: UUID
+    object_type: ObjectType
+    name: str
+    description: str | None = None
+    archived_at: datetime | None = None
+
+
+class RevisionRefRead(BaseModel):
+    """One addressable revision ref. The payload is content, not context, and is
+    deliberately omitted from the automatic assembly."""
+
+    revision_id: UUID
+    series_id: UUID
+    revision_seq: int
+    object_type: ObjectType
+    schema_version: int
+
+
+class ReferenceHeaderRead(BaseModel):
+    """A reference identity card header — never artifact bytes. The originating
+    run is the derived `produced` traversal, never a copied execution state."""
+
+    resource_id: UUID
+    resource_kind: ResourceKind
+    authority: str | None = None
+    native_id: str | None = None
+    checksum: str | None = None
+    size: int | None = None
+    content_type: str | None = None
+    version_id: str | None = None
+    task_type: str | None = None
+    title: str | None = None
+    created_at: datetime | None = None
+    revoked_at: datetime | None = None
+    originating_run_resource_id: UUID | None = None
+
+
+class EvidenceRefRead(BaseModel):
+    """Contextual Evidence identity + role/polarity, as a typed addressable ref."""
+
+    evidence_id: UUID
+    kind: EvidenceKind
+    role: EvidenceRole
+    source_kind: ResourceKind | None = None
+    source_id: UUID | None = None
+    target_kind: EvidenceTargetKind
+    target_id: UUID
+    polarity: Polarity
+    interpretation: str | None = None
+    frozen: bool = False
+
+
+class DecisionRefRead(BaseModel):
+    """Contextual Decision ref. A draft is a proposal, never committed truth."""
+
+    decision_id: UUID
+    title: str
+    status: DecisionStatus
+    statement: str | None = None
+    superseded_by: UUID | None = None
+    selects: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_ids: list[UUID] = Field(default_factory=list)
+
+
+class BudgetReportRead(BaseModel):
+    """Counts actually assembled for this turn and whether any cap truncated."""
+
+    series_count: int = 0
+    revision_count: int = 0
+    relation_count: int = 0
+    evidence_count: int = 0
+    decision_count: int = 0
+    reference_count: int = 0
+    truncated: bool = False
+
+
+class ProjectContextRead(BaseModel):
+    """Immutable per-turn context assembled from durable Project truth. It is a
+    value object (never persisted, never a database connection). Provider
+    capability summaries are the non-secret `ProviderRead` projection; loaded
+    skill identifiers point at `.agents/skills/`, never copying skill content."""
+
+    project_id: UUID
+    project_name: str
+    membership_role: Role
+    selection: ContextSelectionCreate
+    series: list[SeriesRefRead] = Field(default_factory=list)
+    revisions: list[RevisionRefRead] = Field(default_factory=list)
+    relations: list[EdgeRead] = Field(default_factory=list)
+    evidence: list[EvidenceRefRead] = Field(default_factory=list)
+    decisions: list[DecisionRefRead] = Field(default_factory=list)
+    references: list[ReferenceHeaderRead] = Field(default_factory=list)
+    provider_capabilities: list[ProviderRead] = Field(default_factory=list)
+    loaded_skill_ids: list[str] = Field(default_factory=list)
+    budget: BudgetReportRead
+
+
+class ToolDescriptorRead(BaseModel):
+    """One typed Agent tool. Input/output schemas are derived from the canonical
+    domain/OpenAPI/provide schemas (never hand-copied). Nothing here is secret:
+    no credentials, no raw SQL/HTTP/shell, no generic writer."""
+
+    id: str
+    name: str
+    description: str
+    source: ToolSource
+    provider_key: str | None = None
+    capability_kind: CapabilityKind | None = None
+    autonomy: AgentToolAutonomy
+    available: bool
+    availability_reason: str | None = None
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+
+
+class ToolCatalogRead(BaseModel):
+    """Project-scoped, Actor-contextual projection of the tools this Actor may
+    use. Unavailable provider capabilities are never exposed as executable."""
+
+    project_id: UUID
+    tools: list[ToolDescriptorRead] = Field(default_factory=list)
+
+
+class ArtifactInspectRead(BaseModel):
+    """Bounded artifact-preview result. `preview` is a small head slice of the
+    resolved bytes, never a copy into Core and never credential material."""
+
+    artifact_id: UUID
+    authority: str
+    native_id: str
+    content_type: str | None = None
+    size: int | None = None
+    checksum: str | None = None
+    version_id: str | None = None
+    preview: str
+    preview_size: int
+    truncated: bool
+    binary: bool
+
+
+class AgentProposalCreate(BaseModel):
+    """An Agent's proposed scientific conclusion. Recording it is a typed domain
+    operation that creates a Decision `draft` only — never committed truth."""
+
+    title: str = Field(min_length=1, max_length=200)
+    statement: str = Field(min_length=1)
+    next_actions: list[str] = Field(default_factory=list)
+    cites: list[CitationCreate] = Field(default_factory=list)
+    selects: list[SelectTargetCreate] = Field(default_factory=list)

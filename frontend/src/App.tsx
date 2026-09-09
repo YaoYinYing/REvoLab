@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   BookOpen,
+  Bot,
   Boxes,
   CircleDot,
   FileText,
@@ -19,6 +20,7 @@ import { ContextInspector } from './components/ContextInspector'
 import { ErrorBox, Loading } from './components/ui'
 import { ProjectPicker } from './components/ProjectPicker'
 import { PROJECT_VISIBILITY_PRIVATE } from './contracts/enums'
+import { AgentView } from './views/Agent'
 import { ComputeView } from './views/Compute'
 import { DecisionsView } from './views/Decisions'
 import { EvidenceView } from './views/Evidence'
@@ -34,6 +36,7 @@ type View =
   | 'overview'
   | 'objects'
   | 'object'
+  | 'agent'
   | 'evidence'
   | 'runs'
   | 'decisions'
@@ -45,6 +48,7 @@ type View =
 const NAV = [
   { view: 'overview', label: 'Overview', icon: Home },
   { view: 'objects', label: 'Objects', icon: ListTree },
+  { view: 'agent', label: 'Agent', icon: Bot },
   { view: 'compute', label: 'Compute', icon: Play },
   { view: 'evidence', label: 'Evidence', icon: Boxes },
   { view: 'runs', label: 'Runs & Artifacts', icon: Server },
@@ -263,6 +267,7 @@ export function App() {
               onCompute={(revisionId) => openCompute(revisionId)}
             />
           ) : null}
+          {view === 'agent' ? <AgentView actorId={actorId} projectId={projectId} /> : null}
           {view === 'compute' ? (
             <ComputeView actorId={actorId} projectId={projectId} initialRevisionId={computeRevisionId} />
           ) : null}

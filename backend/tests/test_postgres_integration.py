@@ -18,13 +18,20 @@ from sqlalchemy import Engine, create_engine, inspect, select
 from sqlalchemy.orm import Session
 
 from revolab import services
+from revolab.agent import build_context, propose_selection, record_proposal
 from revolab.domain.provider import (
     build_credential_lease,
     capability_availability,
     credentials_present,
 )
 from revolab.drivers import Capability, DriverContext, DriverRegistry
-from revolab.enums import CapabilityAvailability, CapabilityKind, ProviderRuntimeHealth
+from revolab.enums import (
+    CapabilityAvailability,
+    CapabilityKind,
+    DecisionStatus,
+    ProviderRuntimeHealth,
+)
+from revolab.schemas import ContextSelectionCreate
 from revolab.secret_store import InMemorySecretStore
 
 DATABASE_URL = os.environ.get("REVOLAB_TEST_DATABASE_URL")
@@ -279,3 +286,64 @@ def test_phase5_collaboration_vertical_slice_on_postgres(pg_session: Session) ->
     detail_b_after = queries.object_detail(pg_session, project_b.id, series)
     assert [e["id"] for e in detail_b_after["evidence"]] == [str(b_evidence.id)]
     assert [d["id"] for d in detail_b_after["decisions"]] == [str(b_decision.id)]
+
+
+def test_phase6_agent_vertical_slice_on_postgres(pg_session: Session) -> None:
+    """Phase-6 PostgreSQL slice (TODO.md #16): Actor -> Project -> object/revision
+    -> Evidence -> ContextSelection -> ContextBuilder -> Agent proposal -> Decision
+    draft -> explicit authorized commit -> reloaded committed Knowledge."""
+    from revolab.models import Decision, Evidence, ScientificObjectRevision
+
+    registry = DriverRegistry()
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG-Agent")
+    series_id = services.create_object(
+        pg_session, actor, project.id, "protein", "PG-Variant", payload={"organism": "PG"}
+    )
+    revision = pg_session.scalar(
+        select(ScientificObjectRevision)
+        .where(ScientificObjectRevision.series_id == series_id)
+        .order_by(ScientificObjectRevision.revision_seq)
+        .limit(1)
+    )
+    evidence = services.create_evidence(
+        pg_session,
+        actor,
+        project.id,
+        kind="computation",
+        polarity="supports",
+        source_kind="scientific_object_revision",
+        source_id=revision.revision_id,
+        target_kind="scientific_object_revision",
+        target_id=revision.revision_id,
+    )
+
+    context = build_context(
+        pg_session,
+        actor,
+        project.id,
+        registry,
+        ContextSelectionCreate(series_ids=[series_id], graph_depth=0),
+    )
+    assert context.budget.series_count == 1
+    assert context.budget.revision_count == 1
+    assert {ref.evidence_id for ref in context.evidence} == {evidence.id}
+
+    proposal = propose_selection(context)
+    draft = record_proposal(pg_session, actor, project.id, proposal)
+    assert draft.status == DecisionStatus.DRAFT.value
+    assert draft.committed_at is None
+
+    # Reload: the draft is in the decision log but is NOT committed knowledge.
+    reloaded = pg_session.get(Decision, draft.id)
+    assert reloaded.status == DecisionStatus.DRAFT.value
+    assert pg_session.get(Evidence, evidence.id) is not None
+
+    committed = services.commit_decision(pg_session, actor, project.id, draft.id)
+    assert committed.status == DecisionStatus.COMMITTED.value
+    assert committed.committed_at is not None
+
+    # Final reload: the promotion gate persisted durable committed truth.
+    final = pg_session.get(Decision, draft.id)
+    assert final.status == DecisionStatus.COMMITTED.value

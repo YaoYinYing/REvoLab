@@ -184,3 +184,28 @@ class CapabilityErrorKind(StrEnum):
     PROVIDER_UNAVAILABLE = "provider_unavailable"
     NETWORK = "network"
     UNKNOWN = "unknown"
+
+
+class ToolSource(StrEnum):
+    """Where a Phase-6 Agent tool descriptor originates (TODO.md section 3):
+    a REvoLab typed domain operation or an available Provider capability."""
+
+    DOMAIN = "domain"
+    PROVIDER = "provider"
+
+
+class AgentToolAutonomy(StrEnum):
+    """The executable agent-autonomy classification (ADR-0013 authority matrix):
+
+    - `automatic`: safe reads/proposals the Agent may perform without further
+      authorization;
+    - `policy`: a typed domain mutation gated by project policy (the current
+      policy is `owner`/`member` membership);
+    - `explicit_action`: an operation with side effects or truth-promotion that
+      is never auto-executed by the Agent loop — it requires an explicit,
+      authorized Actor action (e.g. committing a Decision, submitting compute).
+    """
+
+    AUTOMATIC = "automatic"
+    POLICY = "policy"
+    EXPLICIT_ACTION = "explicit_action"
