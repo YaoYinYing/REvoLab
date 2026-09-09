@@ -33,7 +33,7 @@ jobs:
       - run: mypy
       - run: pytest
       - run: cd backend && alembic upgrade head && alembic check
-      - name: Phase-3 PostgreSQL acceptance (credential/availability on migrated schema)
+      - name: PostgreSQL acceptance (migrated schema)
         env:
           REVOLAB_TEST_DATABASE_URL: postgresql+psycopg://revolab:revolab@localhost:5432/revolab
         run: pytest -q backend/tests/test_postgres_integration.py

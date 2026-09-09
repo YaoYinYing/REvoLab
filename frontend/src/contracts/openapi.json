@@ -1787,8 +1787,7 @@
             "type": "string"
           },
           "visibility": {
-            "title": "Visibility",
-            "type": "string"
+            "$ref": "#/components/schemas/ProjectVisibility"
           }
         },
         "required": [

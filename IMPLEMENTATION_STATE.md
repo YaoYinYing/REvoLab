@@ -518,10 +518,12 @@ Two semantics were corrected after the above:
 - **Read-only lens surfaced**: object summary/detail and reference reads now
   carry `read_only` (`queries.read_only`: the Project is not the steward), and
   object reads expose the `preferred_revision_id` pin.
-- **Project-context write-time invariant** is now exercised end-to-end across
-  shared resources: Evidence source/target, Decision draft selects and commit,
-  import, and compute inputs all fail closed on endpoints outside the Project's
-  visible link set (backend-owned, not frontend-only).
+- **Project-context write-time invariant** is exercised end-to-end across shared
+  resources: Evidence source/target, Decision draft selects and commit, and the
+  import command's owning-series visibility (`services.import_revision`) all fail
+  closed on endpoints outside the Project's visible link set; compute inputs were
+  already gated by `resolve_compute_input` visibility (pre-Phase-5,
+  `test_grant_authority.py`). Backend-owned, not frontend-only.
 - **Frontend collaboration surface** (`views/Settings.tsx`, `views/ObjectDetail.tsx`
   share panel): members/roles, add/change/remove (owner-gated), Project
   visibility editing, resource sharing into another Project, a per-object
@@ -536,7 +538,7 @@ Two semantics were corrected after the above:
 ## Verified evidence (Phase 5)
 
 - Backend: `ruff check backend` and strict `mypy` pass (31 source files).
-  `pytest` passes with **203 passed, 4 skipped** (the four skips are the opt-in
+  `pytest` passes with **208 passed, 4 skipped** (the four skips are the opt-in
   PostgreSQL acceptance file). New collaboration regressions cover membership
   roster/role/remove + final-owner protection + duplicate/unknown Actor +
   tombstone denial; visibility create/update/owner-gate/non-member denial;
@@ -545,8 +547,9 @@ Two semantics were corrected after the above:
   visibility-is-not-stewardship for rename/append/archive/external-identity;
   shared-resource interpretation isolation; project-context write-invariant for
   Evidence/Decision; the preferred-revision pin (visibility + series-membership
-  validation); and tombstone survival of the shared resource and the surviving
-  Project's context.
+  validation); tombstone survival of the shared resource and the surviving
+  Project's context; the partially-privileged global-edge projection; and
+  caller-credential isolation for shared artifact resolution.
 - PostgreSQL: `alembic upgrade head` + `alembic check` report **no drift** on a
   clean PostgreSQL 16 database; the Phase-5 collaboration vertical slice passes
   on PostgreSQL (`test_postgres_integration.py`: 4 passed) — two Actors, two
@@ -560,8 +563,51 @@ Two semantics were corrected after the above:
 - Browser (`npm run test:e2e`, Playwright Chromium, workers serialized over one
   database): the Phase-2 smoke and the new collaboration E2E pass — two Actors
   share one revision through the UI, the receiving Project shows the read-only
-  lens and no sibling revision, forms its own Evidence, and the source Project
-  sees none of it.
+  lens and no sibling revision and forms its own Evidence, the source Project
+  sees none of it, and the owner drives visibility + membership-role changes
+  through the Settings surface.
+
+## Independent review (Phase 5)
+
+Five fresh read-only reviewers audited `main...HEAD` (architecture/domain,
+authorization/security, persistence/lifecycle, API/frontend/contracts,
+tests/CI/maintainability). **No P0 findings.** One P1 (untyped
+`ProjectRead.visibility`) and the in-scope P2s were fixed, then the full suite
+was rerun green:
+
+- **P1** — `ProjectRead.visibility` was an unconstrained `string`; now typed as
+  the generated `ProjectVisibility` enum (the frontend cast removed).
+- **P2** — `queries.read_only` misreported a Revision inside its own steward
+  Project (stewardship is per-Series); now resolves a Revision through its
+  owning Series.
+- **P2** — race-path hardening: `add_membership`/`share_resource` map the
+  relevant uniqueness `IntegrityError` to `ConflictError`; the final-required-
+  owner count is checked under `SELECT ... FOR UPDATE`.
+- **P2** — added regressions for immediate-effect role/membership changes
+  (HTTP), caller-credential (never the sharer's) for shared artifact resolution,
+  and partially-privileged global-provenance-edge projection.
+- **P2** — explicit source-of-share policy documented (`services.share_resource`
+  docstring): source authority is the read lens (any readable membership), and a
+  share mints only another read lens — no stewardship/mutation/credential
+  transfer.
+- **P3 (applied)** — `get_evidence`/`get_decision` by-id now exclude archived
+  rows; `ProjectPatch` can clear the description (explicit `null` distinguished
+  from omission); `import_revision` asserts owning-series visibility;
+  frontend role/visibility literals derive from generated `ROLES`/
+  `PROJECT_VISIBILITIES` constants; Objects list renders a read-only badge;
+  dead `SettingsIcon` removed; docs use the canonical `shared_with_members`
+  wire value; CI PostgreSQL step label and PG-module docstring updated;
+  roster-visibility policy recorded in `COLLABORATION_IDENTITY.md`.
+- **Rejected/out-of-scope P3s (with rationale):** `share_into_project` living in
+  `provenance.py` and per-query read-projection scans predate Phase 5 and match
+  accepted ownership (no change); `consumed_as_input_by` raw endpoint and the
+  `GET /actors/{id}` existence oracle are pre-Phase-5 accepted seams
+  (`X-Actor-Id` is not authentication); the two visibility states being
+  observationally equivalent is the accepted "label-not-gate" design (`public`
+  deferred).
+
+No Phase-5 migration was required (no `models.py`/migration change); the change
+remains additive and drift-checked.
 
 ## Known deferrals (explicit, not silently postponed)
 

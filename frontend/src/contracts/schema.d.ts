@@ -1435,8 +1435,7 @@ export interface components {
             id: string;
             /** Name */
             name: string;
-            /** Visibility */
-            visibility: string;
+            visibility: components["schemas"]["ProjectVisibility"];
         };
         /**
          * ProjectVisibility

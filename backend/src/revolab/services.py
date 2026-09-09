@@ -22,6 +22,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from revolab.capabilities import (
@@ -196,6 +197,29 @@ def _requires_actor(session: Session, actor_id: UUID) -> None:
         raise NotFoundError("actor not found")
 
 
+def _is_membership_uniqueness_conflict(exc: IntegrityError) -> bool:
+    """Narrow detection of the project_memberships composite PK uniqueness.
+
+    Unrelated integrity failures are re-raised untouched (same fail-closed
+    posture as `_is_binding_uniqueness_conflict` in the Identity domain)."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(diagnostics.constraint_name == "project_memberships_pkey")
+    message = str(orig)
+    return "UNIQUE constraint failed" in message and "project_memberships" in message
+
+
+def _is_link_uniqueness_conflict(exc: IntegrityError) -> bool:
+    """Narrow detection of the `uq_link_project_resource` unique constraint."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(diagnostics.constraint_name == "uq_link_project_resource")
+    message = str(orig)
+    return "UNIQUE constraint failed" in message and "project_resource_links" in message
+
+
 def _other_owner_count(session: Session, project_id: UUID, excluding_actor_id: UUID) -> int:
     """Count owner memberships in an active Project other than `excluding_actor_id`.
 
@@ -204,11 +228,13 @@ def _other_owner_count(session: Session, project_id: UUID, excluding_actor_id: U
     """
     return len(
         session.scalars(
-            select(ProjectMembership.actor_id).where(
+            select(ProjectMembership.actor_id)
+            .where(
                 ProjectMembership.project_id == project_id,
                 ProjectMembership.role == Role.OWNER.value,
                 ProjectMembership.actor_id != excluding_actor_id,
             )
+            .with_for_update()
         ).all()
     )
 
@@ -247,7 +273,14 @@ def add_membership(
         raise ConflictError("actor is already a member of the project")
     membership = ProjectMembership(project_id=project_id, actor_id=member_actor_id, role=role_value.value)
     session.add(membership)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if _is_membership_uniqueness_conflict(exc):
+            raise ConflictError("actor is already a member of the project") from exc
+        raise
+    session.refresh(membership)
     return membership
 
 
@@ -311,18 +344,24 @@ def update_project(
     name: str | None = None,
     description: str | None = None,
     visibility: str | None = None,
+    clear_description: bool = False,
 ) -> Project:
     """Update Project metadata/visibility. Owner-only.
 
     Phase-5 visibility is an explicit Project-label (`private |
     shared-with-members`); it never gates access on its own — read authorization
     remains membership-derived (`readable_membership`). `public` is deferred.
+
+    `clear_description` distinguishes an explicit `description: null` (clear the
+    field) from an omitted description (leave it unchanged).
     """
     owner_membership(session, actor_id, project_id)
     project = get_project(session, project_id)
     if name is not None:
         project.name = name
-    if description is not None:
+    if clear_description:
+        project.description = None
+    elif description is not None:
         project.description = description
     if visibility is not None:
         try:
@@ -502,6 +541,12 @@ def share_resource(session: Session, actor_id: UUID, target_project_id: UUID, re
         (the source of the share) — possession of a UUID is NOT permission to
         link an arbitrary resource.
 
+    Source-of-share authority is deliberately the read lens itself (any readable
+    membership — owner/member/viewer — in an active Project that links the
+    resource): sharing only mints another read lens in the target Project and
+    never transfers stewardship, mutation authority, or external credentials, so
+    a viewer re-sharing a resource they can already read grants no escalation.
+
     Revision ⇒ series visibility closure (TODO #4): sharing a revision also links
     its owning Series into the TARGET Project (sibling revisions stay private).
     Nothing is copied: the same global `resource_id` becomes visible through the
@@ -517,7 +562,15 @@ def share_resource(session: Session, actor_id: UUID, target_project_id: UUID, re
             "cannot share a resource the actor cannot read through another project"
         )
     provenance.share_into_project(session, target_project_id, resource_id)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if _is_link_uniqueness_conflict(exc):
+            # A concurrent share won the same link insert: the read lens already
+            # exists, so the operation is idempotently satisfied.
+            raise ConflictError("resource is already linked through this project") from exc
+        raise
     return kind
 
 
@@ -828,6 +881,8 @@ def import_revision(
     payload: dict[str, Any],
 ) -> Any:
     grant = can_mutate(session, actor_id, project_id, series_id, purpose="import object")
+    if not persistence.is_visible(session, project_id, series_id):
+        raise AuthorizationError("series must be visible in the project before importing into it")
     return provenance.import_revision(
         session, grant, project_id, series_id, source_id, payload=payload
     )

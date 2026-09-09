@@ -260,6 +260,18 @@ def test_shared_resource_is_read_only_view(session):
     assert queries.read_only(session, b.id, series) is True
 
 
+def test_read_only_resolves_revision_through_owning_series_stewardship(session):
+    _a_owner, _b_owner, a, b, series, r1, _r2 = _two_actor_share(session)
+    # A stewards the series, so its revision is also writable (not read-only)
+    # through A — stewardship is per-series, and the lens resolves a revision
+    # through its owning series.
+    assert queries.read_only(session, a.id, series) is False
+    assert queries.read_only(session, a.id, r1.revision_id) is False
+    # B holds only the read lens for both the series and the shared revision.
+    assert queries.read_only(session, b.id, series) is True
+    assert queries.read_only(session, b.id, r1.revision_id) is True
+
+
 # ---------------------------------------------------------------------------
 # 6. Shared resource is not a shared interpretation
 # ---------------------------------------------------------------------------

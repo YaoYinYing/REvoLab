@@ -62,10 +62,15 @@ ExternalProviderCredentialBinding  a per-(Actor, provider, credential kind) non-
   still explicit.
 - **Access is inherited from Project membership** — one authorization vector.
   Per-object ACL is out of scope.
+- **Membership roster visibility (Phase 5):** the Project membership roster
+  (actor UUIDs + roles) is visible to any readable member — owner, member, or
+  viewer. It is a Project-scoped read mediated by `readable_membership`, never a
+  globally addressable endpoint; membership is the visibility vector, not a
+  separate roster grant.
 - **Sharing happens at the Project level** (add a member, or a read link for another
   Project). Individual objects/artifacts are not shared outside the Project in this
   slice.
-- **Visibility:** `private` (default) | `shared-with-members`. `public` is deferred.
+- **Visibility:** `private` (default) | `shared_with_members`. `public` is deferred.
 - **Avoid embedding REvoCompute's user model:** REvoLab's Actor is an opaque UUID
   known to Core; external identity is `(authority, native_id)`, and credentials are
   Actor-scoped (`ExternalProviderCredentialBinding`). Core never imports or duplicates

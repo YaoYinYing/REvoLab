@@ -1,4 +1,5 @@
-"""PostgreSQL acceptance for Phase 3 (migration + credential/availability slice).
+"""PostgreSQL acceptance for the migrated schema (Phase 3-5 vertical slices:
+credential/availability, REvoCompute, and collaboration/sharing).
 
 Runs only when `REVOLAB_TEST_DATABASE_URL` points at a migrated PostgreSQL
 database (CI runs `alembic upgrade head && alembic check` first, then this file).

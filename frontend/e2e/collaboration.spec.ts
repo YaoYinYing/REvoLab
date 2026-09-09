@@ -109,6 +109,15 @@ test('two actors share one resource with isolated interpretations', async ({ bro
   await pageB.getByRole('button', { name: 'Record evidence' }).click()
   await expect(pageB.getByText(bClaim)).toBeVisible()
 
+  // Settings: owner B drives visibility and membership mutations through the UI.
+  await pageB.getByRole('navigation', { name: 'Project navigation' }).getByRole('button', { name: 'Settings' }).click()
+  await expect(pageB.getByRole('heading', { name: 'Project settings', level: 1 })).toBeVisible()
+  await pageB.getByLabel('Visibility').selectOption('shared_with_members')
+  await pageB.getByRole('button', { name: 'Save project' }).click()
+  const aRow = pageB.locator('.member-row', { hasText: actorA.slice(0, 8) })
+  await aRow.getByRole('combobox').selectOption('viewer')
+  await expect(aRow.getByRole('combobox')).toHaveValue('viewer')
+
   const pageA2 = await pageForActor(browser, actorA)
   await pageA2.goto('/')
   await pageA2.getByLabel('Active project').selectOption(projectA)

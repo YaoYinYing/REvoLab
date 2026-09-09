@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Settings2, Shield, Users } from 'lucide-react'
+import { Shield, Users } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
 import { apiErrorMessage } from '../api/client'
 import type { MembershipRead, ProjectRead, ProjectVisibility, Role } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, EnumSelect, ErrorBox, Field, Loading, Section } from '../components/ui'
-import { PROJECT_VISIBILITIES, ROLES } from '../contracts/enums'
+import { PROJECT_VISIBILITIES, ROLE_OWNER, ROLE_VIEWER, ROLES } from '../contracts/enums'
 
 function loadMembers(actorId: string, projectId: string): Promise<MembershipRead[]> {
   return projectApi(actorId).listMembers(projectId).then((res) => {
@@ -35,7 +35,7 @@ export function SettingsView({
   const [formError, setFormError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [newActorId, setNewActorId] = useState('')
-  const [newRole, setNewRole] = useState<Role>('viewer')
+  const [newRole, setNewRole] = useState<Role>(ROLE_VIEWER)
 
   const refresh = useCallback(() => {
     setMembersError(null)
@@ -48,7 +48,7 @@ export function SettingsView({
     if (!project) return
     setName(project.name)
     setDescription(project.description ?? '')
-    setVisibility(project.visibility as ProjectVisibility)
+    setVisibility(project.visibility)
   }, [project])
 
   useEffect(() => {
@@ -58,7 +58,7 @@ export function SettingsView({
   if (!project) return <Loading label="Loading project settings…" />
 
   const myMembership = members?.find((membership) => membership.actor_id === actorId) ?? null
-  const isOwner = myMembership?.role === 'owner'
+  const isOwner = myMembership?.role === ROLE_OWNER
 
   async function saveProject(event: React.FormEvent) {
     event.preventDefault()
@@ -161,7 +161,7 @@ export function SettingsView({
                   />
                   <Button
                     kind="quiet"
-                    disabled={!isOwner || isSelf || membership.role === 'owner'}
+                    disabled={!isOwner || isSelf || membership.role === ROLE_OWNER}
                     onClick={() => removeMember(membership.actor_id)}
                   >
                     Remove
@@ -202,5 +202,3 @@ export function SettingsView({
     </div>
   )
 }
-
-export const SettingsIcon = Settings2

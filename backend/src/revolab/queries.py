@@ -87,8 +87,24 @@ def preferred_revision_id(session: Session, project_id: UUID, series_id: UUID) -
 
 def read_only(session: Session, project_id: UUID, resource_id: UUID) -> bool:
     """Whether `resource_id` is read-only through `project_id`: the Project holds
-    the read lens but is NOT its steward (visibility is not stewardship)."""
-    stewardship = session.get(ResourceStewardship, resource_id)
+    the read lens but is NOT its steward (visibility is not stewardship).
+
+    Stewardship is granted per-Series (and to reference rows on creation); a
+    Revision never carries its own stewardship row, so a Revision's lens is
+    resolved through its owning Series. This keeps the read-only indication
+    truthful for every surface that emits it.
+    """
+    registry = session.get(GlobalResourceRegistry, resource_id)
+    if registry is None:
+        raise NotFoundError("unknown global resource")
+    kind = ResourceKind(registry.resource_kind)
+    stewardship_key = resource_id
+    if kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        revision = session.get(ScientificObjectRevision, resource_id)
+        if revision is None:
+            raise NotFoundError("revision not found")
+        stewardship_key = revision.series_id
+    stewardship = session.get(ResourceStewardship, stewardship_key)
     return stewardship is None or stewardship.steward_project_id != project_id
 
 

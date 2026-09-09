@@ -58,7 +58,7 @@ class ProjectRead(BaseModel):
     id: UUID
     name: str
     description: str | None = None
-    visibility: str
+    visibility: ProjectVisibility
     created_at: datetime
     deleted_at: datetime | None = None
 

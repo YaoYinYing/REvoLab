@@ -193,6 +193,7 @@ def patch_project(
         name=payload.name,
         description=payload.description,
         visibility=payload.visibility.value if payload.visibility is not None else None,
+        clear_description=("description" in payload.model_fields_set and payload.description is None),
     )
     return _project_read(project)
 
@@ -791,7 +792,7 @@ def get_evidence(
     from revolab.models import Evidence
 
     evidence = session.get(Evidence, evidence_id)
-    if evidence is None or evidence.project_id != project_id:
+    if evidence is None or evidence.project_id != project_id or evidence.archived_at is not None:
         raise HTTPException(status_code=404, detail="evidence not found in project")
     return queries.evidence_summary(
         evidence, frozen=queries._evidence_frozen(session, evidence_id)
@@ -865,7 +866,7 @@ def get_decision(
     from revolab.models import Decision
 
     decision = session.get(Decision, decision_id)
-    if decision is None or decision.project_id != project_id:
+    if decision is None or decision.project_id != project_id or decision.archived_at is not None:
         raise HTTPException(status_code=404, detail="decision not found in project")
     return queries.decision_summary(session, decision)
 

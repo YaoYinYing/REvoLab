@@ -229,3 +229,54 @@ def test_preferred_revision_endpoint(client):
         ]
         is None
     )
+
+
+def test_role_and_membership_changes_take_effect_immediately(client):
+    a = _actor(client)
+    b = _actor(client)
+    project = _project(client, a, "P")
+    pid = project["id"]
+    client.post(
+        f"/api/projects/{pid}/members",
+        json={"actor_id": b, "role": "member"},
+        headers=_headers(a),
+    )
+    # b (member) can read.
+    assert client.get(f"/api/projects/{pid}", headers=_headers(b)).status_code == 200
+
+    # Demote b to viewer: the very next write is denied (no cached auth truth).
+    assert (
+        client.patch(
+            f"/api/projects/{pid}/members/{b}",
+            json={"role": "viewer"},
+            headers=_headers(a),
+        ).status_code
+        == 200
+    )
+    created = client.post(
+        f"/api/projects/{pid}/objects",
+        json={"object_type": "protein", "name": "X", "payload": {"organism": "T"}},
+        headers=_headers(b),
+    )
+    assert created.status_code == 403
+    # Viewer can still read.
+    assert client.get(f"/api/projects/{pid}", headers=_headers(b)).status_code == 200
+
+    # Remove b: the very next read is denied.
+    assert client.delete(f"/api/projects/{pid}/members/{b}", headers=_headers(a)).status_code == 204
+    assert client.get(f"/api/projects/{pid}", headers=_headers(b)).status_code == 403
+
+
+def test_project_description_can_be_cleared(client):
+    a = _actor(client)
+    project = client.post(
+        "/api/projects",
+        json={"name": "P", "description": "initial"},
+        headers=_headers(a),
+    ).json()
+    pid = project["id"]
+    cleared = client.patch(
+        f"/api/projects/{pid}", json={"description": None}, headers=_headers(a)
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["description"] is None

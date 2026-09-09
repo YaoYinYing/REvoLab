@@ -18,6 +18,7 @@ import { useObjectDetail, useProjects } from './api/hooks'
 import { ContextInspector } from './components/ContextInspector'
 import { ErrorBox, Loading } from './components/ui'
 import { ProjectPicker } from './components/ProjectPicker'
+import { PROJECT_VISIBILITY_PRIVATE } from './contracts/enums'
 import { ComputeView } from './views/Compute'
 import { DecisionsView } from './views/Decisions'
 import { EvidenceView } from './views/Evidence'
@@ -88,7 +89,7 @@ export function App() {
 
   async function createProject(name: string, description: string | null) {
     if (!actorId) return
-    const res = await projectApi(actorId).createProject({ name, description, visibility: 'private' })
+    const res = await projectApi(actorId).createProject({ name, description, visibility: PROJECT_VISIBILITY_PRIVATE })
     if (res.error || !res.data) return
     projects.reload()
     setActiveProjectId(res.data.id)
@@ -100,7 +101,7 @@ export function App() {
     const res = await projectApi(actorId).createProject({
       name: projectName,
       description: projectDescription || null,
-      visibility: 'private',
+      visibility: PROJECT_VISIBILITY_PRIVATE,
     })
     if (res.error || !res.data) return
     projects.reload()

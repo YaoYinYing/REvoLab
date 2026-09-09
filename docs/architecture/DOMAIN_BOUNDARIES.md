@@ -33,7 +33,7 @@ External systems own their capabilities and execution truth.
 - **Purpose:** the durable workspace boundary that scopes context, membership, and
   access.
 - **Owned concepts:** Project record, project-level annotation, project visibility
-  (private / shared-with-members), and **`ProjectResourceLink`** — the Project-owned
+  (`private` / `shared_with_members`), and **`ProjectResourceLink`** — the Project-owned
   context link that binds global resources into this Project's context (the visibility
   lens, see ADR-0008) **and carries the project-local folder/container placement** of
   those resources. Project **participation is expressed through the
