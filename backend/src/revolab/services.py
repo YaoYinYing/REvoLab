@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from revolab.content_store import ContentStore
 from revolab.domain import knowledge, persistence, provenance, scientific_object
-from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundError
+from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from revolab.domain.identity import (
     add_credential_binding,
     binding_for,
@@ -38,7 +38,8 @@ from revolab.domain.identity import (
 from revolab.domain.identity import (
     readable_membership as _readable_membership,
 )
-from revolab.enums import RelationType, ResourceKind, Role
+from revolab.drivers import DriverRegistry
+from revolab.enums import CapabilityKind, RelationType, ResourceKind, Role
 from revolab.models import (
     Actor,
     Decision,
@@ -69,6 +70,55 @@ def _require_visible(session: Session, project_id: UUID, resource_id: UUID) -> N
 
 def _is_frozen(session: Session, evidence_id: UUID) -> bool:
     return provenance.is_frozen(session, evidence_id)
+
+
+# ---------------------------------------------------------------------------
+# Application policy + credential provider-kind validation
+# ---------------------------------------------------------------------------
+
+# Capability kinds whose "requested operation" is a read/projection. Action
+# capabilities (compute submission, design export, interactive handoff) require a
+# mutation-capable membership. This is the Phase-3 minimal policy, not an RBAC
+# engine: the ONLY authorization truth remains Phase-1 ProjectMembership roles.
+READ_ONLY_CAPABILITY_KINDS = frozenset(
+    {CapabilityKind.SEARCH, CapabilityKind.ARTIFACT_RESOLUTION}
+)
+
+
+def project_policy_permits(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    capability_kind: CapabilityKind,
+) -> bool:
+    """Application policy: does the Actor's Project membership permit invoking
+    this capability kind? Read-only kinds accept any readable membership; action
+    kinds require owner/member (mutation-capable). Derived per query, never
+    stored; a non-permitting membership returns False, not an exception."""
+    try:
+        if capability_kind in READ_ONLY_CAPABILITY_KINDS:
+            _readable_membership(session, actor_id, project_id)
+        else:
+            mutation_capable_membership(session, actor_id, project_id)
+    except AuthorizationError:
+        return False
+    return True
+
+
+def _require_provider_kind(
+    registry: DriverRegistry, provider_key: str, kind: str
+) -> None:
+    """A credential binding names a real Provider and one of its declared
+    required credential kinds (provider identity is registry truth, not an
+    arbitrary key/value vault)."""
+    try:
+        handle = registry.get(provider_key)
+    except LookupError as exc:  # LookupError -> NotFoundError at the boundary
+        raise NotFoundError(f"unknown provider: {provider_key}") from exc
+    if kind not in handle.driver.required_credential_kinds:
+        raise ValidationError(
+            f"credential kind {kind!r} is not required by provider {provider_key!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -688,14 +738,17 @@ def _require_actor(session: Session, actor_id: UUID) -> None:
 def provision_credential(
     session: Session,
     store: SecretStore,
+    registry: DriverRegistry,
     actor_id: UUID,
     provider_key: str,
     kind: str,
     secret_value: str,
 ) -> ExternalProviderCredentialBinding:
     """Create an Actor-scoped binding. The Secret store owns the material; Core
-    persists only the resulting binding + opaque reference."""
+    persists only the resulting binding + opaque reference. `provider_key` must
+    name a registered Provider and `kind` one of its required credential kinds."""
     _require_actor(session, actor_id)
+    _require_provider_kind(registry, provider_key, kind)
     secret_ref = store.put(secret_value)
     try:
         binding = add_credential_binding(
@@ -713,6 +766,7 @@ def provision_credential(
 def rotate_credential(
     session: Session,
     store: SecretStore,
+    registry: DriverRegistry,
     actor_id: UUID,
     provider_key: str,
     kind: str,
@@ -720,6 +774,7 @@ def rotate_credential(
 ) -> ExternalProviderCredentialBinding:
     """Explicit replacement/rotation: a new `secret_ref` supersedes the old one."""
     _require_actor(session, actor_id)
+    _require_provider_kind(registry, provider_key, kind)
     binding = binding_for(session, actor_id, provider_key, kind)
     if binding is None:
         raise NotFoundError("credential binding not found")

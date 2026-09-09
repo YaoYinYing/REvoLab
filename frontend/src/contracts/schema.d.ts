@@ -1106,13 +1106,24 @@ export interface components {
             visibility: string;
         };
         /**
+         * ProviderCapabilityRead
+         * @description One realized capability of a provider, with the calling Actor's derived
+         *     availability for that specific capability (the policy component of the
+         *     availability formula is operation-specific, so availability lives here).
+         */
+        ProviderCapabilityRead: {
+            availability: components["schemas"]["CapabilityAvailability"];
+            kind: components["schemas"]["CapabilityKind"];
+        };
+        /**
          * ProviderRead
          * @description One non-secret Provider Catalog entry as seen by the calling Actor in a
          *     Project. Never contains secret material, `secret_ref`, another Actor's
          *     bindings, host env, or credential-store implementation detail.
          */
         ProviderRead: {
-            availability: components["schemas"]["CapabilityAvailability"];
+            /** Capabilities */
+            capabilities?: components["schemas"]["ProviderCapabilityRead"][];
             /** Credential Presence */
             credential_presence?: components["schemas"]["CredentialPresenceRead"][];
             /** Description */
@@ -1122,8 +1133,6 @@ export interface components {
             key: string;
             /** Name */
             name: string;
-            /** Realized Capability Kinds */
-            realized_capability_kinds?: components["schemas"]["CapabilityKind"][];
             /** Required Credential Kinds */
             required_credential_kinds?: string[];
         };

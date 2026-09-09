@@ -11,13 +11,12 @@ const populated: ProviderRead[] = [
     name: 'Stub Provider',
     description: 'Synthetic in-process driver for acceptance.',
     required_credential_kinds: ['api_key', 'org_token'],
-    realized_capability_kinds: ['compute'],
     health: 'ready',
     credential_presence: [
       { kind: 'api_key', present: true },
       { kind: 'org_token', present: false },
     ],
-    availability: 'credential_missing',
+    capabilities: [{ kind: 'compute', availability: 'credential_missing' }],
   },
 ]
 

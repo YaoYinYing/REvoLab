@@ -4,60 +4,63 @@ This module composes three facts the ADRs keep distinct:
 
 - Provider runtime health — actor-independent, driver-level (`DriverRegistry`).
 - Credential presence — actor-scoped, derived over the Identity-owned binding set.
-- Project policy — the Phase-1 `ProjectMembership` / authority model.
+- Project policy — the authorization result for a specific capability/operation,
+  computed by the application policy layer and passed in, not re-derived here.
 
-`CapabilityAvailability(actor, project)` is a derived query, never stored
-(ADR-0012 / TODO.md section 5). Building the ephemeral `CredentialLease` is the
-provider invocation layer: the lease never leaves this layer and is never
+`CapabilityAvailability(actor, project, capability)` is a derived query, never
+stored (ADR-0012 / TODO.md section 5). Building the ephemeral `CredentialLease`
+is the provider invocation layer: the lease never leaves this layer and is never
 returned through the normal API surface (TODO.md section 3).
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from revolab.credentials import CredentialLease
-from revolab.domain.errors import AuthorizationError
-from revolab.domain.identity import (
-    credential_bindings,
-    has_credential,
-    mutation_capable_membership,
-)
+from revolab.domain.identity import credential_bindings, has_credential
 from revolab.drivers import DriverRegistry, DriverState
-from revolab.enums import CapabilityAvailability, ProviderRuntimeHealth
+from revolab.enums import CapabilityAvailability, CapabilityKind, ProviderRuntimeHealth
 from revolab.secret_store import SecretMissingError, SecretRef, SecretStore
 
 
-def capability_availability(
+def credentials_present(
     session: Session,
     actor_id: UUID,
-    project_id: UUID,
-    *,
     provider_key: str,
-    health: ProviderRuntimeHealth,
     required_kinds: tuple[str, ...],
-) -> CapabilityAvailability:
-    """Derived, actor-contextual projection of whether the actor may call a
-    provider's capability in this project. Never persisted; recomputed per query.
+) -> bool:
+    """All required credential kinds are bound for the Actor (derived query)."""
+    return all(
+        has_credential(session, actor_id, provider_key, kind) for kind in required_kinds
+    )
 
-    Precedence: health first (PROVIDER_UNAVAILABLE), then project policy
-    (NOT_AUTHORIZED), then credential presence (CREDENTIAL_MISSING). This keeps
-    "unauthorized" authoritative even when a credentialed actor is also
-    unauthorized, and never reports credential state for actors with no project
-    access.
+
+def capability_availability(
+    *,
+    health: ProviderRuntimeHealth,
+    credentials_present: bool,
+    permitted: bool,
+) -> CapabilityAvailability:
+    """Derived projection for ONE capability kind in one Project for one Actor.
+
+    Pure composition of the three distinct inputs; it derives neither health,
+    credential presence, nor authorization itself. Precedence is deliberate:
+    provider health, then project policy (NOT_AUTHORIZED), then credential
+    presence (CREDENTIAL_MISSING) — an actor without project access is never
+    described as merely missing a credential, and credential state is never
+    reported for actors with no project access.
     """
     if health != ProviderRuntimeHealth.READY:
         return CapabilityAvailability.PROVIDER_UNAVAILABLE
-    try:
-        mutation_capable_membership(session, actor_id, project_id)
-    except AuthorizationError:
+    if not permitted:
         return CapabilityAvailability.NOT_AUTHORIZED
-    for kind in required_kinds:
-        if not has_credential(session, actor_id, provider_key, kind):
-            return CapabilityAvailability.CREDENTIAL_MISSING
+    if not credentials_present:
+        return CapabilityAvailability.CREDENTIAL_MISSING
     return CapabilityAvailability.AVAILABLE
 
 
@@ -93,14 +96,15 @@ def build_credential_lease(
 def catalog_entries(
     session: Session,
     actor_id: UUID,
-    project_id: UUID,
     registry: DriverRegistry,
+    policy_permits: Callable[[CapabilityKind], bool],
 ) -> list[dict[str, Any]]:
     """Project-scoped, Actor-contextual read-only Provider Catalog.
 
     Exposes only non-secret information. Secret material and `secret_ref` never
     appear in these entries; another Actor's bindings are never surfaced — only
-    the calling Actor's own per-kind presence.
+    the calling Actor's own per-kind presence. Availability is reported
+    per-capability because the policy component is operation-specific.
     """
     entries: list[dict[str, Any]] = []
     for key in registry.names():
@@ -114,27 +118,30 @@ def catalog_entries(
         driver = handle.driver
         required = list(driver.required_credential_kinds)
         health = registry.health(key)
-        realized = [kind for kind in sorted(driver.capabilities, key=lambda k: k.value)]
+        present = credentials_present(session, actor_id, key, tuple(required))
+        capabilities = [
+            {
+                "kind": kind,
+                "availability": capability_availability(
+                    health=health,
+                    credentials_present=present,
+                    permitted=policy_permits(kind),
+                ),
+            }
+            for kind in sorted(driver.capabilities, key=lambda k: k.value)
+        ]
         entries.append(
             {
                 "key": key,
                 "name": driver.display_name,
                 "description": driver.description,
                 "required_credential_kinds": required,
-                "realized_capability_kinds": realized,
                 "health": health,
                 "credential_presence": [
                     {"kind": kind, "present": has_credential(session, actor_id, key, kind)}
                     for kind in required
                 ],
-                "availability": capability_availability(
-                    session,
-                    actor_id,
-                    project_id,
-                    provider_key=key,
-                    health=health,
-                    required_kinds=tuple(required),
-                ),
+                "capabilities": capabilities,
             }
         )
     return entries

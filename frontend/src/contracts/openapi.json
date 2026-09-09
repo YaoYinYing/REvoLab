@@ -1329,11 +1329,32 @@
         "title": "ProjectRead",
         "type": "object"
       },
-      "ProviderRead": {
-        "description": "One non-secret Provider Catalog entry as seen by the calling Actor in a\nProject. Never contains secret material, `secret_ref`, another Actor's\nbindings, host env, or credential-store implementation detail.",
+      "ProviderCapabilityRead": {
+        "description": "One realized capability of a provider, with the calling Actor's derived\navailability for that specific capability (the policy component of the\navailability formula is operation-specific, so availability lives here).",
         "properties": {
           "availability": {
             "$ref": "#/components/schemas/CapabilityAvailability"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CapabilityKind"
+          }
+        },
+        "required": [
+          "kind",
+          "availability"
+        ],
+        "title": "ProviderCapabilityRead",
+        "type": "object"
+      },
+      "ProviderRead": {
+        "description": "One non-secret Provider Catalog entry as seen by the calling Actor in a\nProject. Never contains secret material, `secret_ref`, another Actor's\nbindings, host env, or credential-store implementation detail.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderCapabilityRead"
+            },
+            "title": "Capabilities",
+            "type": "array"
           },
           "credential_presence": {
             "items": {
@@ -1364,13 +1385,6 @@
             "title": "Name",
             "type": "string"
           },
-          "realized_capability_kinds": {
-            "items": {
-              "$ref": "#/components/schemas/CapabilityKind"
-            },
-            "title": "Realized Capability Kinds",
-            "type": "array"
-          },
           "required_credential_kinds": {
             "items": {
               "type": "string"
@@ -1382,8 +1396,7 @@
         "required": [
           "key",
           "name",
-          "health",
-          "availability"
+          "health"
         ],
         "title": "ProviderRead",
         "type": "object"

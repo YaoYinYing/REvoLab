@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from revolab import services
-from revolab.domain.provider import capability_availability
+from revolab.domain.provider import capability_availability, credentials_present
 from revolab.drivers import Capability, DriverContext, DriverRegistry
 from revolab.enums import CapabilityAvailability, CapabilityKind, ProviderRuntimeHealth
 
@@ -21,29 +21,62 @@ def _member(session, owner_id, project_id, actor_id, role: str = "member") -> No
     services.add_membership(session, owner_id, project_id, actor_id, role)
 
 
+class _Capability:
+    def __init__(self, provider_key: str, kind: CapabilityKind) -> None:
+        self.provider_key = provider_key
+        self.kind = kind
+
+
+class _Driver:
+    def __init__(self, name: str, kinds: tuple[str, ...], capability_kind: CapabilityKind = CapabilityKind.COMPUTE) -> None:
+        self.name = name
+        self.display_name = name.title()
+        self.description = "synthetic driver for availability tests"
+        self.required_credential_kinds = kinds
+        self.capabilities: Mapping[CapabilityKind, Capability] = {
+            capability_kind: _Capability(name, capability_kind)
+        }
+
+    def start(self, context: DriverContext) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def probe_health(self) -> ProviderRuntimeHealth:
+        return ProviderRuntimeHealth.READY
+
+
+def _credential_registry(provider_key: str = "fakeprov") -> DriverRegistry:
+    registry = DriverRegistry()
+    registry.register(_Driver(provider_key, ("api_key",)))
+    registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
+    return registry
+
+
 def _availability(
     session,
-    actor_id: str,
-    project_id: str,
+    actor_id,
+    project_id,
     *,
     provider_key: str = "fakeprov",
     health: ProviderRuntimeHealth = ProviderRuntimeHealth.READY,
     required: tuple[str, ...] = ("api_key",),
+    capability_kind: CapabilityKind = CapabilityKind.COMPUTE,
 ) -> CapabilityAvailability:
     return capability_availability(
-        session,
-        actor_id,
-        project_id,
-        provider_key=provider_key,
         health=health,
-        required_kinds=required,
+        credentials_present=credentials_present(session, actor_id, provider_key, required),
+        permitted=services.project_policy_permits(session, actor_id, project_id, capability_kind),
     )
 
 
 def test_ready_credential_permitted_is_available(session, secret_store):
     owner = _actor(session)
     project_id = _project(session, owner)
-    services.provision_credential(session, secret_store, owner, "fakeprov", "api_key", "SENTINEL")
+    services.provision_credential(
+        session, secret_store, _credential_registry(), owner, "fakeprov", "api_key", "SENTINEL"
+    )
     assert _availability(session, owner, project_id) is CapabilityAvailability.AVAILABLE
 
 
@@ -53,27 +86,50 @@ def test_ready_missing_credential_is_credential_missing(session):
     assert _availability(session, owner, project_id) is CapabilityAvailability.CREDENTIAL_MISSING
 
 
-def test_ready_credential_but_viewer_is_not_authorized(session, secret_store):
+def test_ready_credential_but_viewer_is_not_authorized_for_action_capability(session, secret_store):
     owner = _actor(session)
     viewer = _actor(session)
     project_id = _project(session, owner)
     _member(session, owner, project_id, viewer, role="viewer")
-    services.provision_credential(session, secret_store, viewer, "fakeprov", "api_key", "SENTINEL")
+    services.provision_credential(
+        session, secret_store, _credential_registry(), viewer, "fakeprov", "api_key", "SENTINEL"
+    )
+    # COMPUTE is an action capability: viewer membership does not permit it.
     assert _availability(session, viewer, project_id) is CapabilityAvailability.NOT_AUTHORIZED
+
+
+def test_viewer_is_permitted_for_read_only_capability(session, secret_store):
+    owner = _actor(session)
+    viewer = _actor(session)
+    project_id = _project(session, owner)
+    _member(session, owner, project_id, viewer, role="viewer")
+    services.provision_credential(
+        session, secret_store, _credential_registry(), viewer, "fakeprov", "api_key", "SENTINEL"
+    )
+    # SEARCH is read-only: any readable membership permits it.
+    assert (
+        _availability(session, viewer, project_id, capability_kind=CapabilityKind.SEARCH)
+        is CapabilityAvailability.AVAILABLE
+    )
 
 
 def test_ready_credential_but_non_member_is_not_authorized(session, secret_store):
     owner = _actor(session)
     stranger = _actor(session)
     project_id = _project(session, owner)
-    services.provision_credential(session, secret_store, stranger, "fakeprov", "api_key", "SENTINEL")
-    assert _availability(session, stranger, project_id) is CapabilityAvailability.NOT_AUTHORIZED
+    services.provision_credential(
+        session, secret_store, _credential_registry(), stranger, "fakeprov", "api_key", "SENTINEL"
+    )
+    assert _availability(session, stranger, project_id, capability_kind=CapabilityKind.SEARCH) \
+        is CapabilityAvailability.NOT_AUTHORIZED
 
 
 def test_unreachable_and_degraded_yield_provider_unavailable(session, secret_store):
     owner = _actor(session)
     project_id = _project(session, owner)
-    services.provision_credential(session, secret_store, owner, "fakeprov", "api_key", "SENTINEL")
+    services.provision_credential(
+        session, secret_store, _credential_registry(), owner, "fakeprov", "api_key", "SENTINEL"
+    )
     assert (
         _availability(session, owner, project_id, health=ProviderRuntimeHealth.UNREACHABLE)
         is CapabilityAvailability.PROVIDER_UNAVAILABLE
@@ -89,7 +145,9 @@ def test_two_actors_observe_different_availability_same_project(session, secret_
     other = _actor(session)
     project_id = _project(session, owner)
     _member(session, owner, project_id, other, role="member")
-    services.provision_credential(session, secret_store, owner, "fakeprov", "api_key", "SENTINEL")
+    services.provision_credential(
+        session, secret_store, _credential_registry(), owner, "fakeprov", "api_key", "SENTINEL"
+    )
 
     assert _availability(session, owner, project_id) is CapabilityAvailability.AVAILABLE
     assert _availability(session, other, project_id) is CapabilityAvailability.CREDENTIAL_MISSING
@@ -98,7 +156,8 @@ def test_two_actors_observe_different_availability_same_project(session, secret_
 def test_revocation_changes_next_query_availability_without_stored_state(session, secret_store):
     owner = _actor(session)
     project_id = _project(session, owner)
-    services.provision_credential(session, secret_store, owner, "fakeprov", "api_key", "SENTINEL")
+    registry = _credential_registry()
+    services.provision_credential(session, secret_store, registry, owner, "fakeprov", "api_key", "SENTINEL")
     assert _availability(session, owner, project_id) is CapabilityAvailability.AVAILABLE
 
     services.revoke_credential(session, secret_store, owner, "fakeprov", "api_key")
@@ -115,35 +174,9 @@ def test_provider_vocabulary_does_not_enter_core_enums():
     assert "organization_token" not in core_values
 
 
-class _StubCapability:
-    provider_key = "stub"
-    kind = CapabilityKind.COMPUTE
-
-
-class _StubDriver:
-    name = "stub"
-    display_name = "Stub Provider"
-    description = "Synthetic in-process driver for acceptance."
-    required_credential_kinds = ("api_key",)
-    capabilities: Mapping[CapabilityKind, Capability] = {CapabilityKind.COMPUTE: _StubCapability()}
-
-    def __init__(self) -> None:
-        self.started = False
-        self.health = ProviderRuntimeHealth.READY
-
-    def start(self, context: DriverContext) -> None:
-        self.started = True
-
-    def stop(self) -> None:
-        pass
-
-    def probe_health(self) -> ProviderRuntimeHealth:
-        return self.health
-
-
 def _started_registry() -> DriverRegistry:
     registry = DriverRegistry()
-    registry.register(_StubDriver())
+    registry.register(_Driver("stub", ("api_key",)))
     registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
     return registry
 
@@ -160,29 +193,21 @@ def test_stub_driver_declares_required_kinds_and_capability_map():
 
 def test_runtime_health_is_provider_state_separate_from_actor_availability(session, secret_store):
     registry = _started_registry()
-    # Provider runtime health options are actor-independent and never include a
-    # credential state; availability is a separate projected enum.
     assert registry.health("stub") is ProviderRuntimeHealth.READY
     assert "credential_missing" not in {state.value for state in ProviderRuntimeHealth}
 
-    # Availability composes health + credential + policy OUTSIDE the registry.
     owner = _actor(session)
     project_id = _project(session, owner)
     availability = capability_availability(
-        session,
-        owner,
-        project_id,
-        provider_key="stub",
         health=registry.health("stub"),
-        required_kinds=("api_key",),
+        credentials_present=False,
+        permitted=services.project_policy_permits(session, owner, project_id, CapabilityKind.COMPUTE),
     )
     assert availability is CapabilityAvailability.CREDENTIAL_MISSING
 
 
 def test_health_probe_is_actor_independent(session, secret_store):
     registry = _started_registry()
-    # `health` / `refresh_health` take only the provider key — never actor or
-    # project — so provider health cannot encode actor availability.
     actor = _actor(session)
     project_id = _project(session, actor)
     assert registry.health("stub") is ProviderRuntimeHealth.READY
@@ -206,8 +231,16 @@ def test_registered_but_unstarted_driver_is_absent_from_catalog(session):
     actor = _actor(session)
     project_id = _project(session, actor)
     registry = DriverRegistry()
-    registry.register(_StubDriver())  # never start_all()'d
+    registry.register(_Driver("stub", ("api_key",)))  # never start_all()'d
 
     # A REGISTERED driver has no runtime to project; the catalog exposes only
     # READY drivers (in-process lifecycle != Provider/Capability domain state).
-    assert catalog_entries(session, actor, project_id, registry) == []
+    assert (
+        catalog_entries(
+            session,
+            actor,
+            registry,
+            policy_permits=lambda kind: services.project_policy_permits(session, actor, project_id, kind),
+        )
+        == []
+    )

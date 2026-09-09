@@ -223,23 +223,29 @@ knowledge-edge tables). See
   (`available/credential_missing/not_authorized/provider_unavailable`) are the
   Core-owned enum vocabulary in `revolab/enums.py`.
 - **Derived availability** (`revolab/domain/provider.py`):
-  `capability_availability(actor, project)` = `driver health READY` AND all
-  required credential kinds present for the Actor AND Phase-1 project membership
-  permits (`owner`/`member`) — a query, never stored. Credential presence is a
-  derived query over the binding set. `build_credential_lease` is the last-mile
-  materialization layer.
+  `capability_availability` is a pure composition of `driver health READY` AND
+  all required credential kinds present for the Actor AND a per-capability
+  project-policy result supplied by the application policy layer
+  (`services.project_policy_permits`: read-only `SEARCH`/`ARTIFACT_RESOLUTION`
+  accept any readable membership; action capabilities require `owner`/`member`)
+  — a query, never stored. Credential presence is a derived query over the
+  binding set. `build_credential_lease` is the last-mile materialization layer.
 - **Real Project-scoped Provider Catalog**:
   `GET /api/projects/{project_id}/providers` returns non-secret, Actor-contextual
-  entries (identity, display metadata, required credential kinds, realized
-  capability kinds, runtime health, the caller's own per-kind presence, derived
-  availability). With zero configured providers the catalog is the honest empty
-  set — no production fixture provider state.
+  entries (identity, display metadata, required credential kinds, runtime health,
+  the caller's own per-kind presence, and per-capability realized kind +
+  derived availability). With zero configured providers the catalog is the
+  honest empty set — no production fixture provider state.
+  Runtime `RequestValidationError` responses keep the documented
+  `HTTPValidationError` envelope (`detail` as an error array) with only the
+  secret-bearing `input`/`ctx` stripped — the OpenAPI wire contract stays true.
 - **Actor-scoped credential management** (`/api/credentials`):
   create (`POST`), explicit replace/rotation (`PUT`), explicit revocation
-  (`DELETE`), presence-only list (`GET`); routed through `X-Actor-Id`, never a
-  spoofable path actor_id. Responses never echo submitted secrets; a
-  `RequestValidationError` handler strips the offending input so a failed
-  credential request cannot reflect secret material.
+  (`DELETE`), presence-only list (`GET`); routed through the trusted
+  `X-Actor-Id` seam (a query-scoping seam, NOT authentication — OIDC remains
+  deferred). Provisioning validates the provider exists in the registry and the
+  kind is one of its `required_credential_kinds`. Responses never echo submitted
+  secrets.
 - **Frontend**: the static Phase-2 provider surface is replaced by the real
   Project-scoped Provider Catalog rendered from the generated contract
   (`useProviders` → `ProvidersView`), showing the derived availability and the
@@ -248,16 +254,18 @@ knowledge-edge tables). See
 
 ## Verified evidence (Phase 3)
 
-- Backend: `pytest` passes with **118 passed, 2 skipped** (the two skips are the
+- Backend: `pytest` passes with **122 passed, 2 skipped** (the two skips are the
   opt-in PostgreSQL acceptance file, run explicitly in CI with a migrated PG).
-  New regressions cover credential-binding CRUD/uniqueness/rotation/revocation,
-  secret-boundary sentinel absence (DB rows, reprs, logs, error envelopes),
-  ephemeral/unpicklable lease, plural-kind lease materialization, the full
-  availability matrix (incl. two Actors observing different availability in one
-  Project and revocation flipping the next query with no stored repair), the
-  two-state registry + capability projection + lazy health probe, catalog
-  Actor-scoping, cross-Actor credential isolation, and the 422 no-echo gate.
-  `ruff check backend` and strict `mypy` pass.
+  New regressions cover credential-binding CRUD/uniqueness/rotation/revocation +
+  unknown-provider/unknown-kind rejection, secret-boundary sentinel absence (DB
+  rows, reprs, logs, error envelopes), ephemeral/unpicklable lease, plural-kind
+  lease materialization, the full availability matrix (incl. per-capability
+  read-only vs action policy, two Actors observing different availability in one
+  Project, and revocation flipping the next query with no stored repair), the
+  two-state registry + capability projection + key/kind mismatch rejection +
+  lazy health probe, catalog Actor-scoping, credential-query scoping by the
+  trusted Actor seam, and the 422 no-echo gate that preserves the standard
+  `HTTPValidationError` envelope. `ruff check backend` and strict `mypy` pass.
 - Migrations: `alembic upgrade head` + `alembic check` report **no drift** on a
   clean **SQLite** database and on a **clean PostgreSQL 16** database (fresh
   `revolab_p3`). The Phase-3 credential/availability vertical slice passes

@@ -375,6 +375,15 @@ class CredentialPresenceRead(BaseModel):
     present: bool
 
 
+class ProviderCapabilityRead(BaseModel):
+    """One realized capability of a provider, with the calling Actor's derived
+    availability for that specific capability (the policy component of the
+    availability formula is operation-specific, so availability lives here)."""
+
+    kind: CapabilityKind
+    availability: CapabilityAvailability
+
+
 class ProviderRead(BaseModel):
     """One non-secret Provider Catalog entry as seen by the calling Actor in a
     Project. Never contains secret material, `secret_ref`, another Actor's
@@ -384,10 +393,9 @@ class ProviderRead(BaseModel):
     name: str
     description: str | None = None
     required_credential_kinds: list[str] = Field(default_factory=list)
-    realized_capability_kinds: list[CapabilityKind] = Field(default_factory=list)
     health: ProviderRuntimeHealth
     credential_presence: list[CredentialPresenceRead] = Field(default_factory=list)
-    availability: CapabilityAvailability
+    capabilities: list[ProviderCapabilityRead] = Field(default_factory=list)
 
 
 class CredentialProvision(BaseModel):

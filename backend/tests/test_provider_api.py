@@ -22,17 +22,26 @@ def _project(client, actor_id: str, name: str = "P") -> dict:
     return client.post("/api/projects", json={"name": name}, headers=_headers(actor_id)).json()
 
 
-class _StubCapability:
-    provider_key = "stub"
-    kind = CapabilityKind.COMPUTE
+class _Capability:
+    def __init__(self, provider_key: str, kind: CapabilityKind) -> None:
+        self.provider_key = provider_key
+        self.kind = kind
 
 
-class _StubDriver:
-    name = "stub"
-    display_name = "Stub Provider"
-    description = "Synthetic in-process driver."
-    required_credential_kinds = ("api_key", "org_token")
-    capabilities: Mapping[CapabilityKind, Capability] = {CapabilityKind.COMPUTE: _StubCapability()}
+class _Driver:
+    def __init__(
+        self,
+        name: str,
+        kinds: tuple[str, ...],
+        capability_kind: CapabilityKind = CapabilityKind.COMPUTE,
+    ) -> None:
+        self.name = name
+        self.display_name = name.title()
+        self.description = "Synthetic in-process driver."
+        self.required_credential_kinds = kinds
+        self.capabilities: Mapping[CapabilityKind, Capability] = {
+            capability_kind: _Capability(name, capability_kind)
+        }
 
     def start(self, context: DriverContext) -> None:
         pass
@@ -46,7 +55,14 @@ class _StubDriver:
 
 def _started_registry() -> DriverRegistry:
     registry = DriverRegistry()
-    registry.register(_StubDriver())
+    registry.register(_Driver("stub", ("api_key", "org_token")))
+    registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
+    return registry
+
+
+def _fakeprov_registry() -> DriverRegistry:
+    registry = DriverRegistry()
+    registry.register(_Driver("fakeprov", ("api_key",)))
     registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
     return registry
 
@@ -85,11 +101,14 @@ def test_catalog_entry_never_exposes_secret_material_or_secret_ref(client, secre
     assert catalog.status_code == 200
     entry = catalog.json()[0]
     assert entry["key"] == "stub"
-    assert entry["availability"] == "credential_missing"  # org_token still missing
     assert entry["health"] == "ready"
     assert entry["credential_presence"] == [
         {"kind": "api_key", "present": True},
         {"kind": "org_token", "present": False},
+    ]
+    # org_token still missing -> per-capability availability is CREDENTIAL_MISSING.
+    assert entry["capabilities"] == [
+        {"kind": "compute", "availability": "credential_missing"}
     ]
     assert SENTINEL not in catalog.text
     for key in ("secret_ref", "secret", "secret_value", "token"):
@@ -131,13 +150,14 @@ def test_catalog_is_actor_contextual(client, secret_store):
         {"kind": "api_key", "present": False},
         {"kind": "org_token", "present": False},
     ]
-    assert for_owner["availability"] == "available"
-    assert for_other["availability"] == "credential_missing"
+    assert for_owner["capabilities"][0]["availability"] == "available"
+    assert for_other["capabilities"][0]["availability"] == "credential_missing"
 
 
 def test_credential_lifecycle_api_never_echoes_secret(client, secret_store):
-    from revolab.api import get_secret_store
+    from revolab.api import get_driver_registry, get_secret_store
 
+    app.dependency_overrides[get_driver_registry] = _fakeprov_registry
     app.dependency_overrides[get_secret_store] = lambda: secret_store
     actor = _actor(client)
 
@@ -167,9 +187,33 @@ def test_credential_lifecycle_api_never_echoes_secret(client, secret_store):
     assert client.get("/api/credentials", headers=_headers(actor)).json() == []
 
 
-def test_duplicate_create_returns_conflict_without_echo(client, secret_store):
-    from revolab.api import get_secret_store
+def test_unknown_provider_and_unknown_kind_rejected(client, secret_store):
+    from revolab.api import get_driver_registry, get_secret_store
 
+    app.dependency_overrides[get_driver_registry] = _fakeprov_registry
+    app.dependency_overrides[get_secret_store] = lambda: secret_store
+    actor = _actor(client)
+
+    unknown_provider = client.post(
+        "/api/credentials",
+        json={"provider_key": "nope", "kind": "api_key", "secret_value": SENTINEL},
+        headers=_headers(actor),
+    )
+    assert unknown_provider.status_code == 404
+
+    unknown_kind = client.post(
+        "/api/credentials",
+        json={"provider_key": "fakeprov", "kind": "api-key", "secret_value": SENTINEL},
+        headers=_headers(actor),
+    )
+    assert unknown_kind.status_code == 422
+    assert SENTINEL not in unknown_kind.text
+
+
+def test_duplicate_create_returns_conflict_without_echo(client, secret_store):
+    from revolab.api import get_driver_registry, get_secret_store
+
+    app.dependency_overrides[get_driver_registry] = _fakeprov_registry
     app.dependency_overrides[get_secret_store] = lambda: secret_store
     actor = _actor(client)
     body = {"provider_key": "fakeprov", "kind": "api_key", "secret_value": SENTINEL}
@@ -179,9 +223,10 @@ def test_duplicate_create_returns_conflict_without_echo(client, secret_store):
     assert SENTINEL not in duplicate.text
 
 
-def test_validation_error_does_not_echo_secret(client, secret_store):
-    from revolab.api import get_secret_store
+def test_validation_error_keeps_http_validation_shape_and_never_echoes_secret(client, secret_store):
+    from revolab.api import get_driver_registry, get_secret_store
 
+    app.dependency_overrides[get_driver_registry] = _fakeprov_registry
     app.dependency_overrides[get_secret_store] = lambda: secret_store
     actor = _actor(client)
     invalid = client.post(
@@ -190,13 +235,20 @@ def test_validation_error_does_not_echo_secret(client, secret_store):
         headers=_headers(actor),
     )
     assert invalid.status_code == 422
-    assert invalid.json()["detail"] == "invalid request body or parameters"
+    # Wire contract stays FastAPI's HTTPValidationError: detail is an error
+    # array. Only the secret-bearing per-error `input`/`ctx` are stripped.
+    detail = invalid.json()["detail"]
+    assert isinstance(detail, list)
+    assert all("input" not in error and "ctx" not in error for error in detail)
     assert SENTINEL not in invalid.text
 
 
-def test_actor_cannot_inspect_or_revoke_other_actors_credential(client, secret_store):
-    from revolab.api import get_secret_store
+def test_credential_queries_are_scoped_by_the_trusted_actor_seam(client, secret_store):
+    # X-Actor-Id is the trusted header seam, NOT authentication (OIDC deferred).
+    # This proves query/operation SCOPING, not anti-impersonation.
+    from revolab.api import get_driver_registry, get_secret_store
 
+    app.dependency_overrides[get_driver_registry] = _fakeprov_registry
     app.dependency_overrides[get_secret_store] = lambda: secret_store
     alice = _actor(client)
     bob = _actor(client)
@@ -221,8 +273,9 @@ def test_actor_cannot_inspect_or_revoke_other_actors_credential(client, secret_s
 
 
 def test_sentinel_absent_from_captured_logs(client, secret_store, caplog):
-    from revolab.api import get_secret_store
+    from revolab.api import get_driver_registry, get_secret_store
 
+    app.dependency_overrides[get_driver_registry] = _fakeprov_registry
     app.dependency_overrides[get_secret_store] = lambda: secret_store
     actor = _actor(client)
     with caplog.at_level("DEBUG"):

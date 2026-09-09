@@ -78,6 +78,17 @@ def test_register_rejects_capability_mismatched_to_driver() -> None:
         DriverRegistry().register(driver)
 
 
+def test_register_rejects_capability_kind_not_matching_registry_key() -> None:
+    class KeyMismatchedCapability:
+        provider_key = "stub"
+        kind = CapabilityKind.SEARCH  # keyed as COMPUTE below
+
+    driver = RecordingDriver("stub")
+    driver.capabilities = {CapabilityKind.COMPUTE: KeyMismatchedCapability()}
+    with pytest.raises(ValueError, match="does not match its registry key"):
+        DriverRegistry().register(driver)
+
+
 def test_start_all_rolls_back_ready_drivers_when_a_later_driver_fails() -> None:
     first = RecordingDriver("first")
     failing = RecordingDriver("failing", fail_on_start=True)

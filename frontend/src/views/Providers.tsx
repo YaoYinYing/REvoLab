@@ -8,8 +8,8 @@ import { CAPABILITY_AVAILABILITIES, CAPABILITY_KINDS, PROVIDER_RUNTIME_HEALTHS }
 type Tone = 'neutral' | 'good' | 'warn'
 
 // Build maps keyed by the GENERATED closed-vocabulary arrays, so the frontend
-// never re-declares the value lists; presentation rules are the only thing
-// expressed here (single source of truth for the values stays in OpenAPI).
+// never re-declares the value lists; only presentation rules are expressed here
+// (single source of truth for the values stays in OpenAPI).
 function complete<T extends string, V>(values: readonly T[], valueOf: (value: T) => V): Record<T, V> {
   const map = {} as Record<T, V>
   for (const value of values) map[value] = valueOf(value)
@@ -41,8 +41,8 @@ export function ProvidersView({ actorId, projectId }: { actorId: string; project
         <h1>Providers</h1>
         <p>
           External capability providers visible to this project, projected through your identity.
-          Availability is derived per query from provider runtime state, your credentials, and
-          project access — it is never stored.
+          Availability is derived per query and per capability from provider runtime state, your
+          credentials, and project access — it is never stored.
         </p>
       </div>
 
@@ -62,19 +62,22 @@ export function ProvidersView({ actorId, projectId }: { actorId: string; project
                   <strong>{provider.name}</strong>
                   <span className="mono">{provider.key}</span>
                 </div>
-                <Badge tone={AVAILABILITY_TONE[provider.availability]}>{provider.availability}</Badge>
+                <Badge tone={HEALTH_TONE[provider.health]}>{provider.health}</Badge>
               </div>
 
               <p className="provider-description">{provider.description}</p>
 
               <div className="provider-facts">
                 <div className="provider-fact">
-                  <span className="eyebrow">Capabilities</span>
-                  <div className="chip-row">
-                    {(provider.realized_capability_kinds ?? []).map((kind) => (
-                      <Badge key={kind} tone="neutral">
-                        {CAPABILITY_LABEL[kind]}
-                      </Badge>
+                  <span className="eyebrow">Capabilities · your availability</span>
+                  <div className="capability-list">
+                    {(provider.capabilities ?? []).map((capability) => (
+                      <div className="capability-entry" key={capability.kind}>
+                        <span>{CAPABILITY_LABEL[capability.kind]}</span>
+                        <Badge tone={AVAILABILITY_TONE[capability.availability]}>
+                          {capability.availability}
+                        </Badge>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -94,18 +97,6 @@ export function ProvidersView({ actorId, projectId }: { actorId: string; project
                   </div>
                 </div>
               </div>
-
-              <footer className="provider-projection">
-                <div className="projection-leg">
-                  <span className="eyebrow">Provider state</span>
-                  <Badge tone={HEALTH_TONE[provider.health]}>{provider.health}</Badge>
-                </div>
-                <span className="projection-arrow">→</span>
-                <div className="projection-leg">
-                  <span className="eyebrow">Your availability</span>
-                  <Badge tone={AVAILABILITY_TONE[provider.availability]}>{provider.availability}</Badge>
-                </div>
-              </footer>
             </article>
           ))}
         </section>

@@ -64,10 +64,15 @@ def install_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError):  # type: ignore[no-untyped-def]
-        # Never echo the offending request body: FastAPI's default would include
-        # the submitted `input`, which could reflect secret material on a failed
-        # credential request.
-        return _json_error(422, "invalid request body or parameters")
+        # Keep FastAPI's documented `HTTPValidationError` envelope (detail = list
+        # of errors) so the OpenAPI wire contract stays true, but strip the
+        # per-error `input`/`ctx` where Pydantic would otherwise echo the
+        # submitted body — which could contain secret material.
+        errors = [
+            {key: value for key, value in err.items() if key not in {"input", "ctx"}}
+            for err in exc.errors()
+        ]
+        return JSONResponse(status_code=422, content={"detail": errors})
 
     @app.exception_handler(LookupError)
     async def _lookup(request: Request, exc: LookupError):  # type: ignore[no-untyped-def]
@@ -829,7 +834,14 @@ def list_project_providers(
     services.readable_membership(session, actor_id, project_id)
     return [
         schemas.ProviderRead(**entry)
-        for entry in provider_domain.catalog_entries(session, actor_id, project_id, registry)
+        for entry in provider_domain.catalog_entries(
+            session,
+            actor_id,
+            registry,
+            policy_permits=lambda capability_kind: services.project_policy_permits(
+                session, actor_id, project_id, capability_kind
+            ),
+        )
     ]
 
 
@@ -847,10 +859,12 @@ def create_credential(
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
     store: SecretStore = Depends(get_secret_store),
+    registry: DriverRegistry = Depends(get_driver_registry),
 ) -> schemas.CredentialBindingRead:
     binding = services.provision_credential(
         session,
         store,
+        registry,
         actor_id,
         payload.provider_key,
         payload.kind,
@@ -867,10 +881,12 @@ def replace_credential(
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
     store: SecretStore = Depends(get_secret_store),
+    registry: DriverRegistry = Depends(get_driver_registry),
 ) -> schemas.CredentialBindingRead:
     binding = services.rotate_credential(
         session,
         store,
+        registry,
         actor_id,
         provider_key,
         kind,

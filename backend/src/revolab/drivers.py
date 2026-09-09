@@ -82,11 +82,16 @@ class DriverRegistry:
     def register(self, driver: Driver) -> DriverHandle:
         if driver.name in self._drivers:
             raise ValueError(f"driver already registered: {driver.name}")
-        for capability in driver.capabilities.values():
+        for kind, capability in driver.capabilities.items():
             if capability.provider_key != driver.name:
                 raise ValueError(
                     f"capability provider_key {capability.provider_key!r} does not "
                     f"match driver {driver.name!r}"
+                )
+            if capability.kind is not kind:
+                raise ValueError(
+                    f"capability kind {capability.kind!r} does not match its "
+                    f"registry key {kind!r} for driver {driver.name!r}"
                 )
         handle = DriverHandle(driver=driver)
         self._drivers[driver.name] = handle
