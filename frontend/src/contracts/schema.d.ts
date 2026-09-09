@@ -43,6 +43,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List My Credentials */
+        get: operations["list_my_credentials_api_credentials_get"];
+        put?: never;
+        /** Create Credential */
+        post: operations["create_credential_api_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/credentials/{provider_key}/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace Credential */
+        put: operations["replace_credential_api_credentials__provider_key___kind__put"];
+        post?: never;
+        /** Revoke Credential */
+        delete: operations["revoke_credential_api_credentials__provider_key___kind__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects": {
         parameters: {
             query?: never;
@@ -375,6 +411,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Providers */
+        get: operations["list_project_providers_api_projects__project_id__providers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/relations/consumed_as_input_by": {
         parameters: {
             query?: never;
@@ -584,6 +637,20 @@ export interface components {
             /** File */
             file: string;
         };
+        /**
+         * CapabilityAvailability
+         * @description Actor/Project derived projection of capability availability. Derived per
+         *     query, never stored (ADR-0012 / PROVIDER_CAPABILITIES).
+         * @enum {string}
+         */
+        CapabilityAvailability: "available" | "credential_missing" | "not_authorized" | "provider_unavailable";
+        /**
+         * CapabilityKind
+         * @description Core-owned closed capability vocabulary (ADR-0012). Core categorizes
+         *     realized capabilities by these kinds; it never parses provider vocabulary.
+         * @enum {string}
+         */
+        CapabilityKind: "compute" | "search" | "artifact_resolution" | "design" | "interactive_handoff";
         /** CitationCreate */
         CitationCreate: {
             /** @default supports */
@@ -604,6 +671,43 @@ export interface components {
          * @enum {string}
          */
         Confidence: "low" | "med" | "high";
+        /**
+         * CredentialBindingRead
+         * @description Presence/status only — no `secret_ref`, no secret material.
+         */
+        CredentialBindingRead: {
+            /** Kind */
+            kind: string;
+            /** Provider Key */
+            provider_key: string;
+        };
+        /** CredentialPresenceRead */
+        CredentialPresenceRead: {
+            /** Kind */
+            kind: string;
+            /** Present */
+            present: boolean;
+        };
+        /** CredentialProvision */
+        CredentialProvision: {
+            /** Kind */
+            kind: string;
+            /** Provider Key */
+            provider_key: string;
+            /**
+             * Secret Value
+             * Format: password
+             */
+            secret_value: string;
+        };
+        /** CredentialReplace */
+        CredentialReplace: {
+            /**
+             * Secret Value
+             * Format: password
+             */
+            secret_value: string;
+        };
         /** DecisionCreate */
         DecisionCreate: {
             /** Cites */
@@ -1001,6 +1105,35 @@ export interface components {
             /** Visibility */
             visibility: string;
         };
+        /**
+         * ProviderRead
+         * @description One non-secret Provider Catalog entry as seen by the calling Actor in a
+         *     Project. Never contains secret material, `secret_ref`, another Actor's
+         *     bindings, host env, or credential-store implementation detail.
+         */
+        ProviderRead: {
+            availability: components["schemas"]["CapabilityAvailability"];
+            /** Credential Presence */
+            credential_presence?: components["schemas"]["CredentialPresenceRead"][];
+            /** Description */
+            description?: string | null;
+            health: components["schemas"]["ProviderRuntimeHealth"];
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Realized Capability Kinds */
+            realized_capability_kinds?: components["schemas"]["CapabilityKind"][];
+            /** Required Credential Kinds */
+            required_credential_kinds?: string[];
+        };
+        /**
+         * ProviderRuntimeHealth
+         * @description Per-provider, driver-level, actor-independent runtime health. This is the
+         *     only per-provider state the registry tracks (never persisted).
+         * @enum {string}
+         */
+        ProviderRuntimeHealth: "ready" | "degraded" | "unreachable";
         /** ReferenceRead */
         ReferenceRead: {
             /** Authority */
@@ -1229,6 +1362,142 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ActorRead"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_my_credentials_api_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialBindingRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_credential_api_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialProvision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialBindingRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replace_credential_api_credentials__provider_key___kind__put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                provider_key: string;
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialReplace"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialBindingRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_credential_api_credentials__provider_key___kind__delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                provider_key: string;
+                kind: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -2246,6 +2515,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_providers_api_projects__project_id__providers_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderRead"][];
                 };
             };
             /** @description Validation Error */

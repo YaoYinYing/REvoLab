@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-09-08
+Last verified: 2026-09-09
 
 This file records actual, machine-verified repository state — not future plans.
 
@@ -195,12 +195,98 @@ knowledge-edge tables). See
   (now gitignored via `*.db`), and the prototype root Alembic migration.
 - Hardcoded CORS origin made configurable (`REVOLAB_CORS_ORIGINS`).
 
+## Implemented (Phase 3)
+
+- **Actor-scoped non-secret credential binding**
+  (`ExternalProviderCredentialBinding`): `(actor_id, provider_key, kind,
+  secret_ref)` with `UNIQUE(actor_id, provider_key, kind)`, FK to `actors`
+  (CASCADE), hard-delete revocation, in-place `secret_ref` rotation.
+  `provider_key` is the stable lowercase provider slug; `kind` is
+  provider-declared free-string vocabulary (NOT a Core enum); `secret_ref` is an
+  opaque locator only. Migration `fdd753899c9f` (revises
+  `42bee4363564`).
+- **Secret store boundary** (`revolab/secret_store.py`): `SecretStore` Protocol
+  (`put/get/exists/delete/lease`) + an explicitly named **non-production**
+  `InMemorySecretStore` (random `token_urlsafe` handles, never derived from the
+  material; refuses to construct under `REVOLAB_ENVIRONMENT=production`). Secret
+  material never enters Core persistence, API responses, or logs.
+- **Ephemeral `CredentialLease`** (`revolab/credentials.py`): frozen, exposes
+  only `get(kind)`, supports plural required kinds, `repr` carries only the kind
+  count, and pickling/serialization raises `TypeError`.
+- **Provider/Capability convergence** (`revolab/drivers.py` revised per
+  ADR-0012): thin lifecycle `Driver` + `Capability(provider_key, kind)`;
+  `capabilities: Mapping[CapabilityKind, Capability]`; two domain-visible
+  lifecycle states (`REGISTERED`/`READY`); `required_credential_kinds` on the
+  Driver; lazy `registry.health(name)` / `refresh_health(name)` cache (never
+  persisted, actor-independent). `CapabilityKind` (closed), `ProviderRuntimeHealth`
+  (`ready/degraded/unreachable`), and `CapabilityAvailability`
+  (`available/credential_missing/not_authorized/provider_unavailable`) are the
+  Core-owned enum vocabulary in `revolab/enums.py`.
+- **Derived availability** (`revolab/domain/provider.py`):
+  `capability_availability(actor, project)` = `driver health READY` AND all
+  required credential kinds present for the Actor AND Phase-1 project membership
+  permits (`owner`/`member`) — a query, never stored. Credential presence is a
+  derived query over the binding set. `build_credential_lease` is the last-mile
+  materialization layer.
+- **Real Project-scoped Provider Catalog**:
+  `GET /api/projects/{project_id}/providers` returns non-secret, Actor-contextual
+  entries (identity, display metadata, required credential kinds, realized
+  capability kinds, runtime health, the caller's own per-kind presence, derived
+  availability). With zero configured providers the catalog is the honest empty
+  set — no production fixture provider state.
+- **Actor-scoped credential management** (`/api/credentials`):
+  create (`POST`), explicit replace/rotation (`PUT`), explicit revocation
+  (`DELETE`), presence-only list (`GET`); routed through `X-Actor-Id`, never a
+  spoofable path actor_id. Responses never echo submitted secrets; a
+  `RequestValidationError` handler strips the offending input so a failed
+  credential request cannot reflect secret material.
+- **Frontend**: the static Phase-2 provider surface is replaced by the real
+  Project-scoped Provider Catalog rendered from the generated contract
+  (`useProviders` → `ProvidersView`), showing the derived availability and the
+  caller's own credential presence; no credential-provisioning UI, no
+  hand-written enum value lists, no provider vocabulary in generic UI.
+
+## Verified evidence (Phase 3)
+
+- Backend: `pytest` passes with **118 passed, 2 skipped** (the two skips are the
+  opt-in PostgreSQL acceptance file, run explicitly in CI with a migrated PG).
+  New regressions cover credential-binding CRUD/uniqueness/rotation/revocation,
+  secret-boundary sentinel absence (DB rows, reprs, logs, error envelopes),
+  ephemeral/unpicklable lease, plural-kind lease materialization, the full
+  availability matrix (incl. two Actors observing different availability in one
+  Project and revocation flipping the next query with no stored repair), the
+  two-state registry + capability projection + lazy health probe, catalog
+  Actor-scoping, cross-Actor credential isolation, and the 422 no-echo gate.
+  `ruff check backend` and strict `mypy` pass.
+- Migrations: `alembic upgrade head` + `alembic check` report **no drift** on a
+  clean **SQLite** database and on a **clean PostgreSQL 16** database (fresh
+  `revolab_p3`). The Phase-3 credential/availability vertical slice passes
+  against the migrated PostgreSQL schema
+  (`backend/tests/test_postgres_integration.py`: 2 passed).
+- Frontend: `npm run typecheck`, `npm run test` (8 tests — generated-contract
+  boundary, project shell, and the new Providers catalog view), and
+  `npm run build` pass. `openapi.json` / `schema.d.ts` / `enums.generated.ts`
+  were regenerated from the FastAPI schema; `npm run check:contracts` reports no
+  drift when compared against the committed artifacts.
+
+## Secret-store disclosure
+
+The application-scoped Secret store is the **non-production**
+`InMemorySecretStore` (test/development only). No production-secret readiness is
+claimed: a production deployment must supply a production-grade secret backend
+(durable, encrypted, managed); the `SecretStore` Protocol is the seam that keeps
+Actor/binding/Provider/Driver/capability/availability contracts unchanged when
+one is introduced.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
-- Provider/Driver/Capability/credential material (Phase 3). The generated
-  OpenAPI→TypeScript client and the real Project-scoped workspace landed in
-  Phase 2 (above).
+- Real REvoCompute / REvoDesign / OpenBio drivers and the per-kind Capability
+  method protocols (Phase 4). Phase 3 defines only the closed `CapabilityKind`
+  vocabulary and the base `Capability(provider_key, kind)` shape.
+- Production secret-manager integration: the Secret store remains the
+  non-production in-memory adapter (see disclosure above); a production-grade
+  backend is deferred until explicitly configured.
 
 ## Working set
 

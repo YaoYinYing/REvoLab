@@ -121,3 +121,33 @@ LEGAL_EVIDENCE_SOURCE_KINDS = frozenset(
         ResourceKind.SCIENTIFIC_OBJECT_REVISION,
     }
 )
+
+
+class CapabilityKind(StrEnum):
+    """Core-owned closed capability vocabulary (ADR-0012). Core categorizes
+    realized capabilities by these kinds; it never parses provider vocabulary."""
+
+    COMPUTE = "compute"
+    SEARCH = "search"
+    ARTIFACT_RESOLUTION = "artifact_resolution"
+    DESIGN = "design"
+    INTERACTIVE_HANDOFF = "interactive_handoff"
+
+
+class ProviderRuntimeHealth(StrEnum):
+    """Per-provider, driver-level, actor-independent runtime health. This is the
+    only per-provider state the registry tracks (never persisted)."""
+
+    READY = "ready"
+    DEGRADED = "degraded"
+    UNREACHABLE = "unreachable"
+
+
+class CapabilityAvailability(StrEnum):
+    """Actor/Project derived projection of capability availability. Derived per
+    query, never stored (ADR-0012 / PROVIDER_CAPABILITIES)."""
+
+    AVAILABLE = "available"
+    CREDENTIAL_MISSING = "credential_missing"
+    NOT_AUTHORIZED = "not_authorized"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"

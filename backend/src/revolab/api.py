@@ -12,7 +12,16 @@ from functools import lru_cache
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Path,
+    Response,
+    UploadFile,
+)
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,7 +29,9 @@ from sqlalchemy.orm import Session
 from revolab import queries, schemas, services
 from revolab.content_store import ContentStore
 from revolab.db import get_session
+from revolab.domain import provider as provider_domain
 from revolab.domain.errors import DomainError
+from revolab.drivers import DriverRegistry
 from revolab.enums import ResourceKind
 from revolab.models import (
     Actor,
@@ -29,6 +40,7 @@ from revolab.models import (
     GlobalResourceRegistry,
     Project,
 )
+from revolab.secret_store import SecretStore, default_secret_store
 
 router = APIRouter(prefix="/api")
 
@@ -44,10 +56,18 @@ def get_actor(actor_id: str | None = Header(default=None, alias="X-Actor-Id")) -
 
 def install_exception_handlers(app: FastAPI) -> None:
     from fastapi import Request
+    from fastapi.exceptions import RequestValidationError
 
     @app.exception_handler(DomainError)
     async def _domain(request: Request, exc: DomainError):  # type: ignore[no-untyped-def]
         return _json_error(exc.status_code, str(exc))
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation(request: Request, exc: RequestValidationError):  # type: ignore[no-untyped-def]
+        # Never echo the offending request body: FastAPI's default would include
+        # the submitted `input`, which could reflect secret material on a failed
+        # credential request.
+        return _json_error(422, "invalid request body or parameters")
 
     @app.exception_handler(LookupError)
     async def _lookup(request: Request, exc: LookupError):  # type: ignore[no-untyped-def]
@@ -63,6 +83,16 @@ def _content_store() -> ContentStore:
     from revolab.config import get_settings
 
     return ContentStore(get_settings().content_root)
+
+
+def get_driver_registry() -> DriverRegistry:
+    from revolab.drivers import default_registry
+
+    return default_registry
+
+
+def get_secret_store() -> SecretStore:
+    return default_secret_store()
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +811,90 @@ def graph(
     services.readable_membership(session, actor_id, project_id)
     return queries.bounded_graph(
         session, project_id, from_id, depth=depth, kinds=set(kinds.split(","))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Provider Catalog + Actor-scoped credential management (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/projects/{project_id}/providers", response_model=list[schemas.ProviderRead])
+def list_project_providers(
+    project_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+) -> list[schemas.ProviderRead]:
+    services.readable_membership(session, actor_id, project_id)
+    return [
+        schemas.ProviderRead(**entry)
+        for entry in provider_domain.catalog_entries(session, actor_id, project_id, registry)
+    ]
+
+
+@router.get("/credentials", response_model=list[schemas.CredentialBindingRead])
+def list_my_credentials(
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> list[schemas.CredentialBindingRead]:
+    return [_credential_read(binding) for binding in services.list_credential_bindings(session, actor_id)]
+
+
+@router.post("/credentials", response_model=schemas.CredentialBindingRead, status_code=201)
+def create_credential(
+    payload: schemas.CredentialProvision,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.CredentialBindingRead:
+    binding = services.provision_credential(
+        session,
+        store,
+        actor_id,
+        payload.provider_key,
+        payload.kind,
+        payload.secret_value.get_secret_value(),
+    )
+    return _credential_read(binding)
+
+
+@router.put("/credentials/{provider_key}/{kind}", response_model=schemas.CredentialBindingRead)
+def replace_credential(
+    payload: schemas.CredentialReplace,
+    provider_key: str = Path(pattern=schemas.PROVIDER_KEY_PATTERN),
+    kind: str = Path(pattern=schemas.CREDENTIAL_KIND_PATTERN),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.CredentialBindingRead:
+    binding = services.rotate_credential(
+        session,
+        store,
+        actor_id,
+        provider_key,
+        kind,
+        payload.secret_value.get_secret_value(),
+    )
+    return _credential_read(binding)
+
+
+@router.delete("/credentials/{provider_key}/{kind}", status_code=204)
+def revoke_credential(
+    provider_key: str = Path(pattern=schemas.PROVIDER_KEY_PATTERN),
+    kind: str = Path(pattern=schemas.CREDENTIAL_KIND_PATTERN),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    store: SecretStore = Depends(get_secret_store),
+) -> Response:
+    services.revoke_credential(session, store, actor_id, provider_key, kind)
+    return Response(status_code=204)
+
+
+def _credential_read(binding: object) -> schemas.CredentialBindingRead:
+    return schemas.CredentialBindingRead(
+        provider_key=getattr(binding, "provider_key"),
+        kind=getattr(binding, "kind"),
     )
 
 

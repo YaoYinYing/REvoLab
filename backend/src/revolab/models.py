@@ -535,3 +535,43 @@ class DecisionSupersedes(Base, TimestampMixin):
         ForeignKey("decisions.id", ondelete="CASCADE"), nullable=False
     )
     created_by: Mapped[UUID | None] = mapped_column(ForeignKey("actors.actor_id"))
+
+
+class ExternalProviderCredentialBinding(Base, TimestampMixin):
+    """Actor-scoped (no project_id) non-secret credential binding.
+
+    Records that this Actor holds a credential of `kind` for `provider_key`;
+    the secret material lives at the opaque `secret_ref` in the Secret store —
+    never in this row. `kind` is provider-declared free vocabulary, NOT a Core
+    enum (ADR-0012). Revocation is a hard delete; rotation is an in-place
+    `secret_ref` update (COLLABORATION_IDENTITY lifecycle).
+    """
+
+    __tablename__ = "external_provider_credential_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "actor_id",
+            "provider_key",
+            "kind",
+            name="uq_credential_binding_actor_provider_kind",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    actor_id: Mapped[UUID] = mapped_column(
+        ForeignKey("actors.actor_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    kind: Mapped[str] = mapped_column(String(100), nullable=False)
+    secret_ref: Mapped[str] = mapped_column(String(500), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        # Never emit `secret_ref` into logs: it is opaque but must not leave the
+        # durable binding column.
+        return (
+            f"<ExternalProviderCredentialBinding id={self.id!r} "
+            f"actor_id={self.actor_id!r} provider_key={self.provider_key!r} kind={self.kind!r}>"
+        )

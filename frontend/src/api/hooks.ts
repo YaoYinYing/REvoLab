@@ -6,6 +6,7 @@ import type {
   ObjectDetailRead,
   ObjectSummaryRead,
   ProjectRead,
+  ProviderRead,
   ReferenceRead,
   ResourceKind,
 } from './types'
@@ -110,5 +111,17 @@ export function useResources(
             .then((res) => value<ReferenceRead[]>(res as ApiResult<ReferenceRead[]>))
         : Promise.resolve([]),
     [actorId, projectId, resourceKind, query.limit, query.offset],
+  )
+}
+
+export function useProviders(actorId: string | null, projectId: string | null): AsyncState<ProviderRead[]> {
+  return useAsync(
+    () =>
+      actorId && projectId
+        ? projectApi(actorId)
+            .listProviders(projectId)
+            .then((res) => value<ProviderRead[]>(res as ApiResult<ProviderRead[]>))
+        : Promise.resolve([]),
+    [actorId, projectId],
   )
 }

@@ -10,9 +10,11 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from revolab.enums import (
+    CapabilityAvailability,
+    CapabilityKind,
     CitedAs,
     Confidence,
     DecisionStatus,
@@ -21,10 +23,18 @@ from revolab.enums import (
     EvidenceTargetKind,
     ObjectType,
     Polarity,
+    ProviderRuntimeHealth,
     RelationType,
     ResourceKind,
     Role,
 )
+
+# URL-safe shape for credential-management path/body identifiers. `provider_key`
+# is the stable lowercase provider slug; `kind` is provider-declared free
+# vocabulary constrained only so it can embed in a URL path — it is deliberately
+# NOT a Core enum.
+PROVIDER_KEY_PATTERN = r"^[a-z0-9][a-z0-9._-]{0,99}$"
+CREDENTIAL_KIND_PATTERN = r"^[A-Za-z0-9._-]{1,100}$"
 
 # ---------------------------------------------------------------------------
 # Identity / Project
@@ -353,3 +363,45 @@ class DecisionRead(BaseModel):
     superseded_by: UUID | None = None
     created_at: datetime | None = None
     committed_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Provider Catalog + Credential management (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class CredentialPresenceRead(BaseModel):
+    kind: str  # provider-declared free vocabulary, never a Core enum
+    present: bool
+
+
+class ProviderRead(BaseModel):
+    """One non-secret Provider Catalog entry as seen by the calling Actor in a
+    Project. Never contains secret material, `secret_ref`, another Actor's
+    bindings, host env, or credential-store implementation detail."""
+
+    key: str
+    name: str
+    description: str | None = None
+    required_credential_kinds: list[str] = Field(default_factory=list)
+    realized_capability_kinds: list[CapabilityKind] = Field(default_factory=list)
+    health: ProviderRuntimeHealth
+    credential_presence: list[CredentialPresenceRead] = Field(default_factory=list)
+    availability: CapabilityAvailability
+
+
+class CredentialProvision(BaseModel):
+    provider_key: str = Field(pattern=PROVIDER_KEY_PATTERN)
+    kind: str = Field(pattern=CREDENTIAL_KIND_PATTERN)
+    secret_value: SecretStr  # write-only: never echoed, never serialized back
+
+
+class CredentialReplace(BaseModel):
+    secret_value: SecretStr
+
+
+class CredentialBindingRead(BaseModel):
+    """Presence/status only — no `secret_ref`, no secret material."""
+
+    provider_key: str
+    kind: str

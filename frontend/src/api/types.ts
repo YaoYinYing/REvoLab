@@ -31,3 +31,9 @@ export type ResourceKind = components['schemas']['ResourceKind']
 export type DecisionStatus = components['schemas']['DecisionStatus']
 export type CitedAs = components['schemas']['CitedAs']
 export type EvidenceTargetKind = components['schemas']['EvidenceTargetKind']
+export type CapabilityKind = components['schemas']['CapabilityKind']
+export type ProviderRuntimeHealth = components['schemas']['ProviderRuntimeHealth']
+export type CapabilityAvailability = components['schemas']['CapabilityAvailability']
+
+export type ProviderRead =
+  paths['/api/projects/{project_id}/providers']['get']['responses']['200']['content']['application/json'][number]
