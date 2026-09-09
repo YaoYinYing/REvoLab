@@ -14,6 +14,10 @@ const frontendUrl = `http://127.0.0.1:${process.env.REVOLAB_E2E_FRONTEND_PORT ??
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
+  // Both specs share one live backend over one database file; serialize them to
+  // keep the throwaway SQLite store free of cross-process write contention.
+  fullyParallel: false,
+  workers: 1,
   use: {
     baseURL: frontendUrl,
     trace: 'retain-on-failure',

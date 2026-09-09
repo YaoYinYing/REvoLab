@@ -37,6 +37,21 @@ duplicates of REvoCompute execution truth.
   already correct (an external ArtifactReference is a neutral identity card, not
   a copy). Cross-Actor artifact reuse remains an upstream dependency and is not
   faked.
+- **Phase 5 position (unchanged, stated honestly):** Phase 5 lets a REvoLab
+  Project share the *identity/context* of a `RunReference`/`ArtifactReference`
+  with another Project under REvoLab's own collaboration rules. That is **not**
+  an upstream REvoCompute access grant:
+
+  ```text
+  REvoLab Project visibility   !=   REvoCompute upstream authorization
+  ```
+
+  If Actor B can see a shared ArtifactReference in REvoLab but lacks their own
+  external provider authorization, resolving the upstream bytes fails through
+  the existing typed Provider/Capability boundary (`CapabilityError(AUTH)`) —
+  never by copying the artifact, reusing Actor A's credential, leaking Actor A's
+  `CredentialLease`, or faking an upstream grant. This gap remains an upstream
+  dependency and is recorded, not papered over.
 
 ## 2. Machine-readable JSON Schema for parameters
 

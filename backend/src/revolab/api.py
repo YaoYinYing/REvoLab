@@ -40,6 +40,7 @@ from revolab.enums import (
     CapabilityErrorKind,
     CapabilityKind,
     ResourceKind,
+    Role,
 )
 from revolab.models import (
     Actor,
@@ -155,7 +156,9 @@ def create_project(
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
 ) -> schemas.ProjectRead:
-    project = services.create_project(session, actor_id, payload.name, payload.description)
+    project = services.create_project(
+        session, actor_id, payload.name, payload.description, visibility=payload.visibility.value
+    )
     return _project_read(project)
 
 
@@ -176,6 +179,24 @@ def get_project(
     return _project_read(services.get_project(session, project_id))
 
 
+@router.patch("/projects/{project_id}", response_model=schemas.ProjectRead)
+def patch_project(
+    project_id: UUID,
+    payload: schemas.ProjectPatch,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.ProjectRead:
+    project = services.update_project(
+        session,
+        actor_id,
+        project_id,
+        name=payload.name,
+        description=payload.description,
+        visibility=payload.visibility.value if payload.visibility is not None else None,
+    )
+    return _project_read(project)
+
+
 @router.delete("/projects/{project_id}", status_code=204)
 def delete_project(
     project_id: UUID,
@@ -184,6 +205,18 @@ def delete_project(
 ) -> Response:
     services.delete_project(session, actor_id, project_id)
     return Response(status_code=204)
+
+
+@router.get("/projects/{project_id}/members", response_model=list[schemas.MembershipRead])
+def list_members(
+    project_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> list[schemas.MembershipRead]:
+    return [
+        schemas.MembershipRead(project_id=m.project_id, actor_id=m.actor_id, role=Role(m.role))
+        for m in services.list_memberships(session, actor_id, project_id)
+    ]
 
 
 @router.post("/projects/{project_id}/members", response_model=schemas.MembershipRead, status_code=201)
@@ -197,8 +230,48 @@ def add_membership(
     return schemas.MembershipRead(
         project_id=membership.project_id,
         actor_id=membership.actor_id,
-        role=membership.role,
+        role=Role(membership.role),
     )
+
+
+@router.patch("/projects/{project_id}/members/{member_actor_id}", response_model=schemas.MembershipRead)
+def update_membership(
+    project_id: UUID,
+    member_actor_id: UUID,
+    payload: schemas.MembershipUpdate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.MembershipRead:
+    membership = services.update_membership(
+        session, actor_id, project_id, member_actor_id, payload.role.value
+    )
+    return schemas.MembershipRead(
+        project_id=membership.project_id,
+        actor_id=membership.actor_id,
+        role=Role(membership.role),
+    )
+
+
+@router.delete("/projects/{project_id}/members/{member_actor_id}", status_code=204)
+def remove_membership(
+    project_id: UUID,
+    member_actor_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> Response:
+    services.remove_membership(session, actor_id, project_id, member_actor_id)
+    return Response(status_code=204)
+
+
+@router.post("/projects/{project_id}/shares", response_model=schemas.ResourceShareRead, status_code=201)
+def share_resource(
+    project_id: UUID,
+    payload: schemas.ResourceShareCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.ResourceShareRead:
+    kind = services.share_resource(session, actor_id, project_id, payload.resource_id)
+    return schemas.ResourceShareRead(resource_id=payload.resource_id, resource_kind=kind)
 
 
 # ---------------------------------------------------------------------------
@@ -236,17 +309,26 @@ def list_objects(
         series = session.get(ScientificObjectSeries, series_id)
         if series is None:
             continue
-        latest = session.scalar(
-            select(ScientificObjectRevision)
-            .where(
-                ScientificObjectRevision.series_id == series_id,
-                ScientificObjectRevision.revision_id.in_(list(visible)),
+        visible_revisions = list(
+            session.scalars(
+                select(ScientificObjectRevision)
+                .where(
+                    ScientificObjectRevision.series_id == series_id,
+                    ScientificObjectRevision.revision_id.in_(list(visible)),
+                )
+                .order_by(ScientificObjectRevision.revision_seq)
             )
-            .order_by(ScientificObjectRevision.revision_seq.desc())
-            .limit(1)
         )
+        current = None
+        pin = queries.preferred_revision_id(session, project_id, series_id)
+        if pin is not None:
+            current = next((r for r in visible_revisions if r.revision_id == pin), None)
+        if current is None and visible_revisions:
+            current = visible_revisions[-1]
         summary = queries.series_summary(session, series)
-        summary["latest_revision"] = queries.revision_summary(latest) if latest else None
+        summary["latest_revision"] = queries.revision_summary(current) if current else None
+        summary["preferred_revision_id"] = str(pin) if pin else None
+        summary["read_only"] = queries.read_only(session, project_id, series_id)
         result.append(summary)
     return result
 
@@ -317,6 +399,18 @@ def append_revision(
 ) -> dict[str, Any]:
     revision = services.append_revision(session, actor_id, project_id, series_id, payload.payload)
     return queries.revision_summary(revision)
+
+
+@router.put("/projects/{project_id}/objects/{series_id}/preferred-revision", status_code=204)
+def set_preferred_revision(
+    project_id: UUID,
+    series_id: UUID,
+    payload: schemas.PreferredRevisionPut,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> Response:
+    services.set_preferred_revision(session, actor_id, project_id, series_id, payload.revision_id)
+    return Response(status_code=204)
 
 
 @router.post("/projects/{project_id}/objects/{series_id}/import", status_code=201)
@@ -404,7 +498,9 @@ def list_resources(
     )
     result = []
     for resource_id in link_ids:
-        result.append(queries.reference_summary(session, resource_id, services._resource_kind(session, resource_id)))
+        summary = queries.reference_summary(session, resource_id, services._resource_kind(session, resource_id))
+        summary["read_only"] = queries.read_only(session, project_id, resource_id)
+        result.append(summary)
     return result
 
 
@@ -418,7 +514,9 @@ def get_resource(
     services.readable_membership(session, actor_id, project_id)
     kind = services._resource_kind(session, resource_id)
     services._require_visible(session, project_id, resource_id)
-    return queries.reference_summary(session, resource_id, kind)
+    summary = queries.reference_summary(session, resource_id, kind)
+    summary["read_only"] = queries.read_only(session, project_id, resource_id)
+    return summary
 
 
 # ---------------------------------------------------------------------------

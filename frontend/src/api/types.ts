@@ -7,6 +7,12 @@ import type { components, paths } from './client'
  */
 export type ProjectRead = paths['/api/projects']['get']['responses']['200']['content']['application/json'][number]
 
+export type MembershipRead =
+  paths['/api/projects/{project_id}/members']['get']['responses']['200']['content']['application/json'][number]
+
+export type ResourceShareRead =
+  paths['/api/projects/{project_id}/shares']['post']['responses']['201']['content']['application/json']
+
 export type ObjectSummaryRead =
   paths['/api/projects/{project_id}/objects']['get']['responses']['200']['content']['application/json'][number]
 
@@ -34,6 +40,8 @@ export type EvidenceTargetKind = components['schemas']['EvidenceTargetKind']
 export type CapabilityKind = components['schemas']['CapabilityKind']
 export type ProviderRuntimeHealth = components['schemas']['ProviderRuntimeHealth']
 export type CapabilityAvailability = components['schemas']['CapabilityAvailability']
+export type Role = components['schemas']['Role']
+export type ProjectVisibility = components['schemas']['ProjectVisibility']
 
 export type ProviderRead =
   paths['/api/projects/{project_id}/providers']['get']['responses']['200']['content']['application/json'][number]
