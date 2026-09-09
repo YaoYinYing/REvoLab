@@ -748,18 +748,48 @@ E2E **2 passed**.
 ## Verified evidence (Phase 6)
 
 - Backend: `ruff check backend` and strict `mypy` pass (37 source files).
-  `pytest` passes with **229 passed, 5 skipped** (the five skips are the opt-in
+  `pytest` passes with **235 passed, 5 skipped** (the five skips are the opt-in
   PostgreSQL acceptance file run separately below).
 - Migrations: `alembic upgrade head` + `alembic check` report **no drift** on a
   clean SQLite database and on a clean PostgreSQL 16 database (`revolab_p6`). The
   PostgreSQL acceptance pass (**5 passed**) includes the new Phase-6 slice.
-- Frontend: `npm run typecheck`, `npm run test` (**13 tests** — plus the new Agent
-  view), and `npm run build` pass. `openapi.json` / `schema.d.ts` /
-  `enums.generated.ts` regenerated from the FastAPI schema; `npm run check:contracts`
-  and a fresh `python -m revolab.export_openapi` diff report **no drift**.
+- Frontend: `npm run typecheck`, `npm run test` (**14 tests**, including the
+  Agent view and the contract-boundary lockstep), and `npm run build` pass.
+  `openapi.json` / `schema.d.ts` / `enums.generated.ts` regenerated from the
+  FastAPI schema; `npm run check:contracts` and a fresh
+  `python -m revolab.export_openapi` diff report **no drift**.
 - Browser (`npm run test:e2e`, Playwright Chromium, workers serialized over one
   database): the Phase-2 smoke, the Phase-5 collaboration slice, and the new
   Phase-6 agent slice all pass (**3 passed**).
+
+## Independent review (Phase 6)
+
+First pass: five fresh read-only reviewers (architecture/domain, authority/
+security, backend/API/contracts, frontend/context UX, tests/PostgreSQL/CI)
+audited `main...HEAD`. **No P0 findings; all five returned PASS.** Reconciled
+findings (committed in `a359408`, `661f6f3`, `bd5e410`):
+
+- single-sourced the proposal request on `DecisionCreate` (removed the duplicate
+  `AgentProposalCreate` OpenAPI component) and bounded decision statement/list
+  fields; `preview_limit` declared in OpenAPI with ge/le;
+- corrected provider tool input schemas (`kind_id` opaque string; `run_id`
+  REvoLab UUID with resolution documented) and typed the proposal handler;
+- SQL-scoped the edge assembly's double-endpoint visibility filter;
+- typed the deterministic proposal with canonical `ResourceKind`/
+  `CitationCreate`/`SelectTargetCreate`;
+- frontend enum-lockstep test extended, truth-boundary callout styled, tool rows
+  render name/source, inert lint pragma removed;
+- tests hardened: exact closed domain tool-id set, read-only ToolCatalog proof,
+  other-Actor credential non-projection (tool catalog + serialized context),
+  external-artifact inspect credential non-leak, viewer HTTP fail-closed,
+  removed vacuous/tautological assertions; locked the proposal request to the
+  single `DecisionCreate` component;
+- `AGENT_CONTEXT.md` ref terminology reconciled to the durable wire shape.
+
+Second pass (three fresh read-only reviewers over the contract/security test fix
+delta): contract/schema returned PASS (no P0/P1). Security/authority and
+tests/PostgreSQL/CI are still in flight at the time of this edit; the final
+outcome is recorded in the PR body and completion checklist.
 
 ## Known deferrals (explicit, not silently postponed)
 
