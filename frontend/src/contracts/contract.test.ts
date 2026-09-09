@@ -73,4 +73,15 @@ describe('generated API contract boundary', () => {
     expect(enumsTs).toContain('export const PROVIDER_RUNTIME_HEALTHS')
     expect(enumsTs).toContain('export const CAPABILITY_AVAILABILITIES')
   })
+
+  it('the Agent proposal request is a single shared DecisionCreate component', () => {
+    // Phase-6 single-source-of-truth: an Agent proposal records a Decision DRAFT
+    // through the same typed request shape as ordinary Decision creation.
+    expect(spec.components.schemas.AgentProposalCreate).toBeUndefined()
+    const proposalPath = spec.paths['/api/projects/{project_id}/agent/proposals'] as {
+      post?: { requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> } }
+    }
+    const schemaRef = proposalPath.post?.requestBody?.content?.['application/json']?.schema?.$ref
+    expect(schemaRef).toBe('#/components/schemas/DecisionCreate')
+  })
 })
