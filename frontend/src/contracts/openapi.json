@@ -877,6 +877,7 @@
           "statement": {
             "anyOf": [
               {
+                "maxLength": 50000,
                 "minLength": 1,
                 "type": "string"
               },

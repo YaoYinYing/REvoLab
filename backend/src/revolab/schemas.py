@@ -277,10 +277,16 @@ class DecisionCreate(BaseModel):
     cites: list[CitationCreate] = Field(default_factory=list, max_length=500)
     selects: list[SelectTargetCreate] = Field(default_factory=list, max_length=500)
 
+    @model_validator(mode="after")
+    def next_action_items_bounded(self) -> DecisionCreate:
+        if any(len(item) > 500 for item in self.next_actions):
+            raise ValueError("next_actions items must be at most 500 characters")
+        return self
+
 
 class DecisionPatch(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
-    statement: str | None = Field(default=None, min_length=1)
+    statement: str | None = Field(default=None, min_length=1, max_length=50_000)
     next_actions: list[str] | None = None
     cites: list[CitationCreate] | None = None
     selects: list[SelectTargetCreate] | None = None

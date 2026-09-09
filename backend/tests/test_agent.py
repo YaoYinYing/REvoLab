@@ -131,7 +131,15 @@ class _ArtifactCapability:
     provider_key = "credartifact"
     kind = CapabilityKind.ARTIFACT_RESOLUTION
 
+    def __init__(self, expected_secret: str | None = None) -> None:
+        self._expected_secret = expected_secret
+
     def resolve(self, artifact: ExternalArtifactRef, credentials: object) -> ArtifactHandle:
+        # Prove the credential lease was materialized for the CALLING actor and
+        # stayed inside the driver transport: the resolver sees it, but the
+        # inspect result must never reproduce it.
+        if self._expected_secret is not None:
+            assert getattr(credentials, "get")("api_key") == self._expected_secret
         return ArtifactHandle(
             authority="credartifact",
             native_id=artifact.native_id,
@@ -149,9 +157,11 @@ class _CredentialedArtifactDriver:
     description = "synthetic artifact-resolution driver requiring a credential"
     required_credential_kinds = ("api_key",)
     authorities = ("credartifact",)
-    capabilities: ClassVar[dict[CapabilityKind, object]] = {
-        CapabilityKind.ARTIFACT_RESOLUTION: _ArtifactCapability()
-    }
+
+    def __init__(self, expected_secret: str | None = None) -> None:
+        self.capabilities: dict[CapabilityKind, object] = {
+            CapabilityKind.ARTIFACT_RESOLUTION: _ArtifactCapability(expected_secret)
+        }
 
     def start(self, context: DriverContext) -> None:
         pass
@@ -384,9 +394,9 @@ def test_inspect_artifact_requires_project_visibility(session, tmp_path):
 def test_external_artifact_inspect_never_leaks_credential(session, tmp_path):
     actor = _actor(session)
     project = _project(session, actor)
-    registry = _registry(_CredentialedArtifactDriver())
-    store = InMemorySecretStore()
     sentinel = "SENTINEL-external-inspect-credential"
+    registry = _registry(_CredentialedArtifactDriver(expected_secret=sentinel))
+    store = InMemorySecretStore()
 
     services.provision_credential(session, store, registry, actor, "credartifact", "api_key", sentinel)
     artifact = services.create_artifact_reference(
@@ -405,8 +415,10 @@ def test_external_artifact_inspect_never_leaks_credential(session, tmp_path):
     )
     assert result.authority == "credartifact"
     assert result.preview == b"external-artifact-body"[:64].decode("utf-8")
+    # The credential WAS materialized for resolution (the fake resolver asserts
+    # it), yet no serialized field of the inspect result reproduces it.
     assert sentinel not in result.preview
-    assert "api_key" not in result.preview
+    assert sentinel not in result.model_dump_json()
 
 
 # ---------------------------------------------------------------------------
@@ -452,11 +464,20 @@ def test_domain_tools_authority_matrix(session):
             assert banned not in repr(tool.input_schema)
 
 
-def test_build_tool_catalog_is_read_only(session):
+def _assert_no_writes(statements: list[str], label: str) -> None:
+    assert statements, f"expected {label} to issue read statements"
+    write_prefixes = ("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP", "TRUNCATE", "MERGE")
+    for statement in statements:
+        token = statement.lstrip().upper()
+        assert not token.startswith(write_prefixes), f"{label} issued a write: {statement}"
+
+
+def test_agent_read_surfaces_are_read_only(session):
     actor = _actor(session)
     project = _project(session, actor)
-    statements: list[str] = []
+    series = _object(session, actor, project, "ReadOnly")
     engine = session.get_bind()
+    statements: list[str] = []
 
     def capture(_conn, _cursor, statement, _parameters, _context, _executemany):  # type: ignore[no-untyped-def]
         statements.append(statement)
@@ -464,12 +485,14 @@ def test_build_tool_catalog_is_read_only(session):
     event.listen(engine, "before_cursor_execute", capture)
     try:
         build_tool_catalog(session, actor, project.id, _registry())
+        _assert_no_writes(statements, "tool catalog")
+        statements.clear()
+        build_context(
+            session, actor, project.id, _registry(), ContextSelectionCreate(series_ids=[series])
+        )
+        _assert_no_writes(statements, "context builder")
     finally:
         event.remove(engine, "before_cursor_execute", capture)
-
-    write_prefixes = ("INSERT", "UPDATE", "DELETE")
-    assert statements, "expected catalog projection to issue read statements"
-    assert not any(statement.lstrip().upper().startswith(write_prefixes) for statement in statements)
 
 
 def test_provider_tools_only_available_capabilities(session):
@@ -525,6 +548,23 @@ def test_other_actor_credential_is_never_projected(session):
     assert {presence.kind: presence.present for presence in credprov.credential_presence} == {
         "api_key": False
     }
+
+
+def test_viewer_never_sees_action_provider_tools(session):
+    owner = _actor(session)
+    viewer = services.create_actor(session)
+    project = _project(session, owner)
+    services.add_membership(session, owner, project.id, viewer, Role.VIEWER.value)
+    registry = _registry(FakeComputeDriver())
+
+    owner_tools = build_tool_catalog(session, owner, project.id, registry)
+    assert any(tool.id.startswith("fakecompute.compute.") for tool in owner_tools.tools)
+
+    viewer_tools = build_tool_catalog(session, viewer, project.id, registry)
+    # Compute is an ACTION capability: policy requires owner/member, so a viewer
+    # never sees any executable compute tool (the pure-read artifact.resolve tool
+    # may still be projected through the separate ARTIFACT_RESOLUTION capability).
+    assert not any(tool.id.startswith("fakecompute.compute.") for tool in viewer_tools.tools)
 
 
 # ---------------------------------------------------------------------------
@@ -724,6 +764,7 @@ def test_agent_http_viewer_is_read_only(client):
     by_id = {tool["id"]: tool for tool in tools.json()["tools"]}
     assert by_id["decision.record_draft"]["available"] is False
     assert by_id["decision.commit"]["available"] is False
+    assert by_id["evidence.create"]["available"] is False
     assert by_id["context.build"]["available"] is True
 
     proposal = client.post(
@@ -732,3 +773,16 @@ def test_agent_http_viewer_is_read_only(client):
         headers=_headers(viewer_id),
     )
     assert proposal.status_code == 403
+
+    # The existing authorized commit endpoint also fails closed for a viewer.
+    draft = client.post(
+        f"/api/projects/{pid}/agent/proposals",
+        json={"title": "Owner draft", "statement": "draft owned by the project owner"},
+        headers=_headers(owner_id),
+    )
+    assert draft.status_code == 201
+    draft_id = draft.json()["id"]
+    viewer_commit = client.post(
+        f"/api/projects/{pid}/decisions/{draft_id}/commit", headers=_headers(viewer_id)
+    )
+    assert viewer_commit.status_code == 403

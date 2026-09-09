@@ -60,6 +60,23 @@ _EMPTY_OBJECT_SCHEMA: dict[str, Any] = {
 
 _BINARY_SCHEMA: dict[str, Any] = {"type": "string", "format": "binary"}
 
+# artifact.inspect carries the same bounded preview_limit as the wire endpoint
+# (api.py Query ge=0 le=65536), so the tool contract stays faithful to it.
+_ARTIFACT_INSPECT_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "artifact_id": {"type": "string", "format": "uuid"},
+        "preview_limit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65536,
+            "default": 2048,
+        },
+    },
+    "required": ["artifact_id"],
+    "additionalProperties": False,
+}
+
 
 def _uuid_input(field: str) -> dict[str, Any]:
     """A scalar opaque-UUID input schema for a tool whose only argument is one
@@ -185,7 +202,7 @@ def _domain_tools(can_mutate: bool) -> list[ToolDescriptorRead]:
             autonomy=AgentToolAutonomy.AUTOMATIC,
             available=True,
             availability_reason=None,
-            input_schema=_uuid_input("artifact_id"),
+            input_schema=_ARTIFACT_INSPECT_INPUT_SCHEMA,
             output_schema=_schema(ArtifactInspectRead),
         ),
         _descriptor(
