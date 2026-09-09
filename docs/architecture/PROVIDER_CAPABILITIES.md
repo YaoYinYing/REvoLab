@@ -27,7 +27,7 @@ ambiguity the review found):
 | **Provider** | Provider / Capability domain | the uniquely-identified external system you point at and bind to |
 | **Driver** | Provider / Capability domain | the concrete code realizing capabilities; ≥3 real targets |
 | **Capability** | Provider / Capability domain | the protocol boundary that hides provider vocabulary from Core |
-| **Tool** | Agent Context domain | the typed, agent-facing presentation of a capability |
+| **Tool** | Project Tool Harness (consumed by Agent Context + Presentation) | the typed, Project-scoped execution surface; a first-class Harness abstraction behind which a Driver/Capability is only an implementation detail (Phase 7) |
 | **Credential binding** (`ExternalProviderCredentialBinding`) | Identity / Collaboration domain | the non-secret row `(actor_id, provider_key, kind, secret_ref)` — "this Actor has a credential of this kind for this provider; the material lives at secret_ref" |
 | **Secret material** (API key / token) | Credential / Secret store | the actual secret; never stored in Core, never read back as plaintext by Core |
 

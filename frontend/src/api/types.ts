@@ -75,3 +75,13 @@ export type ArtifactInspectRead =
 
 export type AgentToolAutonomy = components['schemas']['AgentToolAutonomy']
 export type ToolSource = components['schemas']['ToolSource']
+export type ToolExecutionClass = components['schemas']['ToolExecutionClass']
+export type ToolSideEffectClass = components['schemas']['ToolSideEffectClass']
+export type ToolResultKind = components['schemas']['ToolResultKind']
+
+// Phase-7 Project Tool Harness.
+export type ToolInvocationCreate =
+  paths['/api/projects/{project_id}/tools/invocations']['post']['requestBody']['content']['application/json']
+
+export type ToolResultRead =
+  paths['/api/projects/{project_id}/tools/invocations']['post']['responses']['201']['content']['application/json']

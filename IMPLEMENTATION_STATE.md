@@ -805,7 +805,88 @@ regression, REvoCompute preview streaming + fail-closed + driver tests,
 committed in `7554ed3`. Final machine evidence: `247 passed` (backend), `5
 passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
 
-## Known deferrals (explicit, not silently postponed)
+## Implemented (Phase 7)
+
+- **Roadmap correction.** `IMPLEMENTATION_ROADMAP.md` Phase 7 is now "Project
+  Tool Harness & Analysis Runtime"; the REvoDesign/OpenBio Phase 7 was removed and
+  recorded as a non-goal (REvoDesign is a method-specific interactive design app,
+  OpenBio a design reference — neither a REvoLab backend). `CLAUDE.md` gained
+  invariant #11; `SYSTEM_ARCHITECTURE.md` / `DOMAIN_BOUNDARIES.md` /
+  `PROVIDER_CAPABILITIES.md` / `AGENT_CONTEXT.md` / `WORKSPACE_INFORMATION_ARCHITECTURE.md`
+  were reconciled to the new Tool ownership.
+- **Tool as first-class Harness abstraction.** New `revolab/tools` package (Project
+  Tool Harness) with the frozen dependency direction Harness → Tool → adapter →
+  local service OR capability/driver. Canonical `ToolDescriptorRead` carries
+  `autonomy` (canonical `AgentToolAutonomy`), `execution_class`
+  (`local|remote`), and `side_effect_class` (`read_only|creates_derived_result|
+  creates_project_truth|external_action`) — new Core-owned enums in
+  `revolab/enums.py`. Input/output JSON Schemas derive from the same Pydantic
+  models the runtime validates against (never hand-copied).
+- **Closed Local Tool Runtime** (`revolab/tools/runtime.py`, `registry.py`):
+  lookup → Pydantic input validation → Actor/Project authorization → registered
+  handler → typed output → `ToolResult`. The runtime executes only the fixed
+  registered tool set; unknown ids (e.g. `python.eval`, `shell.run`, `sql.query`,
+  `file.read`, `http.get`) fail closed. No arbitrary Python/shell/filesystem/HTTP.
+- **First local analysis tools** (small, bounded, stdlib-only `csv`):
+  `artifact.inspect` (bounded preview), `table.describe` (column stats),
+  `table.select` (column/row projection + optional CSV persist), `plot.xy`
+  (structured plot specification + optional JSON persist). Explicit bounds:
+  1 MiB bytes, 10 000 rows, 100 columns, 5 000 plot points; unsupported/oversized
+  artifacts fail closed.
+- **REvoCompute projected through the same ToolCatalog** (`revolab/tools/catalog.py`):
+  `{provider}.compute.*` + `{provider}.artifact.resolve` are remote
+  (`execution_class=remote`) descriptors over the existing non-secret Provider
+  Catalog — no duplication of task/run/artifact/credential models. Local and
+  remote tools coexist in ONE `ToolCatalogRead` consumed by both frontend and
+  Agent (`GET /api/projects/{project_id}/tools` and the existing agent endpoint).
+  The Agent's Phase-6 `context.build` left the catalog: context reading is the
+  context-assembly step, not a Tool.
+- **Invocation + result semantics** (`POST /api/projects/{project_id}/tools/invocations`):
+  `ToolResultRead` with `result_kind` (`ephemeral|artifact|evidence|decision|
+  scientific_object|run_reference`). `persist=true` on a derived-result tool
+  (owner/member) writes an internal `ArtifactReference` via the typed
+  ContentStore→reference path and a `ToolInvocation` record (tool_id,
+  tool_version `1.0.0`, input resource ids, validated parameters,
+  result_resource_id) — explicitly NOT a `RunReference`. Evidence/Decision tools
+  route through the existing typed `services`; a Decision draft is the only shape
+  produced and commit remains the separate promotion gate. Tool output is never
+  auto-promoted to truth.
+- **Migration** `c9a41f2d3e8b`: `tool_invocations` table (project-scoped, JSON
+  columns cross-backend), drift-checked on SQLite and PostgreSQL.
+- **Fake compute `tabular` task** (`testing/fake_compute.py`): a provider-neutral
+  CSV-producing task so a REvoCompute-produced artifact can be analyzed by a local
+  REvoLab Tool.
+- **Frontend `Analyze` workspace.** New `views/Tools.tsx`: the Project ToolCatalog
+  (local + remote), artifact selection, schema-typed local analysis (describe /
+  select / plot) with run + result rendering, persist control, and a separated
+  "Remote compute tools" section that points at the existing Compute flow. Wired
+  into `App.tsx`; generated contract + enum lockstep extended (`ToolExecutionClass`,
+  `ToolSideEffectClass`, `ToolResultKind`).
+- **Skill** `.agents/skills/project-tool-harness/SKILL.md` (pointer-only, no schema
+  copies) and `docs/architecture/PROJECT_TOOL_HARNESS.md`.
+
+## Verified evidence (Phase 7)
+
+- Backend: `ruff check backend` and strict `mypy` pass (46 source files). `pytest`
+  passes with **262 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  acceptance file). New `tests/test_tools.py` covers registry duplicate-id
+  rejection/closedness, unknown-tool fail-closed, catalog authority/availability,
+  local tools independent of provider credentials, typed table/plot outputs,
+  viewer persist/truth denial, schema validation, unsupported/oversized/truncated
+  bounds, the persisted `ToolInvocation` record, and the REvoCompute-produced
+  artifact analyzed locally (`test_revocompute_artifact_analyzed_locally`).
+- PostgreSQL: `alembic upgrade head` + `alembic check` report no drift on a fresh
+  SQLite stack and PostgreSQL; `test_phase7_tool_harness_vertical_slice_on_postgres`
+  exercises internal CSV → `table.select` persist → Evidence → Decision draft, plus
+  the fake REvoCompute `tabular` run → artifact → local `table.describe`.
+- Frontend: `npm run typecheck`, `npm run test` (**15 tests**, incl. the Tools view
+  and contract/enum lockstep), and `npm run build` pass. `openapi.json` /
+  `schema.d.ts` / `enums.generated.ts` regenerated; regeneration is idempotent
+  (`npm run check:contracts` clean once committed).
+- Browser (`npm run test:e2e`, Playwright Chromium): 4 specs pass — smoke, agent,
+  collaboration, and the new `tools.spec.ts` (Project → fake compute `tabular` →
+  local `table.describe`/`table.select` persist → Evidence → Decision draft →
+  commit → reloaded Knowledge).
 
 ## Known deferrals (explicit, not silently postponed)
 
@@ -817,7 +898,10 @@ passed` (PostgreSQL), `14 passed` (frontend), `3 passed` (Playwright E2E).
   network boundary; live acceptance is not fabricated. Cross-Actor
   run/artifact sharing is an upstream REvoCompute gap (see
   `docs/integrations/REVOCOMPUTE_CONTRACT_GAPS.md`).
-- REvoDesign / OpenBio drivers remain Phase-5+ (not expanded here).
+- REvoDesign / OpenBio integration is **deferred out of Phase 7 by the accepted
+  roadmap correction** (REvoDesign is a method-specific interactive design app;
+  OpenBio is a design reference — neither is a REvoLab backend). No driver or
+  Core branch for either exists.
 - Production secret-manager integration: the Secret store remains the
   non-production in-memory adapter (see disclosure above); a production-grade
   backend is deferred until explicitly configured.

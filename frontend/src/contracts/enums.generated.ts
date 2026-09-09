@@ -36,3 +36,9 @@ export const PROJECT_VISIBILITIES: readonly components['schemas']['ProjectVisibi
 export const TOOL_SOURCES: readonly components['schemas']['ToolSource'][] = ["domain","provider"] as const
 
 export const AGENT_TOOL_AUTONOMIES: readonly components['schemas']['AgentToolAutonomy'][] = ["automatic","policy","explicit_action"] as const
+
+export const TOOL_EXECUTION_CLASSES: readonly components['schemas']['ToolExecutionClass'][] = ["local","remote"] as const
+
+export const TOOL_SIDE_EFFECT_CLASSES: readonly components['schemas']['ToolSideEffectClass'][] = ["read_only","creates_derived_result","creates_project_truth","external_action"] as const
+
+export const TOOL_RESULT_KINDS: readonly components['schemas']['ToolResultKind'][] = ["ephemeral","artifact","evidence","decision","scientific_object","run_reference"] as const

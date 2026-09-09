@@ -36,6 +36,9 @@ const ENUM_NAMES = [
   'ProjectVisibility',
   'ToolSource',
   'AgentToolAutonomy',
+  'ToolExecutionClass',
+  'ToolSideEffectClass',
+  'ToolResultKind',
 ]
 
 describe('generated API contract boundary', () => {

@@ -159,10 +159,13 @@ External systems own their capabilities and execution truth.
 
 - **Purpose:** the boundary between Core and external execution/lookup/design.
 - **Owned concepts:** Provider, Driver, Capability, capability discovery, typed
-  CapabilityError. **Not owned here:** `Tool` (the Agent Context domain owns the
-  agent-facing Tool projection), `ExternalProviderCredentialBinding` (the Identity /
-  Collaboration domain owns the non-secret binding), and secret material (the
-  Credential/Secret store owns it; see `PROVIDER_CAPABILITIES.md`).
+  CapabilityError. **Not owned here:** `Tool` (the Project Tool Harness owns the
+  first-class Tool abstraction + the closed Local Tool Runtime; the Agent and the
+  workspace consume one ToolCatalog — see `PROJECT_TOOL_HARNESS.md`),
+  `ExternalProviderCredentialBinding` (the Identity / Collaboration domain owns the
+  non-secret binding), and secret material (the Credential/Secret store owns it; see
+  `PROVIDER_CAPABILITIES.md`). A Driver is only an implementation detail behind a
+  Tool that crosses an external boundary.
 - **Owned mutable state:** in-process driver lifecycle (startup only), availability
   projections.
 - **Owned invariants:**
@@ -182,13 +185,16 @@ External systems own their capabilities and execution truth.
 - **Purpose:** give the Agent a bounded, reference-based view of project truth and
   typed ways to act, without making it an owner.
 - **Owned concepts:** ProjectContext (value object), ContextSelection,
-  ContextBuilder (read-only), AgentSession (ephemeral), ToolCatalog, SkillCatalog.
+  ContextBuilder (read-only), AgentSession (ephemeral), SkillCatalog. The Agent
+  **consumes** the Project Tool Harness's ToolCatalog (Phase 7); it does not own it.
 - **Owned mutable state:** none in the durable graph (sessions are ephemeral).
 - **Owned invariants:** chat history is not project truth; context references large
   artifacts instead of embedding them; the agent never raw-writes.
-- **Public contracts:** context assembly, typed tool calls, skill loading.
-- **Dependencies:** Project, Evidence/Provenance, Knowledge/Decision, Provider
-  (for tools), Identity/Collaboration (authority). The Agent is a consumer of these.
+- **Public contracts:** context assembly, typed tool calls (via the shared
+  ToolCatalog), skill loading.
+- **Dependencies:** Project, Evidence/Provenance, Knowledge/Decision, Project Tool
+  Harness (for tools), Identity/Collaboration (authority). The Agent is a consumer
+  of these.
 - **Non-responsibilities:** owning the database; being the persistence layer; RAG.
 
 ### 7. Identity / Collaboration Domain

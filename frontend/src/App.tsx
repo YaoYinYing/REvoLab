@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  BarChart3,
   BookOpen,
   Bot,
   Boxes,
@@ -31,6 +32,7 @@ import { OverviewView } from './views/Overview'
 import { ProvidersView } from './views/Providers'
 import { RunsAndArtifactsView } from './views/RunsAndArtifacts'
 import { SettingsView } from './views/Settings'
+import { ToolsView } from './views/Tools'
 
 type View =
   | 'overview'
@@ -43,6 +45,7 @@ type View =
   | 'knowledge'
   | 'providers'
   | 'compute'
+  | 'analyze'
   | 'settings'
 
 const NAV = [
@@ -50,6 +53,7 @@ const NAV = [
   { view: 'objects', label: 'Objects', icon: ListTree },
   { view: 'agent', label: 'Agent', icon: Bot },
   { view: 'compute', label: 'Compute', icon: Play },
+  { view: 'analyze', label: 'Analyze', icon: BarChart3 },
   { view: 'evidence', label: 'Evidence', icon: Boxes },
   { view: 'runs', label: 'Runs & Artifacts', icon: Server },
   { view: 'decisions', label: 'Decisions', icon: FileText },
@@ -271,6 +275,7 @@ export function App() {
           {view === 'compute' ? (
             <ComputeView actorId={actorId} projectId={projectId} initialRevisionId={computeRevisionId} />
           ) : null}
+          {view === 'analyze' ? <ToolsView actorId={actorId} projectId={projectId} /> : null}
           {view === 'evidence' ? <EvidenceView actorId={actorId} projectId={projectId} /> : null}
           {view === 'runs' ? <RunsAndArtifactsView actorId={actorId} projectId={projectId} /> : null}
           {view === 'decisions' ? <DecisionsView actorId={actorId} projectId={projectId} /> : null}

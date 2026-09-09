@@ -294,6 +294,7 @@ project roots are:
   ├── decision-record/
   ├── project-context/
   ├── artifact-inspection/
+  ├── project-tool-harness/
   └── driver-development/
 ```
 
@@ -318,7 +319,7 @@ prompt.
 | Category | Examples | Meaning |
 |----------|----------|---------|
 | A. Constitutional | `project-architecture`, `architecture-review`, `security-boundaries`, `engineering-workflow` | How to develop REvoLab; almost never changes |
-| B. Domain | `scientific-object-model`, `provenance-lineage`, `decision-record`, `project-context`, `artifact-inspection` | What things in the REvoLab world mean; evolves with the product |
+| B. Domain | `scientific-object-model`, `provenance-lineage`, `decision-record`, `project-context`, `artifact-inspection`, `project-tool-harness` | What things in the REvoLab world mean; evolves with the product |
 | C. Integration | `revocompute`, `revodesign`, `openbio` | How to correctly use an external capability; exists only when the provider exists |
 
 ---

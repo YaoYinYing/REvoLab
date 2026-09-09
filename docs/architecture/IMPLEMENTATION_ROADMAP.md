@@ -78,8 +78,8 @@ reason and the phase that resolves it:
 | **Relation physical schema** (one table shared by the two edge kinds vs edge-family tables; uniqueness/supersession key) | **Deferred to the Phase-1 executable spike** — see `SCIENTIFIC_GRAPH.md` (the single source for the logical graph contract; do NOT freeze the physical shape in PR1 — ownership/lifecycle are already frozen) | Phase 1 |
 | **Evidence kind/role enums** (incl. `hypothesis` role) | **Decided** — in `EVIDENCE_PROVENANCE.md` | Phase 1 |
 | **Actor / identity persistence** | **Shape decided** (opaque UUID Actor; `ProjectMembership`/`ResourceStewardship`/`MutationGrant` in `COLLABORATION_IDENTITY.md`); the authority-substrate tables are built in Phase 1, credential binding in Phase 3 — not reopened | Phase 1 (authority substrate), Phase 3 (credential binding) |
-| **OpenBio cache semantics** | **Decided** — `ExternalReference` = `ExternalIdentity` FK + resolver/cache metadata (checksum, as_of), never a snapshot copy | Phase 7 |
-| **SessionReference / ExternalReference node types; import via `imported_as` edge (no separate ImportRecord node)** | **Decided** in `SCIENTIFIC_GRAPH.md` / `EVIDENCE_PROVENANCE.md` | Phase 1/7 |
+| **OpenBio cache semantics** | **Decided** — `ExternalReference` = `ExternalIdentity` FK + resolver/cache metadata (checksum, as_of), never a snapshot copy | deferred external-knowledge phase (not Phase 7) |
+| **SessionReference / ExternalReference node types; import via `imported_as` edge (no separate ImportRecord node)** | **Decided** in `SCIENTIFIC_GRAPH.md` / `EVIDENCE_PROVENANCE.md` | Phase 1 (implemented) / deferred external-knowledge phase |
 
 No architectural question is silently postponed: where an item is deferred it is
 explicitly named, with its resolved-in phase.
@@ -201,17 +201,37 @@ collaboration/sharing and the agent.
   write; chat history never appears in the graph.
 - **Non-goals:** chat UI polish, RAG.
 
-### Phase 7 — REvoDesign & OpenBio integration
+### Phase 7 — Project Tool Harness & Analysis Runtime
 
-- **Goal:** interactive design and external biological knowledge fit without
-  special-case Core logic.
-- **Owned domains:** Provider/Capability, Evidence/Provenance.
-- **Vertical slice:** `DesignCapability`/`InteractiveHandoffCapability`;
-  `SearchCapability` over OpenBio; import boundary (ExternalReference →
-  ScientificObject only via explicit import).
-- **Acceptance evidence:** a design export produces an object + provenance chain
-  without Core branching; an OpenBio lookup can be cached, imported, or used as
-  evidence — three distinct outcomes; Core depends only on capability Protocols.
+> **Architectural correction (supersedes the earlier REvoDesign/OpenBio Phase 7).**
+> REvoLab is a project-centered scientific Harness; REvoCompute is its primary
+> heavyweight execution backend. REvoDesign is a method-specific interactive
+> design application, and OpenBio is a design reference — neither is a REvoLab
+> backend. Phase 7 therefore does **not** integrate them.
+
+- **Goal:** make **Tool a first-class Project Harness abstraction** (the explicit
+  execution surface of the Project) while keeping Driver/Capability as
+  implementation details behind external boundaries; build the smallest closed
+  typed **Local Tool Runtime** for bounded lightweight Project analysis; project
+  the existing REvoCompute path through the same ToolCatalog rather than
+  duplicating it.
+- **Owned domains:** Project Tool Harness (new), Provider/Capability (projection),
+  Evidence/Provenance + Knowledge (result/promotion semantics), Presentation.
+- **Vertical slice:** a canonical Tool schema consumed by both the human workspace
+  and the Agent; local analysis tools (`artifact.inspect`, `table.describe`,
+  `table.select`, `plot.xy`); a Local Tool Runtime (lookup → schema validation →
+  authorization → typed implementation → typed output → `ToolResult`); local
+  tools plus remote REvoCompute tools in one ToolCatalog; a REvoCompute-produced
+  artifact analyzed by a local REvoLab Tool.
+- **Acceptance evidence:** one real local-analysis flow (Artifact → table tool →
+  derived result → optional persisted artifact → Evidence → Decision draft) and
+  one remote flow (REvoCompute submit → ArtifactReference → local analysis Tool),
+  with explicit ephemeral-vs-persisted result semantics and the Evidence/Decision
+  promotion boundary intact. REvoCompute remains the sole heavyweight backend and
+  no arbitrary Python/shell/SQL/filesystem/HTTP execution surface exists.
+- **Non-goals:** REvoDesign/OpenBio integration, authentication, notebooks,
+  arbitrary execution, workflow engines, LLM infrastructure, background-job
+  queues, a full scientific-analysis suite.
 
 ---
 

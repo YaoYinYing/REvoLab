@@ -30,6 +30,9 @@ const enumNames = [
   'ProjectVisibility',
   'ToolSource',
   'AgentToolAutonomy',
+  'ToolExecutionClass',
+  'ToolSideEffectClass',
+  'ToolResultKind',
 ]
 
 const constName = (name) =>
@@ -51,6 +54,9 @@ const constName = (name) =>
     ProjectVisibility: 'PROJECT_VISIBILITIES',
     ToolSource: 'TOOL_SOURCES',
     AgentToolAutonomy: 'AGENT_TOOL_AUTONOMIES',
+    ToolExecutionClass: 'TOOL_EXECUTION_CLASSES',
+    ToolSideEffectClass: 'TOOL_SIDE_EFFECT_CLASSES',
+    ToolResultKind: 'TOOL_RESULT_KINDS',
   })[name]
 
 const lines = [

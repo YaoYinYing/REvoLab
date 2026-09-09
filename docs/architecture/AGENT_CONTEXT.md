@@ -27,6 +27,12 @@ proposer*, never the owner. Chat is working memory; the DB is durable truth.
 | **AgentSession** | ephemeral conversation container (prompt + ProjectContext + catalogs). Explicitly not persistent, not truth | chat becoming durable truth |
 | **ToolCatalog / SkillCatalog** | thin mappers: typed, capability-derived tool calls; task → which skills load (never a content DB) | raw agent writes; always-on skill encyclopedia |
 
+> Phase 7 reframing: the canonical `ToolCatalog` is owned by the **Project Tool
+> Harness** (`docs/architecture/PROJECT_TOOL_HARNESS.md`). The Agent consumes the
+> exact same catalog as the human workspace — there is no separate Agent-tool truth.
+> "Read context" is the context-assembly step (the `/context` fetch), not a Tool
+> inside the catalog.
+
 **Explicitly rejected** (overengineering): no AgentMemory DB wrapper, no RAG/
 semantic-index pipeline, no generic AgentGateway, no always-on skill encyclopedia.
 

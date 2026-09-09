@@ -204,8 +204,55 @@ class AgentToolAutonomy(StrEnum):
     - `explicit_action`: an operation with side effects or truth-promotion that
       is never auto-executed by the Agent loop — it requires an explicit,
       authorized Actor action (e.g. committing a Decision, submitting compute).
+
+    This is the SINGLE canonical authority truth for Project Tools. The
+    `never_agent` class (membership, credential, destructive operations) is
+    represented by never projecting such an operation as a Tool at all — it is
+    not a fourth wire value.
     """
 
     AUTOMATIC = "automatic"
     POLICY = "policy"
     EXPLICIT_ACTION = "explicit_action"
+
+
+class ToolExecutionClass(StrEnum):
+    """Where a Project Tool actually runs (TODO.md section 3/6).
+
+    `local` tools are bounded, closed, in-process REvoLab operations (the Local
+    Tool Runtime). `remote` tools are projected Provider capabilities whose
+    execution truth stays with the external system (REvoCompute); they are
+    invoked through the existing capability endpoints, never the local runtime.
+    """
+
+    LOCAL = "local"
+    REMOTE = "remote"
+
+
+class ToolSideEffectClass(StrEnum):
+    """What a successful Project Tool invocation may durably produce (TODO.md
+    section 3/8). Persistence semantics are declared by the tool and enforced by
+    the runtime — a ToolResult is never promoted to project truth automatically.
+
+    `creates_derived_result` covers any durable NON-truth resource the tool
+    persists through a typed domain operation — locally derived analysis
+    artifacts (CSV/plot spec), or harvested external reference identity cards —
+    never an Evidence/Decision promotion."""
+
+    READ_ONLY = "read_only"
+    CREATES_DERIVED_RESULT = "creates_derived_result"
+    CREATES_PROJECT_TRUTH = "creates_project_truth"
+    EXTERNAL_ACTION = "external_action"
+
+
+class ToolResultKind(StrEnum):
+    """The durable kind of a ToolResult: what the invocation produced (TODO.md
+    section 7). `ephemeral` results are never persisted; every other kind names a
+    durable REvoLab resource recorded through a typed domain operation."""
+
+    EPHEMERAL = "ephemeral"
+    ARTIFACT = "artifact"
+    EVIDENCE = "evidence"
+    DECISION = "decision"
+    SCIENTIFIC_OBJECT = "scientific_object"
+    RUN_REFERENCE = "run_reference"

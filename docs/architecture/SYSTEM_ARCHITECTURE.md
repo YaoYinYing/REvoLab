@@ -132,7 +132,7 @@ The eight domains and their one-line purpose (detailed in
 | Evidence / Provenance | references, evidence claims, and lineage edges |
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
 | Provider / Capability | providers, drivers, capabilities, capability schemas |
-| Agent Context | project-scoped context, tools, skills, and the agent loop |
+| Agent Context | project-scoped context, skill resolution, and the agent loop (the Agent consumes the Project Tool Harness's canonical ToolCatalog) |
 | Identity / Collaboration | actors, authentication identities, membership, roles, credential **bindings** (`ExternalProviderCredentialBinding`: actor + provider + kind + `secret_ref`; the secret **material** lives in the Secret store) |
 | Presentation / Workspace | API surface and the user workspace information architecture |
 
@@ -347,6 +347,7 @@ direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 | `SCIENTIFIC_GRAPH.md` | Relation/edge semantics and the knowledge graph |
 | `EVIDENCE_PROVENANCE.md` | Evidence, Run/Artifact/Literature references, Decision, promotion |
 | `PROVIDER_CAPABILITIES.md` | Provider/Driver/Capability/Tool/Credential; REvoCompute/REvoDesign/OpenBio contracts |
+| `PROJECT_TOOL_HARNESS.md` | The first-class Tool abstraction, ToolCatalog, local vs remote execution, authority, result semantics, Agent/frontend projection |
 | `AGENT_CONTEXT.md` | Context selection, tools, skills, safety/authority |
 | `COLLABORATION_IDENTITY.md` | Identity, sharing, persistence, lifecycle/deletion, event/audit |
 | `WORKSPACE_INFORMATION_ARCHITECTURE.md` | The product surface and API/frontend contract |
