@@ -10,19 +10,28 @@ test('scientific vertical slice commits a decision to durable project truth', as
   await page.goto('/')
 
   // Project context (created through the real API if the workspace is empty).
+  // The dev server compiles on first request, so wait for whichever state the
+  // workspace reaches — the first-project gate or the already-initialized shell
+  // — instead of probing with a single instantaneous isVisible() check.
+  const navigation = page.getByRole('navigation', { name: 'Project navigation' })
   const gate = page.getByRole('heading', { name: 'Welcome to REvoLab' })
-  if (await gate.isVisible().catch(() => false)) {
+
+  const initial = await Promise.race([
+    navigation.waitFor({ state: 'visible', timeout: 20_000 }).then(() => 'shell' as const),
+    gate.waitFor({ state: 'visible', timeout: 20_000 }).then(() => 'gate' as const),
+  ]).catch(() => {
+    throw new Error('workspace did not reach a usable state on first load')
+  })
+
+  if (initial === 'gate') {
     await page.getByRole('button', { name: 'Create project' }).first().click()
-  }
-  // If a project already exists the shell is shown directly; otherwise create one.
-  if (await page.getByPlaceholder('Project name').isVisible().catch(() => false)) {
     await page.getByPlaceholder('Project name').fill(`Smoke Project ${Date.now()}`)
     await page.getByRole('button', { name: 'Create project' }).click()
   }
 
   // Enter the Objects workspace.
-  await expect(page.getByRole('navigation', { name: 'Project navigation' })).toBeVisible()
-  await page.getByRole('navigation', { name: 'Project navigation' }).getByRole('button', { name: 'Objects' }).click()
+  await expect(navigation).toBeVisible()
+  await navigation.getByRole('button', { name: 'Objects' }).click()
 
   // Create a real ScientificObject through the typed API client.
   const objectName = `T5alphaH ${Date.now()}`
@@ -57,7 +66,8 @@ test('scientific vertical slice commits a decision to durable project truth', as
 
   // Reload and refetch: committed truth survives and is visible in Knowledge.
   await page.reload()
-  await page.getByRole('navigation', { name: 'Project navigation' }).getByRole('button', { name: 'Knowledge' }).click()
+  await expect(navigation).toBeVisible()
+  await navigation.getByRole('button', { name: 'Knowledge' }).click()
   await expect(page.getByText(statement)).toBeVisible()
   await expect(page.locator('.list-row', { hasText: decisionTitle }).getByText('committed', { exact: true })).toBeVisible()
 })
