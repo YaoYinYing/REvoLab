@@ -197,7 +197,9 @@ def test_uuid_possession_is_not_share_authority(session):
 def test_share_unknown_resource_is_not_found(session):
     owner = _actor(session)
     project = services.create_project(session, owner, "P")
-    with pytest.raises(NotFoundError):
+    # Defense-in-depth: an actor with no read path to the resource is denied as
+    # unauthorized rather than told whether the UUID exists (no existence oracle).
+    with pytest.raises(AuthorizationError):
         services.share_resource(session, owner, project.id, uuid4())
 
 
@@ -435,3 +437,99 @@ def test_deleting_one_project_preserves_shared_resource_and_the_other_context(se
     assert [d["id"] for d in detail_b["decisions"]] == [str(b_decision.id)]
     assert session.get(Evidence, b_evidence.id).archived_at is None
     assert session.get(Decision, b_decision.id).archived_at is None
+
+
+# ---------------------------------------------------------------------------
+# P1 (PR review): existing-reference reuse must not bypass sharing authority
+# ---------------------------------------------------------------------------
+
+
+def _reference_fixture(session):
+    actor_a = services.create_actor(session)
+    actor_c = services.create_actor(session)
+    a = services.create_project(session, actor_a, "A")
+    c = services.create_project(session, actor_c, "C")
+    run = services.create_run_reference(session, actor_a, a.id, "revocompute", "run-private")
+    sess_ref = services.create_session_reference(session, actor_a, a.id, "revocompute", "sess-private")
+    artifact = services.create_artifact_reference(
+        session, actor_a, a.id, "revocompute", "art-private",
+        content_type="text/plain", size=3, checksum="abc", version_id="v1",
+    )
+    literature = services.create_literature_reference(session, actor_a, a.id, "doi", "10.1/private")
+    return actor_a, actor_c, a, c, run, sess_ref, artifact, literature
+
+
+def test_existing_reference_identity_is_not_share_authority(session):
+    _actor_a, actor_c, _a, c, run, sess_ref, artifact, literature = _reference_fixture(session)
+    # actor_c knows every durable external identity but has no read path to any
+    # of them: reuse must be denied for every reference kind.
+    with pytest.raises(AuthorizationError):
+        services.create_run_reference(session, actor_c, c.id, "revocompute", "run-private")
+    with pytest.raises(AuthorizationError):
+        services.create_session_reference(session, actor_c, c.id, "revocompute", "sess-private")
+    with pytest.raises(AuthorizationError):
+        services.create_artifact_reference(
+            session, actor_c, c.id, "revocompute", "art-private",
+            content_type="text/plain", size=3, checksum="abc", version_id="v1",
+        )
+    with pytest.raises(AuthorizationError):
+        services.create_literature_reference(session, actor_c, c.id, "doi", "10.1/private")
+    # Nothing leaked into the target Project's link set.
+    assert run.run_id not in {
+        link.resource_id
+        for link in session.scalars(
+            select(ProjectResourceLink).where(ProjectResourceLink.project_id == c.id)
+        )
+    }
+    assert sess_ref.session_id not in {
+        link.resource_id
+        for link in session.scalars(
+            select(ProjectResourceLink).where(ProjectResourceLink.project_id == c.id)
+        )
+    }
+    assert artifact.artifact_id not in {
+        link.resource_id
+        for link in session.scalars(
+            select(ProjectResourceLink).where(ProjectResourceLink.project_id == c.id)
+        )
+    }
+    assert literature.literature_id not in {
+        link.resource_id
+        for link in session.scalars(
+            select(ProjectResourceLink).where(ProjectResourceLink.project_id == c.id)
+        )
+    }
+
+
+def test_existing_reference_reuse_succeeds_when_source_visible(session):
+    actor_a, actor_c, a, c, run, _sess, _artifact, _literature = _reference_fixture(session)
+    # Idempotent already-visible reuse in the source Project.
+    again = services.create_run_reference(session, actor_a, a.id, "revocompute", "run-private")
+    assert again.run_id == run.run_id
+    # Source-read reuse into a second Project where the actor is a member.
+    services.add_membership(session, actor_c, c.id, actor_a, Role.MEMBER.value)
+    reused = services.create_run_reference(session, actor_a, c.id, "revocompute", "run-private")
+    assert reused.run_id == run.run_id
+    assert run.run_id in {
+        link.resource_id
+        for link in session.scalars(
+            select(ProjectResourceLink).where(ProjectResourceLink.project_id == c.id)
+        )
+    }
+
+
+# ---------------------------------------------------------------------------
+# P2 (PR review): concurrent duplicate shares must resolve as idempotent
+# ---------------------------------------------------------------------------
+
+
+def test_share_satisfied_helper_recognizes_link_state(session):
+    from revolab.services import _share_is_satisfied
+
+    a_owner, _b_owner, a, b, series, r1, _r2 = _two_actor_share(session)
+    # r1 was shared into B: both the revision and its owning series are visible.
+    assert _share_is_satisfied(session, b.id, series) is True
+    assert _share_is_satisfied(session, b.id, r1.revision_id) is True
+    # An A-private object is not visible through B.
+    other = services.create_object(session, a_owner, a.id, "ligand", "L", payload={"smiles": "CCO"})
+    assert _share_is_satisfied(session, b.id, other) is False

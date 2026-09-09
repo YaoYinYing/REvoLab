@@ -620,6 +620,47 @@ was rerun green:
 No Phase-5 migration was required (no `models.py`/migration change); the change
 remains additive and drift-checked.
 
+### GitHub review follow-up (P1 + P2 on `1e51543`)
+
+A further GitHub review of head `1e51543` found one authorization blocker and a
+concurrency-idempotence issue; both fixed without reopening the accepted
+collaboration architecture:
+
+- **P1 — existing-reference reuse no longer bypasses sharing authority.**
+  The existing-reference branches of `create_run_reference` /
+  `create_session_reference` / `create_artifact_reference` /
+  `create_literature_reference` now route through
+  `_authorize_existing_reference_link`, which permits linking an existing global
+  reference only when it is **already visible in the target Project**
+  (idempotent) or the Actor **can read it through another active Project** — the
+  same source-read authority as `share_resource`. Possession of
+  `(authority, native_id[, version_id])` is no longer authority to make another
+  Project's reference visible. Provider/byte-furnished paths have explicit
+  trusted internal helpers (`_persist_run_reference_trusted`,
+  `_persist_artifact_reference_trusted`) reached only from the Actor-scoped
+  capability call result (`record_compute_run` / `record_compute_artifacts`) or a
+  byte upload (`create_internal_artifact`) — never a client-controlled flag.
+  New negative regressions prove an Actor cannot link another Project's existing
+  Run/Session/Artifact/Literature reference merely by knowing its durable
+  external identity, and positive regressions prove idempotent and
+  source-visible reuse still succeed.
+- **P2 — concurrent duplicate shares are idempotent, not 409.** On the narrow
+  `uq_link_project_resource` race, `share_resource` now rolls back, re-reads the
+  committed link state, verifies the resource is visible (and, for a revision,
+  that the revision→series closure is satisfied via `_share_is_satisfied`, so the
+  concurrent winner's work counts as this request's success), and otherwise
+  re-raises. Unrelated `IntegrityError`s are never swallowed.
+- **Defense-in-depth** — `share_resource` now validates target membership and
+  share authority **before** reading the registry kind, so an Actor with no valid
+  read path gets `AuthorizationError` rather than a `NotFound` existence oracle;
+  the idempotent early-return still resolves the kind where the link already
+  exists.
+
+Verification after the fix (rerun in full): `ruff`, strict `mypy`, `pytest`
+**211 passed / 4 skipped**, PostgreSQL acceptance **4 passed** + `alembic check`
+no drift, frontend typecheck/test(11)/build + `check:contracts` clean, Playwright
+E2E **2 passed**.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

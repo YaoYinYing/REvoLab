@@ -540,6 +540,30 @@ def _visible_project_ids(session: Session, actor_id: UUID, resource_id: UUID) ->
     }
 
 
+def _authorize_existing_reference_link(
+    session: Session, actor_id: UUID, project_id: UUID, resource_id: UUID
+) -> None:
+    """Enforce the share-authority invariant for user/request-derived reuse of an
+    already-existing global reference (Run/Session/Artifact/Literature).
+
+    Possession of `(authority, native_id[, version_id])` is NOT authority to make
+    an existing global reference visible in another Project. Linking is allowed
+    only when:
+      * the reference is ALREADY visible in the target Project (idempotent), or
+      * the Actor can read it through another active Project — the same
+        source-read authority as `share_resource`.
+
+    Callers must have already validated target-Project membership.
+    """
+    if persistence.is_visible(session, project_id, resource_id):
+        return
+    sources = _visible_project_ids(session, actor_id, resource_id) - {project_id}
+    if not sources:
+        raise AuthorizationError(
+            "cannot link an existing reference the actor cannot read through another project"
+        )
+
+
 def share_resource(session: Session, actor_id: UUID, target_project_id: UUID, resource_id: UUID) -> ResourceKind:
     """First-class cross-Project share: make an already-existing global resource
     part of another Project's context (a `ProjectResourceLink` — the read lens).
@@ -561,27 +585,53 @@ def share_resource(session: Session, actor_id: UUID, target_project_id: UUID, re
     its owning Series into the TARGET Project (sibling revisions stay private).
     Nothing is copied: the same global `resource_id` becomes visible through the
     target Project's link set only.
+
+    Defense-in-depth: target membership is validated, then share authority (an
+    already-visible target link or a source read path) is checked BEFORE the
+    registry kind is read, so an Actor with no valid read path cannot use
+    `NotFound` vs `AuthorizationError` to probe global-resource existence.
     """
     mutation_capable_membership(session, actor_id, target_project_id)
-    kind = persistence.resource_kind(session, resource_id)
+    # Idempotent fast path: the read lens already exists. A visible link implies
+    # a real registered resource, so resolving the kind here is safe.
     if persistence.is_visible(session, target_project_id, resource_id):
-        return kind  # idempotent: the read lens already exists
+        return persistence.resource_kind(session, resource_id)
+    # Share authority before existence/kind: deny (403) whether or not the UUID
+    # exists, so global-resource existence is never leaked to an unauthorized
+    # caller.
     sources = _visible_project_ids(session, actor_id, resource_id) - {target_project_id}
     if not sources:
         raise AuthorizationError(
             "cannot share a resource the actor cannot read through another project"
         )
+    kind = persistence.resource_kind(session, resource_id)
     provenance.share_into_project(session, target_project_id, resource_id)
     try:
         session.commit()
     except IntegrityError as exc:
         session.rollback()
-        if _is_link_uniqueness_conflict(exc):
-            # A concurrent share won the same link insert: the read lens already
-            # exists, so the operation is idempotently satisfied.
-            raise ConflictError("resource is already linked through this project") from exc
-        raise
+        if not _is_link_uniqueness_conflict(exc):
+            raise
+        # A concurrent share won the same link insert. The unique constraint is
+        # the real guard; re-read the now-committed link state and treat the
+        # request as idempotently satisfied only if the winner actually produced
+        # the requested visible context (including the revision=>series closure).
+        if _share_is_satisfied(session, target_project_id, resource_id):
+            return kind
+        raise ConflictError("resource is already linked through this project") from exc
     return kind
+
+
+def _share_is_satisfied(session: Session, project_id: UUID, resource_id: UUID) -> bool:
+    """True when `resource_id` is now visible through `project_id` (and, for a
+    revision, its owning series is too). Post-rollback, this reads the concurrent
+    winner's committed link state."""
+    if not persistence.is_visible(session, project_id, resource_id):
+        return False
+    if persistence.resource_kind(session, resource_id) is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        series_id = persistence.revision_series_id(session, resource_id)
+        return persistence.is_visible(session, project_id, series_id)
+    return True
 
 
 def set_preferred_revision(
@@ -644,11 +694,95 @@ def _finalize_reference(session: Session, project_id: UUID, resource_id: UUID, r
     return row
 
 
-def _link_existing_reference(session: Session, project_id: UUID, resource_id: UUID, row: Any) -> Any:
+def _link_existing_reference(
+    session: Session, actor_id: UUID, project_id: UUID, resource_id: UUID, row: Any
+) -> Any:
+    """Link an already-existing global reference into a Project for a
+    request-derived caller, enforcing the share-authority invariant (the caller
+    must already be able to read it somewhere, or it must already be visible)."""
+    _authorize_existing_reference_link(session, actor_id, project_id, resource_id)
     persistence.link(session, project_id, resource_id)
     session.commit()
     session.refresh(row)
     return row
+
+
+def _persist_run_reference_trusted(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    authority: str,
+    native_id: str,
+    *,
+    task_type: str | None,
+    input_parameter_digest: str | None = None,
+    submitted_at: datetime | None = None,
+) -> Any:
+    """Trusted internal get-or-create for a run the Actor's capability call just
+    returned (the provider handed this exact `(authority, native_id)` back to the
+    Actor). This independent authority is the reason existing reuse here may link
+    into the Project without a separate source-read path. Never reached from a
+    client-controlled identity input."""
+    mutation_capable_membership(session, actor_id, project_id)
+    existing = provenance.find_run_reference(session, authority, native_id)
+    if existing is not None:
+        provenance.assert_reference_compatible(
+            existing,
+            task_type=task_type,
+            input_parameter_digest=input_parameter_digest,
+            submitted_at=submitted_at,
+        )
+        persistence.link(session, project_id, existing.run_id)
+        session.commit()
+        session.refresh(existing)
+        return existing
+    row = provenance.create_run_reference_row(
+        session,
+        authority,
+        native_id,
+        task_type=task_type,
+        input_parameter_digest=input_parameter_digest,
+        submitted_at=submitted_at,
+    )
+    return _finalize_reference(session, project_id, row.run_id, row)
+
+
+def _persist_artifact_reference_trusted(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    authority: str,
+    native_id: str,
+    *,
+    content_type: str | None = None,
+    size: int | None = None,
+    checksum: str | None = None,
+    version_id: str = "",
+) -> Any:
+    """Trusted internal get-or-create for an artifact that either (a) the Actor's
+    capability call just enumerated, or (b) the Actor just furnished the bytes
+    for (ContentStore `authority == revolab`). Independent authority; never
+    reached from a client-controlled identity input."""
+    mutation_capable_membership(session, actor_id, project_id)
+    existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
+    if existing is not None:
+        provenance.assert_reference_compatible(
+            existing, checksum=checksum, size=size, content_type=content_type
+        )
+        persistence.link(session, project_id, existing.artifact_id)
+        session.commit()
+        session.refresh(existing)
+        return existing
+    row = provenance.create_artifact_reference_row(
+        session,
+        authority,
+        native_id,
+        content_type=content_type,
+        size=size,
+        checksum=checksum,
+        version_id=version_id,
+    )
+    return _finalize_reference(session, project_id, row.artifact_id, row)
 
 
 def create_run_reference(
@@ -671,7 +805,7 @@ def create_run_reference(
             input_parameter_digest=input_parameter_digest,
             submitted_at=submitted_at,
         )
-        return _link_existing_reference(session, project_id, existing.run_id, existing)
+        return _link_existing_reference(session, actor_id, project_id, existing.run_id, existing)
     row = provenance.create_run_reference_row(
         session,
         authority,
@@ -689,7 +823,7 @@ def create_session_reference(
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_session_reference(session, authority, native_id)
     if existing is not None:
-        return _link_existing_reference(session, project_id, existing.session_id, existing)
+        return _link_existing_reference(session, actor_id, project_id, existing.session_id, existing)
     row = provenance.create_session_reference_row(session, authority, native_id)
     return _finalize_reference(session, project_id, row.session_id, row)
 
@@ -713,7 +847,7 @@ def create_artifact_reference(
         provenance.assert_reference_compatible(
             existing, checksum=checksum, size=size, content_type=content_type
         )
-        return _link_existing_reference(session, project_id, existing.artifact_id, existing)
+        return _link_existing_reference(session, actor_id, project_id, existing.artifact_id, existing)
     row = provenance.create_artifact_reference_row(
         session,
         authority,
@@ -738,7 +872,7 @@ def create_literature_reference(
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_literature_reference(session, authority, native_id)
     if existing is not None:
-        return _link_existing_reference(session, project_id, existing.literature_id, existing)
+        return _link_existing_reference(session, actor_id, project_id, existing.literature_id, existing)
     row = provenance.create_literature_reference_row(session, authority, native_id, title=title)
     return _finalize_reference(session, project_id, row.literature_id, row)
 
@@ -1003,7 +1137,7 @@ def create_internal_artifact(
 ) -> Any:
     mutation_capable_membership(session, actor_id, project_id)
     result = store.put(data, content_type=content_type)
-    return create_artifact_reference(
+    return _persist_artifact_reference_trusted(
         session,
         actor_id,
         project_id,
@@ -1112,7 +1246,7 @@ def record_compute_run(
     `consumed_as_input_by` edges for the external run. This stores only
     reference identity + scientific provenance — never the provider's mutable
     execution state."""
-    run = create_run_reference(
+    run = _persist_run_reference_trusted(
         session,
         actor_id,
         project_id,
@@ -1147,7 +1281,7 @@ def record_compute_artifacts(
     are recorded only when the provider reports them."""
     recorded: list[dict[str, Any]] = []
     for handle in artifacts:
-        artifact = create_artifact_reference(
+        artifact = _persist_artifact_reference_trusted(
             session,
             actor_id,
             project_id,
