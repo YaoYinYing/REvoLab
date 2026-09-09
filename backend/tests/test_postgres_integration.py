@@ -381,7 +381,7 @@ def test_phase7_tool_harness_vertical_slice_on_postgres(pg_session: Session, tmp
     )
 
     series_id = services.create_object(
-        pg_session, actor, project.id, "protein", "PG-Tool-Target", payload={"n": 1}
+        pg_session, actor, project.id, "protein", "PG-Tool-Target", payload={"organism": "PG"}
     )
     revision_id = pg_session.scalar(
         select(ScientificObjectRevision.revision_id)
