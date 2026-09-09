@@ -275,6 +275,11 @@ def test_project_description_can_be_cleared(client):
         headers=_headers(a),
     ).json()
     pid = project["id"]
+    # Omitting the description preserves it.
+    renamed = client.patch(f"/api/projects/{pid}", json={"name": "P2"}, headers=_headers(a))
+    assert renamed.status_code == 200
+    assert renamed.json()["description"] == "initial"
+    # An explicit null clears it.
     cleared = client.patch(
         f"/api/projects/{pid}", json={"description": None}, headers=_headers(a)
     )

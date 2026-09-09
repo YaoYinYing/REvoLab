@@ -6,7 +6,7 @@ import { apiErrorMessage } from '../api/client'
 import type { MembershipRead, ProjectRead, ProjectVisibility, Role } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, EnumSelect, ErrorBox, Field, Loading, Section } from '../components/ui'
-import { PROJECT_VISIBILITIES, ROLE_OWNER, ROLE_VIEWER, ROLES } from '../contracts/enums'
+import { PROJECT_VISIBILITIES, PROJECT_VISIBILITY_PRIVATE, ROLE_OWNER, ROLE_VIEWER, ROLES } from '../contracts/enums'
 
 function loadMembers(actorId: string, projectId: string): Promise<MembershipRead[]> {
   return projectApi(actorId).listMembers(projectId).then((res) => {
@@ -29,7 +29,7 @@ export function SettingsView({
   const project = projects.find((candidate) => candidate.id === projectId) ?? null
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [visibility, setVisibility] = useState<ProjectVisibility>('private')
+  const [visibility, setVisibility] = useState<ProjectVisibility>(PROJECT_VISIBILITY_PRIVATE)
   const [members, setMembers] = useState<MembershipRead[] | null>(null)
   const [membersError, setMembersError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
@@ -155,7 +155,7 @@ export function SettingsView({
                   <span className="mono">{membership.actor_id.slice(0, 8)}…</span>
                   {isSelf ? <Badge>you</Badge> : null}
                   <EnumSelect
-                    value={membership.role as Role}
+                    value={membership.role}
                     options={ROLES}
                     onChange={(role) => changeRole(membership.actor_id, role)}
                   />

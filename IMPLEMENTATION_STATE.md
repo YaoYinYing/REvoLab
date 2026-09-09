@@ -582,22 +582,33 @@ was rerun green:
   owning Series.
 - **P2** — race-path hardening: `add_membership`/`share_resource` map the
   relevant uniqueness `IntegrityError` to `ConflictError`; the final-required-
-  owner count is checked under `SELECT ... FOR UPDATE`.
+  owner count selects **all** of the Project's owner rows under
+  `SELECT ... FOR UPDATE` (counting excluding the target in Python), so
+  concurrent owner demotions serialize and the loser re-counts against the
+  committed owner set. The concurrent interleaving itself is not directly
+  thread-tested (SQLite `StaticPool` is single-connection; PostgreSQL is the
+  concurrency backstop) — the invariant is regression-tested sequentially.
 - **P2** — added regressions for immediate-effect role/membership changes
   (HTTP), caller-credential (never the sharer's) for shared artifact resolution,
-  and partially-privileged global-provenance-edge projection.
+  `read_only` revision-through-series resolution, and partially-privileged
+  global-provenance-edge projection.
 - **P2** — explicit source-of-share policy documented (`services.share_resource`
   docstring): source authority is the read lens (any readable membership), and a
   share mints only another read lens — no stewardship/mutation/credential
   transfer.
-- **P3 (applied)** — `get_evidence`/`get_decision` by-id now exclude archived
-  rows; `ProjectPatch` can clear the description (explicit `null` distinguished
-  from omission); `import_revision` asserts owning-series visibility;
-  frontend role/visibility literals derive from generated `ROLES`/
-  `PROJECT_VISIBILITIES` constants; Objects list renders a read-only badge;
-  dead `SettingsIcon` removed; docs use the canonical `shared_with_members`
-  wire value; CI PostgreSQL step label and PG-module docstring updated;
-  roster-visibility policy recorded in `COLLABORATION_IDENTITY.md`.
+- **P3 (behavior or UI, regression-tested where named)** — `ProjectPatch` clear
+  vs omit description (HTTP-tested); frontend role/visibility literals derive
+  from generated `ROLES`/`PROJECT_VISIBILITIES` constants (compile-time); the
+  others are code-only defense-in-depth/UI layer and are NOT separately
+  regression-tested: `get_evidence`/`get_decision` by-id exclude archived rows
+  (unreachable until per-row archival exists, because tombstone also removes
+  membership first), `import_revision` asserts owning-series visibility
+  (unreachable in practice because stewardship implies the series link), and the
+  Objects list read-only badge (render-only, backed by the tested `read_only`
+  projection). Dead `SettingsIcon` removed; docs use the canonical
+  `shared_with_members` wire value; CI PostgreSQL step label and PG-module
+  docstring updated; roster-visibility policy recorded in
+  `COLLABORATION_IDENTITY.md`.
 - **Rejected/out-of-scope P3s (with rationale):** `share_into_project` living in
   `provenance.py` and per-query read-projection scans predate Phase 5 and match
   accepted ownership (no change); `consumed_as_input_by` raw endpoint and the

@@ -217,7 +217,10 @@ def _is_link_uniqueness_conflict(exc: IntegrityError) -> bool:
     if diagnostics is not None:  # PostgreSQL psycopg
         return bool(diagnostics.constraint_name == "uq_link_project_resource")
     message = str(orig)
-    return "UNIQUE constraint failed" in message and "project_resource_links" in message
+    return (
+        "UNIQUE constraint failed" in message
+        and "project_resource_links.project_id" in message
+    )
 
 
 def _other_owner_count(session: Session, project_id: UUID, excluding_actor_id: UUID) -> int:
@@ -225,18 +228,25 @@ def _other_owner_count(session: Session, project_id: UUID, excluding_actor_id: U
 
     This is the single place the final-required-owner invariant is derived:
     membership/role changes must never leave an active Project with zero owners.
+
+    ALL owner rows of the Project are locked under `FOR UPDATE` (not just the
+    counted subset) so that concurrent owner demotions/removals serialize: the
+    second transaction blocks until the first commits, then re-counts against the
+    committed owner set — closing the check-then-act window that would otherwise
+    let two owners demote each other into a zero-owner Project. On SQLite the
+    clause is a no-op, but SQLite already serializes writes.
     """
-    return len(
+    owner_ids = list(
         session.scalars(
             select(ProjectMembership.actor_id)
             .where(
                 ProjectMembership.project_id == project_id,
                 ProjectMembership.role == Role.OWNER.value,
-                ProjectMembership.actor_id != excluding_actor_id,
             )
             .with_for_update()
         ).all()
     )
+    return sum(1 for actor in owner_ids if actor != excluding_actor_id)
 
 
 def _require_membership(session: Session, project_id: UUID, member_actor_id: UUID) -> ProjectMembership:
