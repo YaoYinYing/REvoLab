@@ -216,4 +216,27 @@ h3 { margin: 0 0 8px; font-size: 12px; }
   .main-pane { padding: 20px 16px 45px; }
   .form-grid, .metric-grid, .identity-grid, .trail-grid { grid-template-columns: 1fr; }
 }
+.provider-register { display: grid; gap: 12px; }
+.provider-row {
+  display: grid; gap: 12px; padding: 16px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+}
+.provider-row-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.provider-identity { display: flex; align-items: center; gap: 9px; font-size: 13px; }
+.provider-identity svg { color: var(--accent); flex-shrink: 0; }
+.provider-identity .mono { color: #87938e; font-size: 9px; }
+.provider-description { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; max-width: 70ch; }
+.provider-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.provider-fact { display: grid; gap: 7px; align-content: start; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.capability-list { display: grid; gap: 6px; }
+.capability-entry {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 10px; background: var(--field); border: 1px solid var(--line); border-radius: 8px;
+  font-size: 11px;
+}
+
+@media (max-width: 700px) {
+  .provider-facts { grid-template-columns: 1fr; }
+}
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }

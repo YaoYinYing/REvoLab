@@ -8,6 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from revolab.db import Base, get_session
 from revolab.main import app
+from revolab.secret_store import InMemorySecretStore
 
 
 def _enable_fk(dbapi_connection, _record) -> None:  # type: ignore[no-untyped-def]
@@ -43,3 +44,9 @@ def client(engine: Engine) -> Iterator[TestClient]:
     with TestClient(app) as value:
         yield value
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def secret_store() -> Iterator[InMemorySecretStore]:
+    """A fresh, non-production, in-memory Secret store isolated per test."""
+    yield InMemorySecretStore()

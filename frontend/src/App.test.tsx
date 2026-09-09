@@ -45,6 +45,7 @@ vi.mock('./api/hooks', () => ({
     reload: vi.fn(),
   }),
   useResources: () => ({ data: [], loading: false, error: null, reload: vi.fn() }),
+  useProviders: () => ({ data: [], loading: false, error: null, reload: vi.fn() }),
 }))
 
 vi.mock('./api/backend', () => ({

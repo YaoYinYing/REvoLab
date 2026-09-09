@@ -70,4 +70,10 @@ test('scientific vertical slice commits a decision to durable project truth', as
   await navigation.getByRole('button', { name: 'Knowledge' }).click()
   await expect(page.getByText(statement)).toBeVisible()
   await expect(page.locator('.list-row', { hasText: decisionTitle }).getByText('committed', { exact: true })).toBeVisible()
+
+  // Providers tab consumes the real project-scoped catalog over the live API.
+  // With zero configured providers the honest empty state — not fixture data —
+  // must render.
+  await navigation.getByRole('button', { name: 'Providers' }).click()
+  await expect(page.getByText('No providers configured for this project.')).toBeVisible()
 })

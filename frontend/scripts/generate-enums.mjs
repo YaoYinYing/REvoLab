@@ -23,6 +23,9 @@ const enumNames = [
   'DecisionStatus',
   'ResourceKind',
   'EvidenceTargetKind',
+  'CapabilityKind',
+  'ProviderRuntimeHealth',
+  'CapabilityAvailability',
 ]
 
 const constName = (name) =>
@@ -37,6 +40,9 @@ const constName = (name) =>
     DecisionStatus: 'DECISION_STATUSES',
     ResourceKind: 'RESOURCE_KINDS',
     EvidenceTargetKind: 'EVIDENCE_TARGET_KINDS',
+    CapabilityKind: 'CAPABILITY_KINDS',
+    ProviderRuntimeHealth: 'PROVIDER_RUNTIME_HEALTHS',
+    CapabilityAvailability: 'CAPABILITY_AVAILABILITIES',
   })[name]
 
 const lines = [

@@ -22,3 +22,9 @@ export const DECISION_STATUSES: readonly components['schemas']['DecisionStatus']
 export const RESOURCE_KINDS: readonly components['schemas']['ResourceKind'][] = ["scientific_object_series","scientific_object_revision","run_reference","session_reference","artifact_reference","literature_reference","external_reference"] as const
 
 export const EVIDENCE_TARGET_KINDS: readonly components['schemas']['EvidenceTargetKind'][] = ["scientific_object_revision","decision","evidence"] as const
+
+export const CAPABILITY_KINDS: readonly components['schemas']['CapabilityKind'][] = ["compute","search","artifact_resolution","design","interactive_handoff"] as const
+
+export const PROVIDER_RUNTIME_HEALTHS: readonly components['schemas']['ProviderRuntimeHealth'][] = ["ready","degraded","unreachable"] as const
+
+export const CAPABILITY_AVAILABILITIES: readonly components['schemas']['CapabilityAvailability'][] = ["available","credential_missing","not_authorized","provider_unavailable"] as const

@@ -10,9 +10,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 from revolab.enums import (
+    CREDENTIAL_KIND_PATTERN,
+    PROVIDER_KEY_PATTERN,
+    CapabilityAvailability,
+    CapabilityKind,
     CitedAs,
     Confidence,
     DecisionStatus,
@@ -21,6 +25,7 @@ from revolab.enums import (
     EvidenceTargetKind,
     ObjectType,
     Polarity,
+    ProviderRuntimeHealth,
     RelationType,
     ResourceKind,
     Role,
@@ -353,3 +358,53 @@ class DecisionRead(BaseModel):
     superseded_by: UUID | None = None
     created_at: datetime | None = None
     committed_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Provider Catalog + Credential management (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+class CredentialPresenceRead(BaseModel):
+    kind: str  # provider-declared free vocabulary, never a Core enum
+    present: bool
+
+
+class ProviderCapabilityRead(BaseModel):
+    """One realized capability of a provider, with the calling Actor's derived
+    availability for that specific capability (the policy component of the
+    availability formula is operation-specific, so availability lives here)."""
+
+    kind: CapabilityKind
+    availability: CapabilityAvailability
+
+
+class ProviderRead(BaseModel):
+    """One non-secret Provider Catalog entry as seen by the calling Actor in a
+    Project. Never contains secret material, `secret_ref`, another Actor's
+    bindings, host env, or credential-store implementation detail."""
+
+    key: str
+    name: str
+    description: str | None = None
+    required_credential_kinds: list[str] = Field(default_factory=list)
+    health: ProviderRuntimeHealth
+    credential_presence: list[CredentialPresenceRead] = Field(default_factory=list)
+    capabilities: list[ProviderCapabilityRead] = Field(default_factory=list)
+
+
+class CredentialProvision(BaseModel):
+    provider_key: str = Field(pattern=PROVIDER_KEY_PATTERN)
+    kind: str = Field(pattern=CREDENTIAL_KIND_PATTERN)
+    secret_value: SecretStr  # write-only: never echoed, never serialized back
+
+
+class CredentialReplace(BaseModel):
+    secret_value: SecretStr
+
+
+class CredentialBindingRead(BaseModel):
+    """Presence/status only — no `secret_ref`, no secret material."""
+
+    provider_key: str
+    kind: str

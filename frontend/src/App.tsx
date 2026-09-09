@@ -241,7 +241,7 @@ export function App() {
           {view === 'runs' ? <RunsAndArtifactsView actorId={actorId} projectId={projectId} /> : null}
           {view === 'decisions' ? <DecisionsView actorId={actorId} projectId={projectId} /> : null}
           {view === 'knowledge' ? <KnowledgeView actorId={actorId} projectId={projectId} /> : null}
-          {view === 'providers' ? <ProvidersView /> : null}
+          {view === 'providers' ? <ProvidersView actorId={actorId} projectId={projectId} /> : null}
         </main>
 
         <ContextInspector detail={objectDetail.data} />

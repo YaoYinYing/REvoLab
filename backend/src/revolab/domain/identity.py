@@ -11,16 +11,27 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from revolab.domain.errors import AuthorizationError
+from revolab.domain.errors import AuthorizationError, ConflictError
 from revolab.domain.grants import MutationGrant
 from revolab.enums import Role
-from revolab.models import Project, ProjectMembership, ResourceStewardship
+from revolab.models import (
+    ExternalProviderCredentialBinding,
+    Project,
+    ProjectMembership,
+    ResourceStewardship,
+)
 
 __all__ = [
     "MutationGrant",
+    "add_credential_binding",
+    "binding_for",
     "can_mutate",
+    "credential_bindings",
+    "has_credential",
+    "list_credential_bindings",
     "mutation_capable_membership",
     "owner_membership",
     "readable_membership",
@@ -93,4 +104,110 @@ def can_mutate(
         actor_id=actor_id,
         role=membership.role,
         purpose=purpose,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Credential bindings (non-secret, Actor-scoped; owned by this domain)
+# ---------------------------------------------------------------------------
+
+
+def has_credential(session: Session, actor_id: UUID, provider_key: str, kind: str) -> bool:
+    """Derived presence query over the binding set — never stored material."""
+    return (
+        session.scalar(
+            select(ExternalProviderCredentialBinding.id).where(
+                ExternalProviderCredentialBinding.actor_id == actor_id,
+                ExternalProviderCredentialBinding.provider_key == provider_key,
+                ExternalProviderCredentialBinding.kind == kind,
+            )
+        )
+        is not None
+    )
+
+
+def binding_for(
+    session: Session, actor_id: UUID, provider_key: str, kind: str
+) -> ExternalProviderCredentialBinding | None:
+    return session.scalar(
+        select(ExternalProviderCredentialBinding).where(
+            ExternalProviderCredentialBinding.actor_id == actor_id,
+            ExternalProviderCredentialBinding.provider_key == provider_key,
+            ExternalProviderCredentialBinding.kind == kind,
+        )
+    )
+
+
+def credential_bindings(
+    session: Session, actor_id: UUID, provider_key: str
+) -> list[ExternalProviderCredentialBinding]:
+    return list(
+        session.scalars(
+            select(ExternalProviderCredentialBinding).where(
+                ExternalProviderCredentialBinding.actor_id == actor_id,
+                ExternalProviderCredentialBinding.provider_key == provider_key,
+            )
+        )
+    )
+
+
+def list_credential_bindings(
+    session: Session, actor_id: UUID
+) -> list[ExternalProviderCredentialBinding]:
+    return list(
+        session.scalars(
+            select(ExternalProviderCredentialBinding)
+            .where(ExternalProviderCredentialBinding.actor_id == actor_id)
+            .order_by(ExternalProviderCredentialBinding.created_at)
+        )
+    )
+
+
+def add_credential_binding(
+    session: Session,
+    actor_id: UUID,
+    provider_key: str,
+    kind: str,
+    secret_ref: str,
+) -> ExternalProviderCredentialBinding:
+    """Persist the non-secret binding row (secret material lives in the store.
+
+    `secret_ref` is an opaque locator — this domain never reads the material.
+    A race that slips past the pre-check and hits the database uniqueness
+    constraint is translated to the domain `ConflictError`; callers that have
+    already materialized a secret compensate it on the exception path.
+    """
+    if binding_for(session, actor_id, provider_key, kind) is not None:
+        raise ConflictError("credential binding already exists for this provider and kind")
+    binding = ExternalProviderCredentialBinding(
+        actor_id=actor_id,
+        provider_key=provider_key,
+        kind=kind,
+        secret_ref=secret_ref,
+    )
+    session.add(binding)
+    try:
+        session.flush()
+    except IntegrityError as exc:
+        if _is_binding_uniqueness_conflict(exc):
+            raise ConflictError(
+                "credential binding already exists for this provider and kind"
+            ) from exc
+        raise
+    return binding
+
+
+def _is_binding_uniqueness_conflict(exc: IntegrityError) -> bool:
+    """Narrow, backend-aware detection of the binding table's ONE unique
+    constraint. Unrelated integrity failures are re-raised untouched."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(
+            diagnostics.constraint_name == "uq_credential_binding_actor_provider_kind"
+        )
+    message = str(orig)
+    return (
+        "UNIQUE constraint failed" in message
+        and "external_provider_credential_bindings" in message
     )

@@ -18,7 +18,7 @@ const enumsTs = read('./enums.generated.ts')
 
 describe('generated API contract boundary', () => {
   it('committed openapi.json carries the backend-owned domain enums', () => {
-    for (const name of ['ObjectType', 'RelationType', 'EvidenceKind', 'EvidenceRole', 'Polarity', 'Confidence', 'CitedAs', 'DecisionStatus', 'ResourceKind', 'EvidenceTargetKind']) {
+    for (const name of ['ObjectType', 'RelationType', 'EvidenceKind', 'EvidenceRole', 'Polarity', 'Confidence', 'CitedAs', 'DecisionStatus', 'ResourceKind', 'EvidenceTargetKind', 'CapabilityKind', 'ProviderRuntimeHealth', 'CapabilityAvailability']) {
       const schema = spec.components.schemas[name]
       expect(schema, `missing enum schema ${name}`).toBeDefined()
       expect(Array.isArray(schema.enum), `${name} should be a closed enum`).toBe(true)
@@ -35,7 +35,7 @@ describe('generated API contract boundary', () => {
       expect(schemaDts, `schema.d.ts missing schema ${name}`).toContain(`${name}:`)
     }
     // Generated enum arrays stay in lockstep with the committed OpenAPI enum.
-    for (const name of ['ObjectType', 'RelationType', 'EvidenceKind', 'EvidenceRole', 'Polarity', 'Confidence', 'CitedAs', 'DecisionStatus', 'ResourceKind', 'EvidenceTargetKind']) {
+    for (const name of ['ObjectType', 'RelationType', 'EvidenceKind', 'EvidenceRole', 'Polarity', 'Confidence', 'CitedAs', 'DecisionStatus', 'ResourceKind', 'EvidenceTargetKind', 'CapabilityKind', 'ProviderRuntimeHealth', 'CapabilityAvailability']) {
       const values = spec.components.schemas[name].enum!
       expect(enumsTs, `enums.generated.ts missing ${name} values`).toContain(JSON.stringify(values))
     }
@@ -47,5 +47,8 @@ describe('generated API contract boundary', () => {
     expect(enumsTs).toContain('export const POLARITIES')
     expect(enumsTs).toContain('export const DECISION_STATUSES')
     expect(enumsTs).toContain('export const RESOURCE_KINDS')
+    expect(enumsTs).toContain('export const CAPABILITY_KINDS')
+    expect(enumsTs).toContain('export const PROVIDER_RUNTIME_HEALTHS')
+    expect(enumsTs).toContain('export const CAPABILITY_AVAILABILITIES')
   })
 })

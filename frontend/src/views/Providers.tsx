@@ -1,46 +1,106 @@
 import { Zap } from 'lucide-react'
 
-import { Badge } from '../components/ui'
+import { useProviders } from '../api/hooks'
+import type { CapabilityAvailability, CapabilityKind, ProviderRuntimeHealth } from '../api/types'
+import { Badge, Empty, ErrorBox, Loading } from '../components/ui'
+import { CAPABILITY_AVAILABILITIES, CAPABILITY_KINDS, PROVIDER_RUNTIME_HEALTHS } from '../contracts/enums.generated'
 
-// Phase-2 presentation-only capability surface. These are the Core-owned
-// capability kinds named in the accepted architecture; credential binding,
-// availability derivation and real drivers are Phase 3+ and intentionally
-// absent from this workspace.
-const CAPABILITIES = [
-  { kind: 'COMPUTE', label: 'Compute', description: 'Submit and track external executions.' },
-  { kind: 'SEARCH', label: 'Search', description: 'Look up literature and biological databases.' },
-  { kind: 'ARTIFACT_RESOLUTION', label: 'Artifact resolution', description: 'Resolve a durable reference to bytes on demand.' },
-  { kind: 'DESIGN', label: 'Design', description: 'Export interactive design results into objects.' },
-  { kind: 'INTERACTIVE_HANDOFF', label: 'Interactive handoff', description: 'Deep-link an object into an external interactive tool.' },
-]
+type Tone = 'neutral' | 'good' | 'warn'
 
-export function ProvidersView() {
+// Build maps keyed by the GENERATED closed-vocabulary arrays, so the frontend
+// never re-declares the value lists; only presentation rules are expressed here
+// (single source of truth for the values stays in OpenAPI).
+function complete<T extends string, V>(values: readonly T[], valueOf: (value: T) => V): Record<T, V> {
+  const map = {} as Record<T, V>
+  for (const value of values) map[value] = valueOf(value)
+  return map
+}
+
+function humanize(value: string): string {
+  return value
+    .split('_')
+    .map((word) => (word ? word[0]!.toUpperCase() + word.slice(1) : word))
+    .join(' ')
+}
+
+const CAPABILITY_LABEL = complete<CapabilityKind, string>(CAPABILITY_KINDS, humanize)
+const HEALTH_TONE = complete<ProviderRuntimeHealth, Tone>(PROVIDER_RUNTIME_HEALTHS, (value) =>
+  value === 'ready' ? 'good' : 'warn',
+)
+const AVAILABILITY_TONE = complete<CapabilityAvailability, Tone>(CAPABILITY_AVAILABILITIES, (value) =>
+  value === 'available' ? 'good' : value === 'not_authorized' ? 'neutral' : 'warn',
+)
+
+export function ProvidersView({ actorId, projectId }: { actorId: string; projectId: string }) {
+  const providers = useProviders(actorId, projectId)
+  const loaded = !providers.loading && !providers.error
+
   return (
     <div className="view">
       <div className="view-header">
         <h1>Providers</h1>
         <p>
-          Static capability surface. Credentials, secret material and derived availability belong to Phase 3 and are
-          not implemented here.
+          External capability providers visible to this project, projected through your identity.
+          Availability is derived per query and per capability from provider runtime state, your
+          credentials, and project access — it is never stored.
         </p>
       </div>
-      <section className="content-section">
-        <div className="card-grid">
-          {CAPABILITIES.map((capability) => (
-            <div className="card" key={capability.kind}>
-              <div className="card-head">
-                <Zap size={15} />
-                <strong>{capability.label}</strong>
+
+      {providers.loading ? <Loading label="Loading providers…" /> : null}
+      {providers.error ? <ErrorBox message={providers.error} /> : null}
+      {loaded && providers.data?.length === 0 ? (
+        <Empty label="No providers configured for this project." />
+      ) : null}
+
+      {loaded && providers.data?.length ? (
+        <section className="provider-register" aria-label="Provider catalog">
+          {providers.data.map((provider) => (
+            <article className="provider-row" key={provider.key}>
+              <div className="provider-row-head">
+                <div className="provider-identity">
+                  <Zap size={15} />
+                  <strong>{provider.name}</strong>
+                  <span className="mono">{provider.key}</span>
+                </div>
+                <Badge tone={HEALTH_TONE[provider.health]}>{provider.health}</Badge>
               </div>
-              <p>{capability.description}</p>
-              <div>
-                <Badge tone="warn">Phase 3</Badge>
-                <span className="mono"> {capability.kind}</span>
+
+              <p className="provider-description">{provider.description}</p>
+
+              <div className="provider-facts">
+                <div className="provider-fact">
+                  <span className="eyebrow">Capabilities · your availability</span>
+                  <div className="capability-list">
+                    {(provider.capabilities ?? []).map((capability) => (
+                      <div className="capability-entry" key={capability.kind}>
+                        <span>{CAPABILITY_LABEL[capability.kind]}</span>
+                        <Badge tone={AVAILABILITY_TONE[capability.availability]}>
+                          {capability.availability}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="provider-fact">
+                  <span className="eyebrow">Required credentials · yours</span>
+                  <div className="chip-row">
+                    {(provider.required_credential_kinds ?? []).map((kind) => {
+                      const status = (provider.credential_presence ?? []).find(
+                        (entry) => entry.kind === kind,
+                      )
+                      return (
+                        <Badge key={kind} tone={status?.present ? 'good' : 'warn'}>
+                          {kind}: {status?.present ? 'present' : 'missing'}
+                        </Badge>
+                      )
+                    })}
+                  </div>
+                </div>
               </div>
-            </div>
+            </article>
           ))}
-        </div>
-      </section>
+        </section>
+      ) : null}
     </div>
   )
 }

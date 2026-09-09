@@ -14,6 +14,7 @@ The acting Actor participates as an opaque UUID handed in by the API layer
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -23,21 +24,28 @@ from sqlalchemy.orm import Session
 
 from revolab.content_store import ContentStore
 from revolab.domain import knowledge, persistence, provenance, scientific_object
-from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundError
+from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from revolab.domain.identity import (
+    add_credential_binding,
+    binding_for,
     can_mutate,
     mutation_capable_membership,
     owner_membership,
 )
 from revolab.domain.identity import (
+    list_credential_bindings as identity_list_credential_bindings,
+)
+from revolab.domain.identity import (
     readable_membership as _readable_membership,
 )
-from revolab.enums import RelationType, ResourceKind, Role
+from revolab.drivers import DriverRegistry
+from revolab.enums import CapabilityKind, RelationType, ResourceKind, Role
 from revolab.models import (
     Actor,
     Decision,
     DecisionTarget,
     Evidence,
+    ExternalProviderCredentialBinding,
     GlobalProvenanceEdge,
     Project,
     ProjectMembership,
@@ -45,6 +53,7 @@ from revolab.models import (
     ResourceStewardship,
     ScientificObjectRevision,
 )
+from revolab.secret_store import SecretRef, SecretStore
 
 
 def readable_membership(session: Session, actor_id: UUID, project_id: UUID) -> object:
@@ -61,6 +70,55 @@ def _require_visible(session: Session, project_id: UUID, resource_id: UUID) -> N
 
 def _is_frozen(session: Session, evidence_id: UUID) -> bool:
     return provenance.is_frozen(session, evidence_id)
+
+
+# ---------------------------------------------------------------------------
+# Application policy + credential provider-kind validation
+# ---------------------------------------------------------------------------
+
+# Capability kinds whose "requested operation" is a read/projection. Action
+# capabilities (compute submission, design export, interactive handoff) require a
+# mutation-capable membership. This is the Phase-3 minimal policy, not an RBAC
+# engine: the ONLY authorization truth remains Phase-1 ProjectMembership roles.
+READ_ONLY_CAPABILITY_KINDS = frozenset(
+    {CapabilityKind.SEARCH, CapabilityKind.ARTIFACT_RESOLUTION}
+)
+
+
+def project_policy_permits(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    capability_kind: CapabilityKind,
+) -> bool:
+    """Application policy: does the Actor's Project membership permit invoking
+    this capability kind? Read-only kinds accept any readable membership; action
+    kinds require owner/member (mutation-capable). Derived per query, never
+    stored; a non-permitting membership returns False, not an exception."""
+    try:
+        if capability_kind in READ_ONLY_CAPABILITY_KINDS:
+            _readable_membership(session, actor_id, project_id)
+        else:
+            mutation_capable_membership(session, actor_id, project_id)
+    except AuthorizationError:
+        return False
+    return True
+
+
+def _require_provider_kind(
+    registry: DriverRegistry, provider_key: str, kind: str
+) -> None:
+    """A credential binding names a real Provider and one of its declared
+    required credential kinds (provider identity is registry truth, not an
+    arbitrary key/value vault)."""
+    try:
+        handle = registry.get(provider_key)
+    except LookupError as exc:  # LookupError -> NotFoundError at the boundary
+        raise NotFoundError(f"unknown provider: {provider_key}") from exc
+    if kind not in handle.driver.required_credential_kinds:
+        raise ValidationError(
+            f"credential kind {kind!r} is not required by provider {provider_key!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -645,3 +703,116 @@ def create_internal_artifact(
         size=result["size"],
         checksum=result["checksum"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Actor-scoped credential management (Secret store + non-secret binding saga)
+# ---------------------------------------------------------------------------
+#
+# Two non-transactional systems are coordinated (TODO.md section 7): the Secret
+# store write and the PostgreSQL binding row. Ordering is secret-first with the
+# binding COMMIT as the linearization point, plus best-effort compensation. This
+# is deliberately NOT a distributed transaction. Availability is binding
+# presence (ADR-0012); material presence is re-checked at lease time, so with a
+# non-durable Secret store a lost material raises explicitly rather than being
+# silently treated as still live. A failed post-commit material cleanup leaves an
+# unreachable orphan secret (never the reverse within the store's lifetime).
+
+logger = logging.getLogger(__name__)
+
+
+def _delete_material(store: SecretStore, old_ref: SecretRef, kind: str) -> None:
+    """Best-effort post-commit cleanup. Must not fail an already-committed bind
+    mutation; log loudly instead (kind only — never the reference or material)."""
+    try:
+        store.delete(old_ref)
+    except Exception:  # pragma: no cover - defensive compensation path
+        logger.error("failed to delete superseded secret material for credential kind %r", kind)
+
+
+def _require_actor(session: Session, actor_id: UUID) -> None:
+    if session.get(Actor, actor_id) is None:
+        raise NotFoundError("actor not found")
+
+
+def provision_credential(
+    session: Session,
+    store: SecretStore,
+    registry: DriverRegistry,
+    actor_id: UUID,
+    provider_key: str,
+    kind: str,
+    secret_value: str,
+) -> ExternalProviderCredentialBinding:
+    """Create an Actor-scoped binding. The Secret store owns the material; Core
+    persists only the resulting binding + opaque reference. `provider_key` must
+    name a registered Provider and `kind` one of its required credential kinds."""
+    _require_actor(session, actor_id)
+    _require_provider_kind(registry, provider_key, kind)
+    secret_ref = store.put(secret_value)
+    try:
+        binding = add_credential_binding(
+            session, actor_id, provider_key, kind, str(secret_ref)
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        store.delete(secret_ref)
+        raise
+    session.refresh(binding)
+    return binding
+
+
+def rotate_credential(
+    session: Session,
+    store: SecretStore,
+    registry: DriverRegistry,
+    actor_id: UUID,
+    provider_key: str,
+    kind: str,
+    secret_value: str,
+) -> ExternalProviderCredentialBinding:
+    """Explicit replacement/rotation: a new `secret_ref` supersedes the old one."""
+    _require_actor(session, actor_id)
+    _require_provider_kind(registry, provider_key, kind)
+    binding = binding_for(session, actor_id, provider_key, kind)
+    if binding is None:
+        raise NotFoundError("credential binding not found")
+    old_ref = SecretRef(binding.secret_ref)
+    new_ref = store.put(secret_value)
+    try:
+        binding.secret_ref = str(new_ref)
+        session.commit()
+    except Exception:
+        session.rollback()
+        store.delete(new_ref)
+        raise
+    session.refresh(binding)
+    _delete_material(store, old_ref, kind)
+    return binding
+
+
+def revoke_credential(
+    session: Session,
+    store: SecretStore,
+    actor_id: UUID,
+    provider_key: str,
+    kind: str,
+) -> None:
+    """Explicit revocation: hard-delete the binding, then best-effort delete the
+    secret material (the binding row is the durable truth)."""
+    _require_actor(session, actor_id)
+    binding = binding_for(session, actor_id, provider_key, kind)
+    if binding is None:
+        raise NotFoundError("credential binding not found")
+    old_ref = SecretRef(binding.secret_ref)
+    session.delete(binding)
+    session.commit()
+    _delete_material(store, old_ref, kind)
+
+
+def list_credential_bindings(
+    session: Session, actor_id: UUID
+) -> list[ExternalProviderCredentialBinding]:
+    """Actor-scoped read of the caller's own bindings (presence/status only)."""
+    return identity_list_credential_bindings(session, actor_id)

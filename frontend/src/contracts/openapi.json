@@ -29,6 +29,29 @@
         "title": "Body_upload_artifact_api_projects__project_id__artifacts_post",
         "type": "object"
       },
+      "CapabilityAvailability": {
+        "description": "Actor/Project derived projection of capability availability. Derived per\nquery, never stored (ADR-0012 / PROVIDER_CAPABILITIES).",
+        "enum": [
+          "available",
+          "credential_missing",
+          "not_authorized",
+          "provider_unavailable"
+        ],
+        "title": "CapabilityAvailability",
+        "type": "string"
+      },
+      "CapabilityKind": {
+        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.",
+        "enum": [
+          "compute",
+          "search",
+          "artifact_resolution",
+          "design",
+          "interactive_handoff"
+        ],
+        "title": "CapabilityKind",
+        "type": "string"
+      },
       "CitationCreate": {
         "properties": {
           "cited_as": {
@@ -64,6 +87,85 @@
         ],
         "title": "Confidence",
         "type": "string"
+      },
+      "CredentialBindingRead": {
+        "description": "Presence/status only \u2014 no `secret_ref`, no secret material.",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "provider_key": {
+            "title": "Provider Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_key",
+          "kind"
+        ],
+        "title": "CredentialBindingRead",
+        "type": "object"
+      },
+      "CredentialPresenceRead": {
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "present": {
+            "title": "Present",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "present"
+        ],
+        "title": "CredentialPresenceRead",
+        "type": "object"
+      },
+      "CredentialProvision": {
+        "properties": {
+          "kind": {
+            "pattern": "^[A-Za-z0-9._-]{1,100}$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "provider_key": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+            "title": "Provider Key",
+            "type": "string"
+          },
+          "secret_value": {
+            "format": "password",
+            "title": "Secret Value",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "provider_key",
+          "kind",
+          "secret_value"
+        ],
+        "title": "CredentialProvision",
+        "type": "object"
+      },
+      "CredentialReplace": {
+        "properties": {
+          "secret_value": {
+            "format": "password",
+            "title": "Secret Value",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "secret_value"
+        ],
+        "title": "CredentialReplace",
+        "type": "object"
       },
       "DecisionCreate": {
         "properties": {
@@ -1227,6 +1329,88 @@
         "title": "ProjectRead",
         "type": "object"
       },
+      "ProviderCapabilityRead": {
+        "description": "One realized capability of a provider, with the calling Actor's derived\navailability for that specific capability (the policy component of the\navailability formula is operation-specific, so availability lives here).",
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/CapabilityAvailability"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CapabilityKind"
+          }
+        },
+        "required": [
+          "kind",
+          "availability"
+        ],
+        "title": "ProviderCapabilityRead",
+        "type": "object"
+      },
+      "ProviderRead": {
+        "description": "One non-secret Provider Catalog entry as seen by the calling Actor in a\nProject. Never contains secret material, `secret_ref`, another Actor's\nbindings, host env, or credential-store implementation detail.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderCapabilityRead"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "credential_presence": {
+            "items": {
+              "$ref": "#/components/schemas/CredentialPresenceRead"
+            },
+            "title": "Credential Presence",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "health": {
+            "$ref": "#/components/schemas/ProviderRuntimeHealth"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required_credential_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Credential Kinds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "health"
+        ],
+        "title": "ProviderRead",
+        "type": "object"
+      },
+      "ProviderRuntimeHealth": {
+        "description": "Per-provider, driver-level, actor-independent runtime health. This is the\nonly per-provider state the registry tracks (never persisted).",
+        "enum": [
+          "ready",
+          "degraded",
+          "unreachable"
+        ],
+        "title": "ProviderRuntimeHealth",
+        "type": "string"
+      },
       "ReferenceRead": {
         "properties": {
           "authority": {
@@ -1785,6 +1969,243 @@
           }
         },
         "summary": "Get Actor By Id"
+      }
+    },
+    "/api/credentials": {
+      "get": {
+        "operationId": "list_my_credentials_api_credentials_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CredentialBindingRead"
+                  },
+                  "title": "Response List My Credentials Api Credentials Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List My Credentials"
+      },
+      "post": {
+        "operationId": "create_credential_api_credentials_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialProvision"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialBindingRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Credential"
+      }
+    },
+    "/api/credentials/{provider_key}/{kind}": {
+      "delete": {
+        "operationId": "revoke_credential_api_credentials__provider_key___kind__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Provider Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9._-]{1,100}$",
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Credential"
+      },
+      "put": {
+        "operationId": "replace_credential_api_credentials__provider_key___kind__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Provider Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9._-]{1,100}$",
+              "title": "Kind",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialReplace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialBindingRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Replace Credential"
       }
     },
     "/api/projects": {
@@ -3701,6 +4122,66 @@
           }
         },
         "summary": "Append Revision"
+      }
+    },
+    "/api/projects/{project_id}/providers": {
+      "get": {
+        "operationId": "list_project_providers_api_projects__project_id__providers_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderRead"
+                  },
+                  "title": "Response List Project Providers Api Projects  Project Id  Providers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Project Providers"
       }
     },
     "/api/projects/{project_id}/relations/consumed_as_input_by": {

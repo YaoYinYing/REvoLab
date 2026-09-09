@@ -94,6 +94,12 @@ export function projectApi(actorId: string) {
         headers,
         params: { path: { project_id: projectId }, query },
       }),
+
+    listProviders: (projectId: string) =>
+      api.GET('/api/projects/{project_id}/providers', {
+        headers,
+        params: { path: { project_id: projectId } },
+      }),
   }
 }
 
