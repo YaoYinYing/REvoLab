@@ -186,7 +186,14 @@ def _bounded_pending_arguments(validated: dict[str, Any], limit: int) -> dict[st
 
 class AgentTurnRunner:
     """Run one bounded Agent turn. Stateless across turns (context + catalog are
-    rebuilt fresh on every call), process-local only."""
+    rebuilt fresh on every call), process-local only.
+
+    Transaction contract: `run` is a sub-runtime, not a durable committer. Typed
+    domain writes it performs (policy truth tools) are FLUSHED but left
+    uncommitted (`commit=False`) so a wrapping persistence orchestration can make
+    the whole turn one transaction; the caller is responsible for the final
+    `session.commit()`. The production caller is
+    `revolab.agent.conversations.run_conversation_turn`."""
 
     def __init__(
         self,

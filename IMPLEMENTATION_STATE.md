@@ -1296,11 +1296,11 @@ every job.
   `ConversationTurnCreate` owns the turn request, and that the conversation
   create/patch/turn schemas all reject unknown fields (`additionalProperties:
   false`).
-- Frontend: `npm run typecheck`, `npm run test` (**21 tests** — the Phase-9
+- Frontend: `npm run typecheck`, `npm run test` (**22 tests** — the Phase-9
   Agent view: working-memory boundary, conversation list/restore, tool trace +
   pending action, failure state, project-switch clearing, deferred
-  cross-project response discard, and deferred cross-conversation response
-  discard), and `npm run build` pass.
+  cross-project response discard, deferred cross-conversation response discard,
+  and deferred initial-restore discard), and `npm run build` pass.
 - Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real
   SQLite + `REVOLAB_E2E_FAKE_MODEL=1` + `REVOLAB_E2E_FAKE_COMPUTE=1`): all
   **4 specs** pass; `agent.spec.ts` reloads after the first turn, verifies the
@@ -1361,6 +1361,14 @@ mid-run and block in its second model call, proving the second turn cannot reach
 the model until the first turn commits. All delta P2s (system-prompt/skill-body
 non-vacuousness, owner-side patch/run privacy, PG `termination_reason` CHECK)
 were also addressed.
+
+The second delta round confirmed the commit-threading fix with **PASS** on
+architecture/runtime and security/authority; the tests/contracts/frontend
+reviewer found one residual P1 — the initial-load restore guard unconditionally
+clamped the active-conversation ref while `send` was not gated on `loading`.
+Fixed by letting the ref follow only the programmatic auto-select (never a
+user's already-opened conversation) and disabling Send while the initial list
+loads; a dedicated initial-restore discard regression was added.
 
 
 

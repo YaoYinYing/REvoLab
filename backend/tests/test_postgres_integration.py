@@ -752,3 +752,19 @@ def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_
     # The second turn's model saw the first turn's persisted user message, proving
     # the record_draft-inside-turn path no longer breaks serialization.
     assert any(message.content == "A-message" for message in model_b.requests[0].messages)
+
+    # The mid-turn truth tool REALLY executed (not silently refused): its trace
+    # is COMPLETED and the Decision draft committed only when the turn committed.
+    from revolab.enums import DecisionStatus
+    from revolab.models import Decision
+
+    turn_a = results["A"]
+    trace_ids = [entry.tool_id for entry in turn_a.turn.tool_trace]
+    assert trace_ids == ["decision.record_draft"]
+    assert turn_a.turn.tool_trace[0].status.value == "completed"
+    with ORMSession(bind=engine) as check:
+        draft = check.scalar(
+            select(Decision).where(Decision.project_id == project.id).order_by(Decision.created_at.desc()).limit(1)
+        )
+        assert draft is not None
+        assert draft.status == DecisionStatus.DRAFT.value

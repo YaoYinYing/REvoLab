@@ -72,9 +72,11 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
         const list = res.data ?? []
         setConversations(list)
         const first = list[0]?.id ?? null
-        setActiveConversationId((current) => current ?? first)
-        if (first) {
+        if (first && activeConversationRef.current == null) {
+          setActiveConversationId(first)
           activeConversationRef.current = first
+        }
+        if (first) {
           const requestConversationId = first
           return projectApi(actorId)
             .getConversation(projectId, first, { limit: MESSAGE_PAGE_LIMIT, latest: true })
@@ -147,7 +149,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
 
   async function send(event: React.FormEvent) {
     event.preventDefault()
-    if (!input.trim() || busy || !actorId || !projectId) return
+    if (!input.trim() || busy || loading || !actorId || !projectId) return
     const userMessage = input.trim()
     setActionError(null)
     setBusy(true)
@@ -324,7 +326,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
             required
           />
           <div className="form-actions">
-            <Button type="submit" disabled={busy || !input.trim()}>
+            <Button type="submit" disabled={busy || loading || !input.trim()}>
               <Send size={15} /> {busy ? 'Running…' : 'Send'}
             </Button>
             {actionError ? <span className="inline-error">{actionError}</span> : null}

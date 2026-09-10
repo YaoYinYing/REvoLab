@@ -276,4 +276,52 @@ describe('Agent view (Phase 9)', () => {
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
     expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
   })
+
+  it('never renders conversation A restore after opening conversation B during initial load', async () => {
+    const conversationB = {
+      ...conversation,
+      id: '77777777-7777-4777-8777-777777777777',
+      title: 'Conversation B',
+    }
+    let resolveRestore!: (value: { data: unknown; error: undefined; response: Response }) => void
+    const pendingRestore = new Promise<{ data: unknown; error: undefined; response: Response }>(
+      (resolve) => {
+        resolveRestore = resolve
+      },
+    )
+    const restoredA = {
+      ...conversation,
+      messages: [turnRead.assistant_message!],
+      total_messages: 1,
+    }
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockResolvedValue({
+        data: [conversation, conversationB],
+        error: undefined,
+        response: new Response(),
+      }),
+      getConversation: vi.fn((projectId: string, conversationId: string) =>
+        conversationId === conversation.id
+          ? pendingRestore
+          : Promise.resolve({
+              data: { ...conversationB, messages: [], total_messages: 0 },
+              error: undefined,
+              response: new Response(),
+            }),
+      ),
+    } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+
+    // Switch to conversation B while A's initial restore fetch is still pending.
+    await user.click(await screen.findByRole('button', { name: /Conversation B/ }))
+
+    resolveRestore({ data: restoredA, error: undefined, response: new Response() })
+    await Promise.resolve()
+
+    expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
+    expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
+  })
 })
