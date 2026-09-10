@@ -8,6 +8,7 @@ generic relation writer.
 
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 from typing import Any
 from uuid import UUID
@@ -29,12 +30,15 @@ from sqlalchemy.orm import Session
 
 from revolab import queries, schemas, services
 from revolab.agent.builder import build_context
+from revolab.agent.model_backend import ModelBackend, OpenAICompatModelBackend
+from revolab.agent.runtime import AgentLoopBounds, AgentTurnRunner
 from revolab.capabilities import CapabilityError, ExternalArtifactRef, InputBinding
+from revolab.config import get_settings
 from revolab.content_store import ContentStore
 from revolab.db import get_session
 from revolab.domain import compute as compute_domain
 from revolab.domain import provider as provider_domain
-from revolab.domain.errors import DomainError
+from revolab.domain.errors import DomainError, ModelUnavailableError
 from revolab.drivers import DriverRegistry
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
@@ -55,7 +59,7 @@ from revolab.models import (
 )
 from revolab.secret_store import SecretStore, default_secret_store
 from revolab.tools import build_tool_catalog, inspect_artifact
-from revolab.tools.registry import build_default_registry
+from revolab.tools.registry import LocalToolRegistry, build_default_registry
 from revolab.tools.runtime import LocalToolRuntime
 from revolab.tools.types import InvocationContext
 
@@ -135,14 +139,98 @@ def get_secret_store() -> SecretStore:
     return default_secret_store()
 
 
+@lru_cache
+def _local_registry() -> LocalToolRegistry:
+    """The ONE local tool registry wired into both the human invocation surface
+    and the Agent loop catalog so validation and execution share the same set."""
+    return build_default_registry()
+
+
 def get_local_runtime() -> LocalToolRuntime:
-    from functools import lru_cache
+    return LocalToolRuntime(_local_registry())
 
-    @lru_cache
-    def _runtime() -> LocalToolRuntime:
-        return LocalToolRuntime(build_default_registry())
 
-    return _runtime()
+_model_backend_instance: ModelBackend | None = None
+_model_backend_initialized = False
+_model_backend_lock = threading.Lock()
+
+
+def _build_model_backend() -> ModelBackend | None:
+    settings = get_settings()
+    if settings.model_endpoint and settings.model_name:
+        return OpenAICompatModelBackend(
+            endpoint=settings.model_endpoint,
+            model=settings.model_name,
+            api_key=(
+                settings.model_api_key.get_secret_value()
+                if settings.model_api_key is not None
+                else None
+            ),
+            timeout_seconds=settings.model_timeout_seconds,
+        )
+    if settings.e2e_fake_model:
+        if settings.environment == "production":
+            raise RuntimeError("the fake model runtime must not be enabled in production")
+        from revolab.testing.fake_model import ScriptedModelBackend
+
+        return ScriptedModelBackend()
+    return None
+
+
+def _model_backend() -> ModelBackend | None:
+    """Resolve ONE configured concrete model backend (TODO.md section 4). No
+    generalized provider framework; no silent fake fallback in production. The
+    returned instance owns a transport (httpx.Client) whose lifetime is the
+    application's, closed explicitly via `close_model_backend`. Construction is
+    guarded so concurrent first requests share ONE transport instead of racing
+    to build (and leak) several."""
+    global _model_backend_instance, _model_backend_initialized
+    if _model_backend_initialized:
+        return _model_backend_instance
+    with _model_backend_lock:
+        if not _model_backend_initialized:
+            _model_backend_instance = _build_model_backend()
+            _model_backend_initialized = True
+        return _model_backend_instance
+
+
+def close_model_backend() -> None:
+    """Close the cached model transport at application shutdown. Idempotent and
+    safe when no backend was ever built or the backend has no `close`."""
+    global _model_backend_instance, _model_backend_initialized
+    with _model_backend_lock:
+        backend = _model_backend_instance
+        _model_backend_instance = None
+        _model_backend_initialized = False
+        closer = getattr(backend, "close", None)
+        if callable(closer):
+            closer()
+
+
+def get_model_backend() -> ModelBackend:
+    backend = _model_backend()
+    if backend is None:
+        raise ModelUnavailableError(
+            "no model runtime configured: set REVOLAB_MODEL_ENDPOINT and "
+            "REVOLAB_MODEL_NAME (or enable the test-only fake)"
+        )
+    return backend
+
+
+def _agent_bounds() -> AgentLoopBounds:
+    settings = get_settings()
+    return AgentLoopBounds(
+        max_model_turns=settings.agent_max_model_turns,
+        max_tool_calls=settings.agent_max_tool_calls,
+        max_tool_calls_per_turn=settings.agent_max_tool_calls_per_turn,
+        max_context_chars=settings.agent_max_context_chars,
+        max_history_messages=settings.agent_max_history_messages,
+        max_history_chars=settings.agent_max_history_chars,
+        max_skill_count=settings.agent_max_skill_count,
+        max_skill_bytes=settings.agent_max_skill_bytes,
+        max_tool_result_chars=settings.agent_max_tool_result_chars,
+        total_turn_duration_seconds=settings.agent_total_turn_duration_seconds,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1076,30 +1164,41 @@ def invocation_read(row: ToolInvocation) -> dict[str, Any]:
 
 
 @router.post(
-    "/projects/{project_id}/agent/proposals",
-    status_code=201,
-    response_model=schemas.DecisionRead,
+    "/projects/{project_id}/agent/turns",
+    response_model=schemas.AgentTurnRead,
 )
-def create_agent_proposal(
+def create_agent_turn(
     project_id: UUID,
-    payload: schemas.AgentProposalCreate,
+    payload: schemas.AgentTurnCreate,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
-) -> schemas.DecisionRead:
-    # The proposal wire surface is exactly the `decision.record_draft` typed tool:
-    # it calls the same Decision creation service and can only ever produce a
-    # draft. A committed Decision requires the authorized commit endpoint below.
-    decision = services.create_decision(
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+    runtime: LocalToolRuntime = Depends(get_local_runtime),
+    model: ModelBackend = Depends(get_model_backend),
+) -> schemas.AgentTurnRead:
+    """Run one bounded Project Agent turn. The Agent is a consumer, never an
+    owner: context is rebuilt from Project truth, tool calls are validated
+    against the canonical ToolCatalog and executed only through LocalToolRuntime,
+    explicit actions become PendingActions, and the only Decision shape
+    producible is a DRAFT. No raw provider/model response object is exposed."""
+    runner = AgentTurnRunner(
+        model,
+        runtime,
+        registry,
+        store,
+        _content_store(),
+        _agent_bounds(),
+        local_registry=_local_registry(),
+    )
+    return runner.run(
         session,
         actor_id,
         project_id,
-        title=payload.title,
-        statement=payload.statement,
-        next_actions=payload.next_actions,
-        cites=[{"evidence_id": c.evidence_id, "cited_as": c.cited_as.value} for c in payload.cites],
-        selects=[{"target_id": s.target_id, "target_kind": s.target_kind.value} for s in payload.selects],
+        payload.message,
+        payload.selection,
+        payload.history,
     )
-    return schemas.DecisionRead(**queries.decision_summary(session, decision))
 
 
 @router.get(

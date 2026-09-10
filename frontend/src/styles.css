@@ -104,6 +104,8 @@ h3 { margin: 0 0 8px; font-size: 12px; }
 .form-actions { display: flex; align-items: center; gap: 12px; }
 .inline-error { color: #a33b2b; font-size: 11px; }
 .hint { color: var(--muted); font-size: 10px; line-height: 1.5; display: inline-flex; align-items: center; gap: 6px; }
+.pre-line { white-space: pre-line; }
+.assistant-row { border-color: var(--accent); }
 
 .btn { border-radius: 7px; padding: 8px 14px; font-size: 11px; font-weight: 700; }
 .btn-primary { background: var(--accent); color: #f6fbf8; }

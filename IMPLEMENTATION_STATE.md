@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-09-09
+Last verified: 2026-09-10
 
 This file records actual, machine-verified repository state — not future plans.
 
@@ -1045,9 +1045,186 @@ were reconciled (ToolResultKind = four producing kinds only; `/tools/invocations
 is documented as the LOCAL invocation surface; stale REvoDesign/OpenBio/Search/
 Design wording removed). No product code changed — documentation only.
 
+## Implemented (Phase 8)
+
+- **Model boundary** (`revolab/agent/model_backend.py`): `ModelBackend` protocol +
+  `ModelRequest`/`ModelResponse`/`ModelToolCall`/`ToolSpec` value objects and ONE
+  OpenAI-compatible chat/tool-call transport (`OpenAICompatModelBackend`) over the
+  already-approved `httpx`. Model transport failures map to `ModelUnavailableError`
+  (503) and never echo provider bodies/credentials. `revolab/testing/fake_model.py`
+  is the deterministic `ScriptedModelBackend` at the EXTERNAL model boundary (tests
+  + browser slice only; never a production fallback).
+- **Bounded Agent loop** (`revolab/agent/runtime.py`): `AgentTurnRunner` runs the
+  `PREPARE_CONTEXT → MODEL → TOOL_REQUEST → VALIDATE → EXECUTE → ...` state
+  machine with conservative ceilings (8 model turns, 16 tool calls, 4 calls/turn,
+  60k context chars, 20 history messages/20k chars, 4 skills/20k bytes, 12k
+  tool-result chars, 300s total duration). A bound hit is a typed
+  `AgentTerminationReason` terminal result; no recursion, background execution, or
+  silent retry.
+- **Prompt/trust separation** (`revolab/agent/prompt.py`): server-owned system
+  instructions + bounded skill bodies in the system role; ALL Project content
+  serialized once into a single `<untrusted_project_data>` user message. No
+  credential/secret/path is ever rendered because content asks for it.
+- **Tool-call validation**: every model tool call is untrusted — exact canonical
+  ToolCatalog lookup, availability, canonical Pydantic input schema, membership,
+  autonomy, execution class, side-effect class. `automatic`/`policy` LOCAL tools
+  execute through the REAL `LocalToolRuntime` (`persist=False`); `explicit_action`
+  (Decision commit, compute submit) becomes an ephemeral valid `PendingAction`;
+  unknown/malformed/remote reads fail closed; `never_agent` stays out of the
+  catalog. Remote tools are surfaced from the same catalog but the loop does not
+  autonomously cross the external boundary (documented deferral).
+- **Skills**: `SkillCatalog.skill_path` now confines ids below the configured root
+  (`resolve` + `is_relative_to`); `load_skill_bodies` applies count + byte budgets
+  before reading; skill body over-budget fails closed.
+- **Context artifact selection**: `ContextSelectionCreate.artifact_ids` lets a
+  turn explicitly select visible ArtifactReference identity cards (Phase-8
+  vertical slice); validated against the Project read lens like every selection.
+- **API** (`POST /api/projects/{project_id}/agent/turns`): one typed
+  `AgentTurnCreate → AgentTurnRead` surface (final response, per-tool trace,
+  pending explicit actions, termination reason, budget). Raw provider/model
+  response objects, hidden prompt text, and credentials are never exposed.
+  `GET /api/projects/{project_id}/agent/tools` unchanged.
+- **Deterministic proposal path removed**: `revolab/agent/session.py`
+  (`propose_selection`/`record_proposal`/`AgentProposal`) and
+  `POST /agent/proposals` are deleted; the fake survives ONLY as the
+  `ScriptedModelBackend` test double.
+- **Frontend** (`views/Agent.tsx`): real project Agent workspace — object +
+  artifact context selection, ephemeral session-local conversation, send/receive,
+  per-turn tool trace with autonomy-correct statuses, pending-explicit-action
+  display, and an always-visible Decision DRAFT vs COMMITTED truth boundary. No
+  raw-HTML rendering. Generated `AgentTerminationReason`/`AgentToolCallStatus`
+  enums wired into `contracts/enums`.
+- **Docs**: `docs/architecture/PROJECT_AGENT_RUNTIME.md`; `IMPLEMENTATION_ROADMAP.md`
+  Phase 8; `AGENT_CONTEXT.md` / `PROJECT_TOOL_HARNESS.md` reconciled.
+
+## Verified evidence (Phase 8)
+
+- Backend: `ruff check backend` and strict `mypy` pass (49 source files). `pytest`
+  passes **311 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  acceptance file). New regressions in `test_agent_runtime.py` cover: bounded
+  context reconstruction + artifact selection, hostile project text as DATA (not
+  system instruction), unknown-tool fail-close, malformed-argument fail-close,
+  cross-Project resource rejection at execution, `never_agent` absence from the
+  model-visible tool set, `decision.commit`/compute-submit never auto-executing
+  (PendingAction only), model-turn/tool-call/history/skill-body bounds, skill
+  path confinement, transcript feedback to the model, pending-argument bounding,
+  adapter timeout/transport mapping, safe OpenAI function-name mapping, malformed
+  200-response typing, whole-group history trimming, deadline recheck before tool
+  execution, and missing-model fail-closed.
+- OpenAPI/contracts: `python -m revolab.export_openapi` output is byte-identical
+  to `frontend/src/contracts/openapi.json`; `openapi-typescript` +
+  `generate-enums.mjs` regenerated `schema.d.ts`/`enums.generated.ts`; the
+  contract lockstep test now pins the `/agent/turns` request to the single
+  `AgentTurnCreate` component and asserts `/agent/proposals` is gone.
+- Frontend: `npm run typecheck`, `npm run test` (**19 tests**, incl. the new
+  Phase-8 Agent view — ephemeral boundary, tool trace, pending action, failure
+  state, project-switch clearing, and deferred cross-project response discard —
+  plus enum/contract lockstep), and `npm run build` pass.
+- Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real SQLite
+  + `REVOLAB_E2E_FAKE_MODEL=1`): all **4 specs** pass — smoke, collaboration,
+  tools, and the new `agent.spec.ts` (object → fake-compute tabular artifact →
+  Agent turn → `table.describe` → `decision.record_draft` → Decisions view draft →
+  explicit commit → reloaded committed Knowledge).
+
+## Independent review (Phase 8)
+
+Five fresh read-only reviewers audited the branch on the five TODO.md lenses
+(A architecture/ownership, B runtime/tool semantics, C security/authority,
+D API/frontend/contracts, E tests/CI). **A, C, D, E returned PASS** (P2s only);
+**B returned REQUEST_CHANGES with one P1.** All P0s: none.
+
+Reconciled findings (commit `6d12ec5`): the P1 — tool results and assistant
+tool-call messages were being assembled into a `transcript` but never fed back to
+the model between loop iterations (a multi-step turn would degenerate to burning
+turns) — plus the in-scope P2s: bounded PendingAction arguments, prompt-level
+context-truncation reporting (dead constant removed), skill-budget failure
+converted from a raw `FileNotFoundError` to a typed `ModelUnavailableError`
+(503), remote read-only tools no longer advertised to the model when the loop
+cannot execute them, a single local registry shared by catalog validation and
+execution, and a sanitized (non-exception-echoing) model-unavailable response.
+
+The first post-fix delta review (3 fresh reviewers) **requested changes**: the
+fix commit had accidentally emptied `backend/tests/test_agent_runtime.py` (a
+broken whitespace cleanup command truncated the file), and the PendingAction
+bounding helper was a no-op (it measured the already-truncated string, so it
+always returned the full payload). Both were corrected in `abbc958`: the entire
+runtime regression suite was restored and extended (transcript feedback,
+`max_history_chars`, per-turn tool-call overflow `SKIPPED`, total-duration,
+skill count/path traversal, adapter timeout/transport mapping, bounded pending
+args, model-tool projection excludes remote reads), the bounding helper now
+measures the FULL serialized size before truncating, the projection filter uses
+value comparison, the non-result transcript branch is size-bounded, and every
+loop ceiling is now wire-observable in `AgentTurnBudgetRead`.
+
+The final delta review (3 fresh read-only reviewers over the fixed delta) returned
+**PASS for all three lenses with no P0/P1** (remaining P2s are non-blocking
+coverage/enum notes). A PostgreSQL-acceptance failure found on the very first
+fixed head (a scoped runaway `Decision` count assertion in the shared PG
+database) was corrected in `955b395`; CI then went **green on every job**
+(backend + PostgreSQL acceptance + frontend + e2e). Head `955b395` is the final
+reviewed, CI-green state; PR #9 is marked ready for human review.
+
+### Codex review follow-up (two P1 + three P2, reconciled in `e5b0597`)
+
+After the PR was marked ready, an automated Codex review left five findings, all
+reconciled with regressions:
+
+- **P1 — dotted tool ids were invalid OpenAI function names.** The
+  `OpenAICompatModelBackend` now maps canonical tool ids to API-safe wire names
+  (letters/digits/`_`/`-`, ≤64 chars, digest-suffixed for long ids), reverse-maps
+  emitted calls, and fails closed on collision. A capture transport proves the
+  wire only carries `decision_record_draft`/`artifact_inspect`-style names and
+  that the loop still sees the canonical ids.
+- **P1 — Agent conversation leaked across project switches.** `AgentView` now
+  resets all session-local state (messages, turn, error, selected context) when
+  `projectId`/`actorId` change; a frontend regression asserts a prior project's
+  response disappears after the project switch.
+- **P2 — history trimming could split an assistant tool-call group.** `_bounded_history`
+  now groups an assistant `tool_calls` message with its consecutive tool
+  responses and trims whole groups, so no advertised `tool_call_id` is ever
+  orphaned in a bounded transcript.
+- **P2 — total-turn deadline only checked at loop top.** The deadline is now
+  rechecked after the model returns and again before EACH tool execution, so the
+  duration ceiling is a hard bound for side effects (clock-scripted regression).
+- **P2 — malformed HTTP-200 model responses escaped as untyped 500s.** The
+  adapter validates `choices`/choice/message structure and maps empty/non-object
+  responses to a typed `ModelUnavailableError` (503).
+
+Full gates re-ran green after the fixes: backend **309 passed / 6 skipped**,
+frontend typecheck + **18 tests** + build, Playwright **4 specs**, OpenAPI fresh,
+contracts idempotent. CI green on pushed head `e5b0597`.
+
+### Pre-merge hardening pass + final review (`f6debb8`, `c2839b6`)
+
+- **P1 (cross-Project in-flight response race).** `AgentView` is now keyed by
+  `actorId:projectId` in `App.tsx` (remount on switch) AND carries a synchronous
+  `actorId:projectId` scope guard that discards a resolve whose scope no longer
+  matches. A deferred-response regression proves a Project A turn resolved after
+  switching to B never renders A content.
+- **P2 (model transport lifecycle).** The cached `OpenAICompatModelBackend` /
+  `httpx.Client` now has an explicit `close_model_backend()` wired into the
+  FastAPI lifespan `finally`; construction is guarded by a lock so concurrent
+  first turns share ONE transport (concurrency regression asserts a single build
+  across 8 racing accesses). No generalized resource framework.
+- Three fresh read-only final reviewers (Agent/runtime architecture;
+  security/project isolation; contracts/tests/resource lifecycle) returned
+  **PASS with no P0/P1**. The one recurring P2 — the unlocked lazy singleton —
+  was fixed in `c2839b6`. All five Codex findings are re-verified as fixed and
+  regression-pinned.
+
+Final machine evidence on head `c2839b6`: backend **311 passed / 6 skipped**,
+PostgreSQL + Alembic drift + OpenAPI drift green in CI, frontend typecheck +
+**19 tests** + build, Playwright **4 specs**, `check:contracts` clean. CI green on
+every job.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
+- Remote provider tool execution inside the Agent loop (Phase 8 surfaces remote
+  tools from the same catalog and converts remote `explicit_action` to a
+  PendingAction, but does not autonomously cross the external boundary; remote
+  reads remain on the human capability endpoints — documented in
+  `docs/architecture/PROJECT_AGENT_RUNTIME.md`).
 - Live end-to-end acceptance against an authorized REvoCompute instance is
   external evidence: no authorized instance is configured in this development
   environment. The driver is built and tested against the documented public

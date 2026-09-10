@@ -262,3 +262,25 @@ class ToolResultKind(StrEnum):
     ARTIFACT = "artifact"
     EVIDENCE = "evidence"
     DECISION = "decision"
+
+
+class AgentTerminationReason(StrEnum):
+    """Why one bounded Agent turn ended. A bound hit is a typed, user-visible
+    terminal result, never a silent continuation."""
+
+    FINAL_RESPONSE = "final_response"
+    MAX_MODEL_TURNS = "max_model_turns"
+    MAX_TOOL_CALLS = "max_tool_calls"
+    TOTAL_DURATION = "total_duration"
+    MODEL_UNAVAILABLE = "model_unavailable"
+
+
+class AgentToolCallStatus(StrEnum):
+    """Per-tool-call outcome inside an Agent turn: executed through the canonical
+    runtime (`completed`), converted to a PendingAction (`pending`), refused /
+    failed closed (`failed`), or skipped by a per-turn budget (`skipped`)."""
+
+    COMPLETED = "completed"
+    PENDING = "pending"
+    FAILED = "failed"
+    SKIPPED = "skipped"

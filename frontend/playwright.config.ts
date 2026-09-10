@@ -43,6 +43,9 @@ export default defineConfig({
         REVOLAB_CORS_ORIGINS: frontendUrl,
         // Opt-in in-process fake compute provider for the browser vertical slice.
         REVOLAB_E2E_FAKE_COMPUTE: '1',
+        // Opt-in in-process scripted model backend (external model boundary
+        // double) for the Phase-8 Agent vertical slice.
+        REVOLAB_E2E_FAKE_MODEL: '1',
       },
     },
     {

@@ -42,3 +42,7 @@ export const TOOL_EXECUTION_CLASSES: readonly components['schemas']['ToolExecuti
 export const TOOL_SIDE_EFFECT_CLASSES: readonly components['schemas']['ToolSideEffectClass'][] = ["read_only","creates_derived_result","domain_mutation","external_action"] as const
 
 export const TOOL_RESULT_KINDS: readonly components['schemas']['ToolResultKind'][] = ["ephemeral","artifact","evidence","decision"] as const
+
+export const AGENT_TERMINATION_REASONS: readonly components['schemas']['AgentTerminationReason'][] = ["final_response","max_model_turns","max_tool_calls","total_duration","model_unavailable"] as const
+
+export const AGENT_TOOL_CALL_STATUSES: readonly components['schemas']['AgentToolCallStatus'][] = ["completed","pending","failed","skipped"] as const

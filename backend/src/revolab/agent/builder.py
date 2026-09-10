@@ -82,7 +82,7 @@ def build_context(
         raise AuthorizationError("project is not active")
 
     visible = queries.visible_resources(session, project_id)
-    explicit = bool(selection.series_ids or selection.revision_ids)
+    explicit = bool(selection.series_ids or selection.revision_ids or selection.artifact_ids)
 
     # Resolve and validate the declarative selection before assembling anything.
     # An explicit `series_ids` selection expands its visible revisions; an explicit
@@ -91,6 +91,7 @@ def build_context(
     selected_series_ids: set[UUID] = set()
     explicit_series_ids: set[UUID] = set()
     selected_revision_ids: set[UUID] = set()
+    selected_artifact_ids: set[UUID] = set()
     for series_id in selection.series_ids or []:
         if visible.get(series_id) is not ResourceKind.SCIENTIFIC_OBJECT_SERIES:
             raise AuthorizationError("selected series is not visible in this project")
@@ -105,6 +106,10 @@ def build_context(
         selected_revision_ids.add(revision_id)
         # Owning series skeleton implied (closure), siblings never implied.
         selected_series_ids.add(revision.series_id)
+    for artifact_id in selection.artifact_ids or []:
+        if visible.get(artifact_id) is not ResourceKind.ARTIFACT_REFERENCE:
+            raise AuthorizationError("selected artifact is not visible in this project")
+        selected_artifact_ids.add(artifact_id)
 
     if not explicit:
         return _implicit_context(session, project, project_id, membership, registry, selection, visible)
@@ -174,17 +179,30 @@ def build_context(
             truncated = True
 
     references: list[ReferenceHeaderRead] = []
+    seen_reference_ids: set[UUID] = set()
+    # Explicitly selected artifact identity cards are always included (the
+    # Phase-8 "select the Artifact as context" slice), then reachable reference
+    # headers are added when requested — deduplicated and under one global cap.
+    for artifact_id in sorted(selected_artifact_ids):
+        if len(references) >= selection.max_references:
+            truncated = True
+            break
+        references.append(_reference_header(session, artifact_id, ResourceKind.ARTIFACT_REFERENCE, visible))
+        seen_reference_ids.add(artifact_id)
     if selection.include_references:
         reference_ids = sorted(
             resource_id
             for resource_id, kind in visible.items()
-            if kind in _REFERENCE_KINDS and resource_id in reachable
+            if kind in _REFERENCE_KINDS
+            and resource_id in reachable
+            and resource_id not in seen_reference_ids
         )
         for resource_id in reference_ids:
             if len(references) >= selection.max_references:
                 truncated = True
                 break
             references.append(_reference_header(session, resource_id, visible[resource_id], visible))
+            seen_reference_ids.add(resource_id)
         if len(references) > selection.max_references:
             references = references[: selection.max_references]
             truncated = True

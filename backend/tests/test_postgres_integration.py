@@ -18,7 +18,7 @@ from sqlalchemy import Engine, create_engine, inspect, select
 from sqlalchemy.orm import Session
 
 from revolab import services
-from revolab.agent import build_context, propose_selection, record_proposal
+from revolab.agent import AgentTurnRunner, build_context
 from revolab.domain.provider import (
     build_credential_lease,
     capability_availability,
@@ -288,11 +288,15 @@ def test_phase5_collaboration_vertical_slice_on_postgres(pg_session: Session) ->
     assert [d["id"] for d in detail_b_after["decisions"]] == [str(b_decision.id)]
 
 
-def test_phase6_agent_vertical_slice_on_postgres(pg_session: Session) -> None:
-    """Phase-6 PostgreSQL slice (TODO.md #16): Actor -> Project -> object/revision
-    -> Evidence -> ContextSelection -> ContextBuilder -> Agent proposal -> Decision
-    draft -> explicit authorized commit -> reloaded committed Knowledge."""
+def test_phase6_agent_vertical_slice_on_postgres(pg_session: Session, tmp_path) -> None:
+    """Phase-6/8 PostgreSQL slice (TODO.md #16): Actor -> Project -> object/revision
+    -> Evidence -> ContextSelection -> ContextBuilder -> bounded Agent loop ->
+    Decision draft -> explicit authorized commit -> reloaded committed Knowledge."""
+    from revolab.content_store import ContentStore
     from revolab.models import Decision, Evidence, ScientificObjectRevision
+    from revolab.testing.fake_model import ScriptedModelBackend
+    from revolab.tools.registry import build_default_registry
+    from revolab.tools.runtime import LocalToolRuntime
 
     registry = DriverRegistry()
 
@@ -330,8 +334,61 @@ def test_phase6_agent_vertical_slice_on_postgres(pg_session: Session) -> None:
     assert context.budget.revision_count == 1
     assert {ref.evidence_id for ref in context.evidence} == {evidence.id}
 
-    proposal = propose_selection(context)
-    draft = record_proposal(pg_session, actor, project.id, proposal)
+    model = ScriptedModelBackend(
+        steps=[
+            {
+                "finish": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call_draft",
+                        "name": "decision.record_draft",
+                        "arguments": {
+                            "title": "Select variant",
+                            "statement": "Select the variant for validation.",
+                            "next_actions": ["validate experimentally"],
+                            "cites": [
+                                {
+                                    "evidence_id": str(evidence.id),
+                                    "cited_as": "supports",
+                                }
+                            ],
+                            "selects": [
+                                {
+                                    "target_id": str(revision.revision_id),
+                                    "target_kind": "scientific_object_revision",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+            {"finish": "stop", "content": "Recorded a draft only."},
+        ]
+    )
+    local_registry = build_default_registry()
+    runner = AgentTurnRunner(
+        model,
+        LocalToolRuntime(local_registry),
+        registry,
+        InMemorySecretStore(),
+        ContentStore(tmp_path),
+        local_registry=local_registry,
+    )
+    result = runner.run(
+        pg_session,
+        actor,
+        project.id,
+        "Draft a conclusion.",
+        ContextSelectionCreate(series_ids=[series_id], graph_depth=0),
+    )
+    assert result.termination_reason.value == "final_response"
+    assert [entry.tool_id for entry in result.tool_trace] == ["decision.record_draft"]
+    # Scope to the Decision THIS turn produced (the shared PG database also
+    # holds decisions from earlier slices in this file).
+    traced = result.tool_trace[0].result
+    assert traced is not None and traced.resource_id is not None
+    draft = pg_session.get(Decision, traced.resource_id)
+    assert draft is not None
     assert draft.status == DecisionStatus.DRAFT.value
     assert draft.committed_at is None
 

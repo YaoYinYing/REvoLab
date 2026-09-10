@@ -15,6 +15,43 @@
         "title": "ActorRead",
         "type": "object"
       },
+      "AgentChatMessageCreate": {
+        "description": "One bounded transient-history message. Only `user`/`assistant` are legal;\nthe browser may never supply system instructions or tool-result authority.",
+        "properties": {
+          "content": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Content",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "title": "AgentChatMessageCreate",
+        "type": "object"
+      },
+      "AgentTerminationReason": {
+        "description": "Why one bounded Agent turn ended. A bound hit is a typed, user-visible\nterminal result, never a silent continuation.",
+        "enum": [
+          "final_response",
+          "max_model_turns",
+          "max_tool_calls",
+          "total_duration",
+          "model_unavailable"
+        ],
+        "title": "AgentTerminationReason",
+        "type": "string"
+      },
       "AgentToolAutonomy": {
         "description": "The executable agent-autonomy classification (ADR-0013 authority matrix):\n\n- `automatic`: safe reads/proposals the Agent may perform without further\n  authorization;\n- `policy`: a typed domain mutation gated by project policy (the current\n  policy is `owner`/`member` membership);\n- `explicit_action`: an operation with side effects or truth-promotion that\n  is never auto-executed by the Agent loop \u2014 it requires an explicit,\n  authorized Actor action (e.g. committing a Decision, submitting compute).\n\nThis is the SINGLE canonical authority truth for Project Tools. The\n`never_agent` class (membership, credential, destructive operations) is\nrepresented by never projecting such an operation as a Tool at all \u2014 it is\nnot a fourth wire value.",
         "enum": [
@@ -24,6 +61,187 @@
         ],
         "title": "AgentToolAutonomy",
         "type": "string"
+      },
+      "AgentToolCallStatus": {
+        "description": "Per-tool-call outcome inside an Agent turn: executed through the canonical\nruntime (`completed`), converted to a PendingAction (`pending`), refused /\nfailed closed (`failed`), or skipped by a per-turn budget (`skipped`).",
+        "enum": [
+          "completed",
+          "pending",
+          "failed",
+          "skipped"
+        ],
+        "title": "AgentToolCallStatus",
+        "type": "string"
+      },
+      "AgentTurnBudgetRead": {
+        "description": "Actual counters vs the configured ceilings, so a bound hit is visible.\nEvery loop ceiling the runtime enforces is represented here, so an operator\ncan see which bound terminated a turn without server logs.",
+        "properties": {
+          "context_truncated": {
+            "default": false,
+            "title": "Context Truncated",
+            "type": "boolean"
+          },
+          "history_messages": {
+            "default": 0,
+            "title": "History Messages",
+            "type": "integer"
+          },
+          "max_context_chars": {
+            "default": 0,
+            "title": "Max Context Chars",
+            "type": "integer"
+          },
+          "max_history_chars": {
+            "default": 0,
+            "title": "Max History Chars",
+            "type": "integer"
+          },
+          "max_history_messages": {
+            "default": 0,
+            "title": "Max History Messages",
+            "type": "integer"
+          },
+          "max_model_turns": {
+            "default": 0,
+            "title": "Max Model Turns",
+            "type": "integer"
+          },
+          "max_skill_bytes": {
+            "default": 0,
+            "title": "Max Skill Bytes",
+            "type": "integer"
+          },
+          "max_skills": {
+            "default": 0,
+            "title": "Max Skills",
+            "type": "integer"
+          },
+          "max_tool_calls": {
+            "default": 0,
+            "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "max_tool_calls_per_turn": {
+            "default": 0,
+            "title": "Max Tool Calls Per Turn",
+            "type": "integer"
+          },
+          "max_tool_result_chars": {
+            "default": 0,
+            "title": "Max Tool Result Chars",
+            "type": "integer"
+          },
+          "model_turns": {
+            "default": 0,
+            "title": "Model Turns",
+            "type": "integer"
+          },
+          "skills_loaded": {
+            "default": 0,
+            "title": "Skills Loaded",
+            "type": "integer"
+          },
+          "tool_calls": {
+            "default": 0,
+            "title": "Tool Calls",
+            "type": "integer"
+          },
+          "total_turn_duration_seconds": {
+            "default": 0,
+            "title": "Total Turn Duration Seconds",
+            "type": "number"
+          }
+        },
+        "title": "AgentTurnBudgetRead",
+        "type": "object"
+      },
+      "AgentTurnCreate": {
+        "description": "The canonical Project-scoped Agent-turn request (TODO.md section 12).",
+        "properties": {
+          "history": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/AgentChatMessageCreate"
+                },
+                "maxItems": 20,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History"
+          },
+          "message": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextSelectionCreate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AgentTurnCreate",
+        "type": "object"
+      },
+      "AgentTurnRead": {
+        "description": "The typed Agent-turn result: final response, tool-call trace, pending\nexplicit actions, termination reason, and budget state. Never exposes hidden\nprompt text, raw provider/model response objects, or any credential/secret.",
+        "properties": {
+          "budget": {
+            "$ref": "#/components/schemas/AgentTurnBudgetRead"
+          },
+          "final_response": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Final Response"
+          },
+          "pending_actions": {
+            "items": {
+              "$ref": "#/components/schemas/PendingActionRead"
+            },
+            "title": "Pending Actions",
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "termination_reason": {
+            "$ref": "#/components/schemas/AgentTerminationReason"
+          },
+          "tool_trace": {
+            "items": {
+              "$ref": "#/components/schemas/ToolCallTraceRead"
+            },
+            "title": "Tool Trace",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project_id",
+          "termination_reason"
+        ],
+        "title": "AgentTurnRead",
+        "type": "object"
       },
       "ArtifactInspectRead": {
         "description": "Bounded artifact-preview result. `preview` is a small head slice of the\nresolved bytes, never a copy into Core and never credential material.",
@@ -592,6 +810,22 @@
       "ContextSelectionCreate": {
         "description": "Declarative description of what one Agent turn may read.\n\nThe selection is a bounded, Project-scoped list of resource identities and\nexplicit category/budget switches. It contains no query syntax and never\nrequests material from another Project; the ContextBuilder validates every\nselected identity against this Project's read lens and fails closed.",
         "properties": {
+          "artifact_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Ids"
+          },
           "graph_depth": {
             "default": 1,
             "maximum": 3.0,
@@ -2024,6 +2258,39 @@
         "title": "ObjectType",
         "type": "string"
       },
+      "PendingActionRead": {
+        "description": "A PROPOSED action the Agent loop did NOT execute. It carries only the\nvalidated, bounded, non-secret information needed to understand the proposed\noperation; execution remains the existing human-authorized surface. When the\nvalidated argument payload is too large it is bounded to\n`{\"truncated\": true, \"preview\": \"<bounded json prefix>\"}`.",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "autonomy": {
+            "$ref": "#/components/schemas/AgentToolAutonomy"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_id",
+          "autonomy",
+          "summary",
+          "reason"
+        ],
+        "title": "PendingActionRead",
+        "type": "object"
+      },
       "Polarity": {
         "enum": [
           "supports",
@@ -3086,6 +3353,55 @@
         "title": "SupersedeCreate",
         "type": "object"
       },
+      "ToolCallTraceRead": {
+        "description": "Per-tool-call outcome inside one Agent turn: executed, pending (proposed),\nfailed (refused/malformed/unknown), or skipped by a per-turn budget.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "pending_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PendingActionRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolResultRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentToolCallStatus"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_id",
+          "status"
+        ],
+        "title": "ToolCallTraceRead",
+        "type": "object"
+      },
       "ToolCatalogRead": {
         "description": "Project-scoped, Actor-contextual projection of the Project ToolCatalog:\nlocal tools plus available remote Provider tools. It is the ONE catalog both\nfrontend and Agent consume; unavailable remote capabilities are never exposed\nas executable.",
         "properties": {
@@ -4028,72 +4344,6 @@
         "summary": "Patch Project"
       }
     },
-    "/api/projects/{project_id}/agent/proposals": {
-      "post": {
-        "operationId": "create_agent_proposal_api_projects__project_id__agent_proposals_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "project_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Project Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Actor-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Actor-Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DecisionCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DecisionRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Agent Proposal"
-      }
-    },
     "/api/projects/{project_id}/agent/tools": {
       "get": {
         "operationId": "list_agent_tools_api_projects__project_id__agent_tools_get",
@@ -4148,6 +4398,73 @@
           }
         },
         "summary": "List Agent Tools"
+      }
+    },
+    "/api/projects/{project_id}/agent/turns": {
+      "post": {
+        "description": "Run one bounded Project Agent turn. The Agent is a consumer, never an\nowner: context is rebuilt from Project truth, tool calls are validated\nagainst the canonical ToolCatalog and executed only through LocalToolRuntime,\nexplicit actions become PendingActions, and the only Decision shape\nproducible is a DRAFT. No raw provider/model response object is exposed.",
+        "operationId": "create_agent_turn_api_projects__project_id__agent_turns_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentTurnCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentTurnRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Agent Turn"
       }
     },
     "/api/projects/{project_id}/artifacts": {
