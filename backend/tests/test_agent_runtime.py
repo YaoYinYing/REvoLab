@@ -602,3 +602,135 @@ def test_model_tool_projection_excludes_remote_reads():
     assert "table.describe" in names
     assert "fakecompute.compute.submit" in names
     assert "fakecompute.compute.run_status" not in names
+
+
+def test_openai_backend_maps_tool_ids_to_safe_function_names():
+    import re
+
+    import httpx
+
+    from revolab.agent.model_backend import (
+        ChatMessage,
+        ModelRequest,
+        OpenAICompatModelBackend,
+        ToolSpec,
+    )
+
+    tools = (
+        ToolSpec(name="decision.record_draft", description="draft", input_schema={}),
+        ToolSpec(name="artifact.inspect", description="inspect", input_schema={}),
+    )
+    request = ModelRequest(system="s", messages=(ChatMessage(role="user", content="hi"),), tools=tools)
+    captured: dict[str, object] = {}
+
+    def handler(req):
+        captured["payload"] = json.loads(req.content)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "decision_record_draft",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    backend = OpenAICompatModelBackend(endpoint="http://example.test/v1", model="m")
+    backend._client = httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[assignment]
+    try:
+        result = backend.complete(request)
+    finally:
+        backend.close()
+
+    payload = captured["payload"]
+    assert isinstance(payload, dict)
+    names = [tool["function"]["name"] for tool in payload["tools"]]
+    assert all(re.fullmatch(r"[A-Za-z0-9_-]{1,64}", name) for name in names)
+    assert set(names) == {"decision_record_draft", "artifact_inspect"}
+    # The canonical tool id is reverse-mapped before the loop sees it.
+    assert result.tool_calls[0].name == "decision.record_draft"
+
+
+def test_openai_backend_malformed_responses_are_typed():
+    import httpx
+
+    from revolab.agent.model_backend import ChatMessage, ModelRequest, OpenAICompatModelBackend
+
+    request = ModelRequest(system="s", messages=(ChatMessage(role="user", content="hi"),), tools=())
+    for body in ({"choices": []}, {"choices": [None]}, {"choices": "nope"}, "not-an-object"):
+        backend = OpenAICompatModelBackend(endpoint="http://example.test/v1", model="m")
+
+        def handler(req, body=body):
+            return httpx.Response(200, json=body)
+
+        backend._client = httpx.Client(transport=httpx.MockTransport(handler))  # type: ignore[assignment]
+        try:
+            with pytest.raises(ModelUnavailableError):
+                backend.complete(request)
+        finally:
+            backend.close()
+
+
+def test_history_trimming_preserves_tool_call_groups():
+    from revolab.agent.model_backend import ChatMessage, ModelToolCall
+    from revolab.agent.prompt import _bounded_history
+
+    call = ModelToolCall(id="c1", name="table.describe", arguments_raw="{}", arguments={})
+    history = (
+        ChatMessage(role="assistant", content=None, tool_calls=(call,)),
+        ChatMessage(role="tool", content="A" * 50, tool_call_id="c1", name="table.describe"),
+        ChatMessage(role="tool", content="B" * 50, tool_call_id="c1", name="table.describe"),
+    )
+    # A char budget that cannot fit the whole group drops the ENTIRE group rather
+    # than leaving an assistant tool_calls without its tool responses.
+    result = _bounded_history(history, max_messages=10, max_chars=30)
+    assert result == ()
+    assert _bounded_history(history, max_messages=10, max_chars=1000) == history
+
+
+def test_total_duration_rechecked_before_tool_execution(session, tmp_path, monkeypatch):
+    from revolab.agent import runtime as runtime_module
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    content_store = ContentStore(tmp_path)
+    artifact = _csv_artifact(session, actor, project, content_store)
+
+    # Script the clock: start/loop-top are 0, but the clock advances past the
+    # deadline immediately after the model returns tool calls.
+    clock = iter([0.0, 0.0, 999.0, 999.0])
+
+    def fake_monotonic():
+        return next(clock, 999.0)
+
+    monkeypatch.setattr(runtime_module.time, "monotonic", fake_monotonic)
+
+    model = ScriptedModelBackend()
+    runner = _runner(
+        session, actor, project, _registry(), InMemorySecretStore(), content_store, model=model
+    )
+    result = runner.run(
+        session,
+        actor,
+        project.id,
+        "describe",
+        ContextSelectionCreate(artifact_ids=[artifact.artifact_id]),
+        # The loop checks the deadline before handing the model call AND again
+        # before tool execution; the total-duration bound is the stop reason.
+    )
+    # ScriptedModelBackend first emits table.describe; the deadline recheck must
+    # stop execution before any tool runs, with a typed terminal result.
+    assert result.termination_reason is AgentTerminationReason.TOTAL_DURATION
+    assert result.tool_trace == []

@@ -126,4 +126,18 @@ describe('Agent view (Phase 8)', () => {
     await user.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByText(/The Agent turn failed/)).toBeInTheDocument()
   })
+
+  it('clears session-local conversation when the project changes', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.type(
+      screen.getByPlaceholderText(/Describe this table and draft a conclusion/),
+      'Describe this table',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText(/The table is described/)).toBeInTheDocument()
+
+    rerender(<AgentView actorId="actor-1" projectId="project-2" />)
+    expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
+  })
 })

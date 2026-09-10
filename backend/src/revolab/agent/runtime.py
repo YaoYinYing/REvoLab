@@ -290,6 +290,15 @@ class AgentTurnRunner:
                 termination = AgentTerminationReason.FINAL_RESPONSE
                 break
 
+            # The model request itself is bounded by the adapter timeout; the
+            # total-turn deadline is rechecked AFTER the model returns and again
+            # BEFORE executing each tool, so side effects cannot slip past the
+            # configured turn duration.
+            if time.monotonic() - started >= self._bounds.total_turn_duration_seconds:
+                termination = AgentTerminationReason.TOTAL_DURATION
+                final_response = self._bound_hit_message(termination)
+                break
+
             # Budget the per-turn tool-call fan-out before executing anything.
             calls = response.tool_calls
             overflow = max(len(calls) - self._bounds.max_tool_calls_per_turn, 0)
@@ -303,6 +312,10 @@ class AgentTurnRunner:
             transcript.append(assistant_message)
 
             for call in handled_calls:
+                if time.monotonic() - started >= self._bounds.total_turn_duration_seconds:
+                    termination = AgentTerminationReason.TOTAL_DURATION
+                    final_response = self._bound_hit_message(termination)
+                    break
                 if tool_calls_total >= self._bounds.max_tool_calls:
                     termination = AgentTerminationReason.MAX_TOOL_CALLS
                     final_response = self._bound_hit_message(termination)

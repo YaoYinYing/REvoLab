@@ -92,15 +92,45 @@ def serialize_context(context: object) -> str:
     return json.dumps(context, sort_keys=True, default=str)
 
 
+def _message_groups(messages: tuple[ChatMessage, ...]) -> list[tuple[ChatMessage, ...]]:
+    """Split the bounded window into whole-message groups. An assistant message
+    with tool_calls and its consecutive `tool` responses form ONE group; orphan
+    tool messages (whose assistant was trimmed away) are dropped, and a group is
+    never split. OpenAI-compatible endpoints require every advertised
+    `tool_call_id` to be answered in the same request."""
+    groups: list[tuple[ChatMessage, ...]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if message.role == "tool":
+            # Orphan tool response: its assistant message is outside this window.
+            index += 1
+            continue
+        if message.role == "assistant" and message.tool_calls:
+            group = [message]
+            index += 1
+            while index < len(messages) and messages[index].role == "tool":
+                group.append(messages[index])
+                index += 1
+            groups.append(tuple(group))
+            continue
+        groups.append((message,))
+        index += 1
+    return groups
+
+
 def _bounded_history(history: tuple[ChatMessage, ...], *, max_messages: int, max_chars: int) -> tuple[ChatMessage, ...]:
+    """Bound transient history by count AND chars while preserving complete
+    assistant/tool-call groups. Walks groups from the most recent backward."""
+    groups = _message_groups(history[-max_messages:])
     bounded: list[ChatMessage] = []
     used = 0
-    for message in history[-max_messages:]:
-        content = message.content or ""
-        if used + len(content) > max_chars:
+    for group in reversed(groups):
+        group_chars = sum(len(message.content or "") for message in group)
+        if used + group_chars > max_chars:
             break
-        used += len(content)
-        bounded.append(message)
+        used += group_chars
+        bounded = list(group) + bounded
     return tuple(bounded)
 
 

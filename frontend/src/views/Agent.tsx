@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Bot, GitCommitHorizontal, Send } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
@@ -36,6 +36,17 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
   const [actionError, setActionError] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [turn, setTurn] = useState<AgentTurnRead | null>(null)
+
+  // Conversation is session-local AND project-scoped: switching project/actor
+  // must not leak one project's conversation into another project's turn.
+  useEffect(() => {
+    setMessages([])
+    setTurn(null)
+    setActionError(null)
+    setInput('')
+    setSelectedSeriesId('')
+    setSelectedArtifactId('')
+  }, [projectId, actorId])
 
   async function send(event: React.FormEvent) {
     event.preventDefault()

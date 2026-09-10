@@ -14,7 +14,9 @@ messages, or in logs.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
@@ -24,6 +26,13 @@ import httpx
 from revolab.domain.errors import ModelUnavailableError
 
 _MessageRole = Literal["system", "user", "assistant", "tool"]
+
+# OpenAI-compatible function names: letters, digits, underscores, hyphens, <= 64
+# characters. Catalog tool ids (e.g. `decision.record_draft`, `{provider}.compute.*`)
+# may contain dots and exceed this, so the adapter maps canonical ids to safe wire
+# names and reverse-maps emitted calls back to the canonical id before the loop
+# ever sees them.
+_SAFE_FUNCTION_NAME_RE = re.compile(r"[^A-Za-z0-9_-]")
 
 
 @dataclass(frozen=True)
@@ -107,6 +116,30 @@ def _chat_completions_url(endpoint: str) -> str:
     return f"{base}/chat/completions"
 
 
+def _safe_function_name(tool_id: str) -> str:
+    """Map a canonical tool id to an OpenAI-safe function name (<= 64 chars).
+    A truncated id keeps a short digest of the original so two long ids never
+    silently collide."""
+    base = _SAFE_FUNCTION_NAME_RE.sub("_", tool_id)
+    if len(base) <= 64:
+        return base
+    digest = hashlib.sha256(tool_id.encode("utf-8")).hexdigest()[:8]
+    return f"{base[:55]}_{digest}"
+
+
+def _tool_name_map(tools: tuple[ToolSpec, ...]) -> tuple[dict[str, str], dict[str, str]]:
+    """Return (canonical->safe, safe->canonical); fails closed on collision."""
+    forward: dict[str, str] = {}
+    reverse: dict[str, str] = {}
+    for tool in tools:
+        safe = _safe_function_name(tool.name)
+        if safe in reverse and reverse[safe] != tool.name:
+            raise ModelUnavailableError("tool function names are not representable")
+        forward[tool.name] = safe
+        reverse[safe] = tool.name
+    return forward, reverse
+
+
 class OpenAICompatModelBackend:
     """One OpenAI-compatible chat/tool-call transport over `httpx`.
 
@@ -139,6 +172,7 @@ class OpenAICompatModelBackend:
         self._client.close()
 
     def complete(self, request: ModelRequest) -> ModelResponse:
+        forward, reverse = _tool_name_map(request.tools)
         messages: list[dict[str, Any]] = [{"role": "system", "content": request.system}]
         for msg in request.messages:
             item: dict[str, Any] = {"role": msg.role}
@@ -149,7 +183,7 @@ class OpenAICompatModelBackend:
                         "id": call.id,
                         "type": "function",
                         "function": {
-                            "name": call.name,
+                            "name": forward.get(call.name, _safe_function_name(call.name)),
                             "arguments": call.arguments_raw or "{}",
                         },
                     }
@@ -157,6 +191,8 @@ class OpenAICompatModelBackend:
                 ]
             if msg.role == "tool":
                 item["tool_call_id"] = msg.tool_call_id
+                if msg.name:
+                    item["name"] = forward.get(msg.name, _safe_function_name(msg.name))
             messages.append(item)
 
         payload: dict[str, Any] = {
@@ -169,7 +205,7 @@ class OpenAICompatModelBackend:
                 {
                     "type": "function",
                     "function": {
-                        "name": tool.name,
+                        "name": forward[tool.name],
                         "description": tool.description,
                         "parameters": tool.input_schema,
                     },
@@ -193,21 +229,44 @@ class OpenAICompatModelBackend:
         except (json.JSONDecodeError, ValueError) as exc:
             raise ModelUnavailableError("model returned a malformed response") from exc
 
-        choice = data["choices"][0]
+        if not isinstance(data, dict):
+            raise ModelUnavailableError("model returned a malformed response")
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ModelUnavailableError("model returned a malformed response")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise ModelUnavailableError("model returned a malformed response")
         message = choice.get("message") or {}
-        tool_calls = tuple(
-            ModelToolCall(
-                id=(call.get("id") or ""),
-                name=(call.get("function") or {}).get("name") or "",
-                arguments_raw=(call.get("function") or {}).get("arguments") or "{}",
-                arguments=_parse_arguments((call.get("function") or {}).get("arguments") or "{}"),
+        if not isinstance(message, dict):
+            raise ModelUnavailableError("model returned a malformed response")
+
+        parsed_calls: list[ModelToolCall] = []
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                raise ModelUnavailableError("model returned a malformed response")
+            function = call.get("function") or {}
+            if not isinstance(function, dict):
+                raise ModelUnavailableError("model returned a malformed response")
+            wire_name = function.get("name") or ""
+            canonical = reverse.get(wire_name, wire_name)
+            raw_arguments = function.get("arguments") or "{}"
+            if not isinstance(raw_arguments, str):
+                raw_arguments = json.dumps(raw_arguments, default=str)
+            parsed_calls.append(
+                ModelToolCall(
+                    id=(call.get("id") or ""),
+                    name=canonical,
+                    arguments_raw=raw_arguments,
+                    arguments=_parse_arguments(raw_arguments),
+                )
             )
-            for call in (message.get("tool_calls") or [])
-        )
+
+        tool_calls = tuple(parsed_calls)
         finish: Literal["stop", "tool_calls"] = "tool_calls" if tool_calls else "stop"
         return ModelResponse(
             finish=finish,
-            content=message.get("content"),
+            content=message.get("content") if isinstance(message.get("content"), str) else None,
             tool_calls=tool_calls,
         )
 
