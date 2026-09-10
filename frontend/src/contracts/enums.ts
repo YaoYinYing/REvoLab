@@ -6,6 +6,8 @@ export * from './enums.generated'
 
 import {
   AGENT_TOOL_AUTONOMIES,
+  AGENT_TOOL_CALL_STATUSES,
+  AGENT_TERMINATION_REASONS,
   CAPABILITY_AVAILABILITIES,
   CAPABILITY_KINDS,
   CITED_AS,
@@ -81,3 +83,13 @@ export const TOOL_SIDE_EFFECT_DOMAIN_MUTATION = pick(
 export const TOOL_SIDE_EFFECT_EXTERNAL_ACTION = pick(TOOL_SIDE_EFFECT_CLASSES, 'external_action')
 export const TOOL_RESULT_KIND_EPHEMERAL = pick(TOOL_RESULT_KINDS, 'ephemeral')
 export const TOOL_RESULT_KIND_ARTIFACT = pick(TOOL_RESULT_KINDS, 'artifact')
+
+// Project Agent Runtime aliases (Phase 8): termination and tool-call statuses
+// are derived from the generated lists, never re-declared as bare literals.
+export const AGENT_TERMINATION_REASON_FINAL_RESPONSE = pick(
+  AGENT_TERMINATION_REASONS,
+  'final_response',
+)
+export const AGENT_TOOL_CALL_STATUS_COMPLETED = pick(AGENT_TOOL_CALL_STATUSES, 'completed')
+export const AGENT_TOOL_CALL_STATUS_PENDING = pick(AGENT_TOOL_CALL_STATUSES, 'pending')
+export const AGENT_TOOL_CALL_STATUS_FAILED = pick(AGENT_TOOL_CALL_STATUSES, 'failed')

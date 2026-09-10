@@ -1,228 +1,223 @@
-import { useMemo, useState } from 'react'
-import { Bot, GitCommitHorizontal } from 'lucide-react'
+import { useState } from 'react'
+import { Bot, GitCommitHorizontal, Send } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
-import { useAgentTools, useObjects, useProjectContext } from '../api/hooks'
-import type { DecisionRead, ToolDescriptorRead } from '../api/types'
+import { useObjects, useResources } from '../api/hooks'
+import type { AgentChatMessageCreate, AgentTurnRead } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
 import {
-  AGENT_TOOL_AUTONOMY_AUTOMATIC,
-  AGENT_TOOL_AUTONOMY_EXPLICIT_ACTION,
-  AGENT_TOOL_AUTONOMY_POLICY,
-  DECISION_STATUS_COMMITTED,
-  DECISION_STATUS_DRAFT,
-  DEFAULT_SELECT_TARGET_KIND,
-  ROLE_MEMBER,
-  ROLE_OWNER,
-  TOOL_SOURCE_PROVIDER,
+  AGENT_TERMINATION_REASON_FINAL_RESPONSE,
+  AGENT_TOOL_CALL_STATUS_COMPLETED,
+  AGENT_TOOL_CALL_STATUS_FAILED,
+  AGENT_TOOL_CALL_STATUS_PENDING,
+  RESOURCE_KIND_ARTIFACT,
 } from '../contracts/enums'
 
-function autonomyTone(autonomy: string): 'neutral' | 'good' | 'warn' {
-  if (autonomy === AGENT_TOOL_AUTONOMY_AUTOMATIC) return 'good'
-  if (autonomy === AGENT_TOOL_AUTONOMY_POLICY) return 'neutral'
-  if (autonomy === AGENT_TOOL_AUTONOMY_EXPLICIT_ACTION) return 'warn'
-  return 'neutral'
+interface Message {
+  role: 'user' | 'assistant'
+  content: string
 }
 
-function ToolRow({ tool }: { tool: ToolDescriptorRead }) {
-  return (
-    <div className="list-row" key={tool.id}>
-      <div className="list-row-head">
-        <Bot size={15} />
-        <strong>{tool.name}</strong>
-        <small className="mono">{tool.id}</small>
-        <Badge tone={tool.source === TOOL_SOURCE_PROVIDER ? 'neutral' : 'good'}>{tool.source}</Badge>
-        <Badge tone={autonomyTone(tool.autonomy)}>{tool.autonomy}</Badge>
-        {tool.available ? <Badge tone="good">available</Badge> : <Badge tone="warn">unavailable</Badge>}
-      </div>
-      <p>{tool.description}</p>
-      <small className="mono">
-        {tool.provider_key ? `${tool.source} · ${tool.provider_key}` : tool.source}
-        {tool.availability_reason ? ` · ${tool.availability_reason}` : ''}
-      </small>
-    </div>
-  )
+function traceTone(status: string): 'neutral' | 'good' | 'warn' {
+  if (status === AGENT_TOOL_CALL_STATUS_COMPLETED) return 'good'
+  if (status === AGENT_TOOL_CALL_STATUS_PENDING) return 'warn'
+  if (status === AGENT_TOOL_CALL_STATUS_FAILED) return 'warn'
+  return 'neutral'
 }
 
 export function AgentView({ actorId, projectId }: { actorId: string; projectId: string }) {
   const { data: objects } = useObjects(actorId, projectId)
-  const [selectedSeriesId, setSelectedSeriesId] = useState<string>('')
-  const [statement, setStatement] = useState('')
-  const [title, setTitle] = useState('')
+  const { data: artifacts } = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
+  const [selectedSeriesId, setSelectedSeriesId] = useState('')
+  const [selectedArtifactId, setSelectedArtifactId] = useState('')
+  const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [proposal, setProposal] = useState<DecisionRead | null>(null)
+  const [messages, setMessages] = useState<Message[]>([])
+  const [turn, setTurn] = useState<AgentTurnRead | null>(null)
 
-  const selection = useMemo(
-    () =>
-      selectedSeriesId
-        ? {
-            series_ids: [selectedSeriesId],
-            include_relations: true,
-            include_evidence: true,
-            include_decisions: true,
-            include_references: true,
-            include_provider_capabilities: false,
-            graph_depth: 0,
-            max_series: 50,
-            max_revisions: 200,
-            max_relations: 200,
-            max_evidence: 100,
-            max_decisions: 100,
-            max_references: 100,
-          }
-        : null,
-    [selectedSeriesId],
-  )
-  const context = useProjectContext(actorId, projectId, selection)
-  const tools = useAgentTools(actorId, projectId)
-  const canMutate =
-    context.data?.membership_role === ROLE_OWNER || context.data?.membership_role === ROLE_MEMBER
-
-  async function recordDraft(event: React.FormEvent) {
+  async function send(event: React.FormEvent) {
     event.preventDefault()
-    if (!selection) return
+    if (!input.trim() || busy) return
+    const userMessage = input.trim()
     setActionError(null)
     setBusy(true)
-    const res = await projectApi(actorId).createAgentProposal(projectId, {
-      title: title || 'Agent proposal',
-      statement,
-      next_actions: [],
-      cites: [],
-      selects: [{ target_id: selectedSeriesId, target_kind: DEFAULT_SELECT_TARGET_KIND }],
+    setInput('')
+
+    const history: AgentChatMessageCreate[] = messages.slice(-20).map((message) => ({
+      role: message.role,
+      content: message.content,
+    }))
+    const res = await projectApi(actorId).createAgentTurn(projectId, {
+      message: userMessage,
+      selection: {
+        ...(selectedSeriesId ? { series_ids: [selectedSeriesId] } : {}),
+        ...(selectedArtifactId ? { artifact_ids: [selectedArtifactId] } : {}),
+        include_relations: true,
+        include_evidence: true,
+        include_decisions: true,
+        include_references: true,
+        include_provider_capabilities: false,
+        graph_depth: 1,
+        max_series: 50,
+        max_revisions: 200,
+        max_relations: 200,
+        max_evidence: 100,
+        max_decisions: 100,
+        max_references: 100,
+      },
+      history,
     })
     setBusy(false)
     if (res.error || !res.data) {
-      setActionError('Recording the proposal draft failed.')
+      setActionError('The Agent turn failed. Check the model runtime and project context.')
       return
     }
-    setProposal(res.data as DecisionRead)
-    setStatement('')
-    setTitle('')
+    setTurn(res.data)
+    setMessages((current) => [
+      ...current,
+      { role: 'user', content: userMessage },
+      ...(res.data?.final_response ? [{ role: 'assistant' as const, content: res.data.final_response }] : []),
+    ])
   }
 
-  async function commitDraft() {
-    if (!proposal) return
-    setActionError(null)
-    setBusy(true)
-    const res = await projectApi(actorId).commitDecision(projectId, proposal.id)
-    setBusy(false)
-    if (res.error || !res.data) {
-      setActionError('Commit failed. Only the existing authorized commit path promotes truth.')
-      return
-    }
-    setProposal(res.data as DecisionRead)
-  }
-
-  const proposalIsDraft = proposal?.status === DECISION_STATUS_DRAFT
+  const pendingActions = turn?.pending_actions ?? []
+  const trace = turn?.tool_trace ?? []
 
   return (
     <div className="view">
       <div className="view-header">
         <h1>Agent</h1>
         <p>
-          The Agent reads bounded Project context and proposes — it never owns truth. A proposal is a
-          Decision <Badge tone="warn">draft</Badge> until an authorized actor explicitly commits it.
+          The Agent reads a freshly assembled bounded Project context, reasons, and can call canonical
+          Project Tools. Conversation here is ephemeral working memory — never durable project truth. A
+          Decision created by the Agent is a <Badge tone="warn">draft</Badge> until you commit it.
         </p>
       </div>
 
-      <Section title="Selected context">
-        <Field label="Scientific object">
-          <select
-            value={selectedSeriesId}
-            onChange={(event) => {
-              setSelectedSeriesId(event.target.value)
-              setProposal(null)
-            }}
-            aria-label="Select object for agent context"
-          >
-            <option value="">— choose an object —</option>
-            {objects?.map((object) => (
-              <option key={object.series_id} value={object.series_id}>
-                {object.name} ({object.object_type})
-              </option>
-            ))}
-          </select>
-        </Field>
-        {!selection ? <Empty label="Select an object to assemble bounded Project context." /> : null}
-        {context.loading ? <Loading label="Assembling context…" /> : null}
-        <ErrorBox message={context.error} />
-        {context.data ? (
-          <div className="context-summary">
-            <p>
-              <strong>{context.data.project_name}</strong> · {context.data.membership_role} lens
-            </p>
-            <small className="mono">
-              series {context.data.budget.series_count} · revisions {context.data.budget.revision_count}
-              {' · '}relations {context.data.budget.relation_count} · evidence {context.data.budget.evidence_count}
-              {' · '}decisions {context.data.budget.decision_count} · references{' '}
-              {context.data.budget.reference_count}
-              {context.data.budget.truncated ? ' · TRUNCATED' : ''}
-            </small>
-            {(context.data.loaded_skill_ids ?? []).length > 0 ? (
-              <p>Loaded skills: {(context.data.loaded_skill_ids ?? []).join(', ')}</p>
-            ) : null}
+      <Section title="Context">
+        <div className="form-grid">
+          <Field label="Scientific object (optional)">
+            <select
+              value={selectedSeriesId}
+              onChange={(event) => setSelectedSeriesId(event.target.value)}
+              aria-label="Select object for agent context"
+            >
+              <option value="">— none —</option>
+              {objects?.map((object) => (
+                <option key={object.series_id} value={object.series_id}>
+                  {object.name} ({object.object_type})
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Tabular artifact (optional)">
+            <select
+              value={selectedArtifactId}
+              onChange={(event) => setSelectedArtifactId(event.target.value)}
+              aria-label="Select artifact for agent context"
+            >
+              <option value="">— none —</option>
+              {artifacts?.map((artifact) => (
+                <option key={artifact.resource_id} value={artifact.resource_id}>
+                  {artifact.native_id ?? artifact.resource_id.slice(0, 8)}
+                  {artifact.content_type ? ` · ${artifact.content_type}` : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      </Section>
+
+      <Section title="Conversation (session-local, not persisted)">
+        {messages.length === 0 ? <Empty label="Ask the Agent to analyze the selected context." /> : null}
+        {messages.map((message, index) => (
+          <div className={`list-row ${message.role === 'assistant' ? 'assistant-row' : ''}`} key={index}>
+            <div className="list-row-head">
+              {message.role === 'assistant' ? <Bot size={15} /> : null}
+              <strong>{message.role === 'assistant' ? 'Agent' : 'You'}</strong>
+            </div>
+            <p className="pre-line">{message.content}</p>
           </div>
-        ) : null}
-      </Section>
+        ))}
 
-      <Section title="Available tools">
-        {tools.loading ? <Loading /> : null}
-        <ErrorBox message={tools.error} />
-        {(tools.data?.tools ?? []).length === 0 ? <Empty label="No tools available." /> : null}
-        {(tools.data?.tools ?? []).map((tool) => <ToolRow key={tool.id} tool={tool} />)}
-      </Section>
-
-      <Section title="Proposal → decision draft → explicit commit">
-        <form className="stack-form" onSubmit={recordDraft}>
-          <Field label="Proposal title">
-            <input
-              placeholder="e.g. Select variant for experimental validation"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-            />
-          </Field>
-          <Field label="Proposed conclusion">
-            <textarea
-              rows={3}
-              placeholder="This variant is the current experimental candidate."
-              value={statement}
-              onChange={(event) => setStatement(event.target.value)}
-              required
-            />
-          </Field>
+        <form className="stack-form" onSubmit={send}>
+          <textarea
+            rows={3}
+            placeholder='e.g. "Describe this table and draft a conclusion based on it."'
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            required
+          />
           <div className="form-actions">
-            <Button type="submit" disabled={busy || !selection || !canMutate}>
-              {busy ? 'Recording…' : 'Record draft'}
+            <Button type="submit" disabled={busy || !input.trim()}>
+              <Send size={15} /> {busy ? 'Running…' : 'Send'}
             </Button>
-            {proposalIsDraft ? (
-              <Button onClick={commitDraft} disabled={busy || !canMutate}>
-                <GitCommitHorizontal size={15} /> Commit (authorized)
-              </Button>
-            ) : null}
             {actionError ? <span className="inline-error">{actionError}</span> : null}
           </div>
         </form>
-
-        {proposal ? (
-          <div className={`list-row ${proposalIsDraft ? 'decision-row' : ''}`}>
-            <div className="list-row-head">
-              <strong>{proposal.title}</strong>
-              <Badge tone={proposal.status === DECISION_STATUS_COMMITTED ? 'good' : 'warn'}>
-                {proposal.status}
-              </Badge>
-            </div>
-            <p>{proposal.statement}</p>
-            <small className="mono">decision {proposal.id.slice(0, 8)}…</small>
-          </div>
-        ) : null}
-
-        <p className="truth-boundary">
-          Agent proposal ≠ committed Project Knowledge. A draft is conversation-adjacent project state;
-          only the explicit commit path materializes knowledge edges as truth.
-        </p>
       </Section>
+
+      {turn ? (
+        <Section title="Last turn">
+          <p>
+            Termination: <Badge tone={turn.termination_reason === AGENT_TERMINATION_REASON_FINAL_RESPONSE ? 'good' : 'warn'}>
+              {turn.termination_reason}
+            </Badge>
+          </p>
+
+          {trace.length > 0 ? (
+            <Section title="Tools used">
+              {trace.map((entry, index) => (
+                <div className="list-row" key={index}>
+                  <div className="list-row-head">
+                    <Bot size={15} />
+                    <strong className="mono">{entry.tool_id}</strong>
+                    <Badge tone={traceTone(entry.status)}>{entry.status}</Badge>
+                  </div>
+                  {entry.error ? <p className="inline-error">{entry.error}</p> : null}
+                  {entry.pending_action ? (
+                    <p>
+                      Proposed <strong>{entry.pending_action.tool_id}</strong> — NOT executed (
+                      {entry.pending_action.reason}).
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </Section>
+          ) : null}
+
+          {pendingActions.length > 0 ? (
+            <Section title="Pending explicit actions">
+              <p className="truth-boundary">
+                The Agent proposed these actions but did NOT execute them. Use the existing authorized
+                surface (e.g. the Decisions view with <GitCommitHorizontal size={12} /> commit) to act.
+              </p>
+              {pendingActions.map((action, index) => (
+                <div className="list-row" key={index}>
+                  <div className="list-row-head">
+                    <strong className="mono">{action.tool_id}</strong>
+                    <Badge tone="warn">{action.autonomy}</Badge>
+                  </div>
+                  <p>{action.summary}</p>
+                  <small className="mono">{JSON.stringify(action.arguments)}</small>
+                </div>
+              ))}
+            </Section>
+          ) : null}
+
+          <p className="truth-boundary">
+            Agent output ≠ committed Project Knowledge. A Decision draft stays a draft until the explicit
+            authorized commit path materializes knowledge edges as truth.
+          </p>
+        </Section>
+      ) : null}
+
+      <p className="truth-boundary">
+        Agent output ≠ committed Project Knowledge. A Decision created by the Agent is always a{' '}
+        <Badge tone="warn">draft</Badge> until you commit it through the Decisions view.
+      </p>
     </div>
   )
 }

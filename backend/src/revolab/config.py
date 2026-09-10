@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +28,31 @@ class Settings(BaseSettings):
     # `get_settings()` is lru_cached, so set REVOLAB_SKILLS_ROOT before the first
     # settings access (process start) or call `get_settings.cache_clear()`.
     skills_root: str | None = None
+
+    # --- Phase-8 Bounded Project Agent Runtime (server-owned configuration) ---
+    # One OpenAI-compatible chat/tool-call transport. `model_endpoint` is the
+    # base URL (or the full `/chat/completions` URL); `model_name` the concrete
+    # model id. A missing configuration fails explicitly — never a silent fake.
+    model_endpoint: str | None = None
+    model_name: str | None = None
+    # Optional bearer credential. SecretStr never leaks through repr/log/OpenAPI;
+    # it is presented by the transport only, never echoed anywhere else.
+    model_api_key: SecretStr | None = None
+    model_timeout_seconds: float = 60.0
+    # Opt-in in-process scripted fake model for tests/browser slice (never in
+    # production; only used when no real model endpoint is configured).
+    e2e_fake_model: bool = False
+    # Conservative Agent-loop ceilings (TODO.md section 7).
+    agent_max_model_turns: int = 8
+    agent_max_tool_calls: int = 16
+    agent_max_tool_calls_per_turn: int = 4
+    agent_max_context_chars: int = 60_000
+    agent_max_history_messages: int = 20
+    agent_max_history_chars: int = 20_000
+    agent_max_skill_count: int = 4
+    agent_max_skill_bytes: int = 20_000
+    agent_max_tool_result_chars: int = 12_000
+    agent_total_turn_duration_seconds: float = 300.0
 
 
 @lru_cache

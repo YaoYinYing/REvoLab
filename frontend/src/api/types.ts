@@ -85,3 +85,16 @@ export type ToolInvocationCreate =
 
 export type ToolResultRead =
   paths['/api/projects/{project_id}/tools/invocations']['post']['responses']['201']['content']['application/json']
+
+// Phase-8 Bounded Project Agent Runtime.
+export type AgentTurnCreate =
+  paths['/api/projects/{project_id}/agent/turns']['post']['requestBody']['content']['application/json']
+
+export type AgentTurnRead =
+  paths['/api/projects/{project_id}/agent/turns']['post']['responses']['200']['content']['application/json']
+
+export type AgentChatMessageCreate = NonNullable<AgentTurnCreate['history']>[number]
+export type ToolCallTraceRead = NonNullable<AgentTurnRead['tool_trace']>[number]
+export type PendingActionRead = NonNullable<AgentTurnRead['pending_actions']>[number]
+export type AgentTerminationReason = components['schemas']['AgentTerminationReason']
+export type AgentToolCallStatus = components['schemas']['AgentToolCallStatus']

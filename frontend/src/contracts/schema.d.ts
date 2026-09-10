@@ -116,23 +116,6 @@ export interface paths {
         patch: operations["patch_project_api_projects__project_id__patch"];
         trace?: never;
     };
-    "/api/projects/{project_id}/agent/proposals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create Agent Proposal */
-        post: operations["create_agent_proposal_api_projects__project_id__agent_proposals_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/projects/{project_id}/agent/tools": {
         parameters: {
             query?: never;
@@ -144,6 +127,30 @@ export interface paths {
         get: operations["list_agent_tools_api_projects__project_id__agent_tools_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/agent/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Agent Turn
+         * @description Run one bounded Project Agent turn. The Agent is a consumer, never an
+         *     owner: context is rebuilt from Project truth, tool calls are validated
+         *     against the canonical ToolCatalog and executed only through LocalToolRuntime,
+         *     explicit actions become PendingActions, and the only Decision shape
+         *     producible is a DRAFT. No raw provider/model response object is exposed.
+         */
+        post: operations["create_agent_turn_api_projects__project_id__agent_turns_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -917,6 +924,27 @@ export interface components {
             actor_id: string;
         };
         /**
+         * AgentChatMessageCreate
+         * @description One bounded transient-history message. Only `user`/`assistant` are legal;
+         *     the browser may never supply system instructions or tool-result authority.
+         */
+        AgentChatMessageCreate: {
+            /** Content */
+            content: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
+        };
+        /**
+         * AgentTerminationReason
+         * @description Why one bounded Agent turn ended. A bound hit is a typed, user-visible
+         *     terminal result, never a silent continuation.
+         * @enum {string}
+         */
+        AgentTerminationReason: "final_response" | "max_model_turns" | "max_tool_calls" | "total_duration" | "model_unavailable";
+        /**
          * AgentToolAutonomy
          * @description The executable agent-autonomy classification (ADR-0013 authority matrix):
          *
@@ -935,6 +963,97 @@ export interface components {
          * @enum {string}
          */
         AgentToolAutonomy: "automatic" | "policy" | "explicit_action";
+        /**
+         * AgentToolCallStatus
+         * @description Per-tool-call outcome inside an Agent turn: executed through the canonical
+         *     runtime (`completed`), converted to a PendingAction (`pending`), refused /
+         *     failed closed (`failed`), or skipped by a per-turn budget (`skipped`).
+         * @enum {string}
+         */
+        AgentToolCallStatus: "completed" | "pending" | "failed" | "skipped";
+        /**
+         * AgentTurnBudgetRead
+         * @description Actual counters vs the configured ceilings, so a bound hit is visible.
+         */
+        AgentTurnBudgetRead: {
+            /**
+             * Context Truncated
+             * @default false
+             */
+            context_truncated: boolean;
+            /**
+             * History Messages
+             * @default 0
+             */
+            history_messages: number;
+            /**
+             * Max History Messages
+             * @default 0
+             */
+            max_history_messages: number;
+            /**
+             * Max Model Turns
+             * @default 0
+             */
+            max_model_turns: number;
+            /**
+             * Max Skills
+             * @default 0
+             */
+            max_skills: number;
+            /**
+             * Max Tool Calls
+             * @default 0
+             */
+            max_tool_calls: number;
+            /**
+             * Model Turns
+             * @default 0
+             */
+            model_turns: number;
+            /**
+             * Skills Loaded
+             * @default 0
+             */
+            skills_loaded: number;
+            /**
+             * Tool Calls
+             * @default 0
+             */
+            tool_calls: number;
+        };
+        /**
+         * AgentTurnCreate
+         * @description The canonical Project-scoped Agent-turn request (TODO.md section 12).
+         */
+        AgentTurnCreate: {
+            /** History */
+            history?: components["schemas"]["AgentChatMessageCreate"][] | null;
+            /** Message */
+            message: string;
+            selection?: components["schemas"]["ContextSelectionCreate"] | null;
+        };
+        /**
+         * AgentTurnRead
+         * @description The typed Agent-turn result: final response, tool-call trace, pending
+         *     explicit actions, termination reason, and budget state. Never exposes hidden
+         *     prompt text, raw provider/model response objects, or any credential/secret.
+         */
+        AgentTurnRead: {
+            budget?: components["schemas"]["AgentTurnBudgetRead"];
+            /** Final Response */
+            final_response?: string | null;
+            /** Pending Actions */
+            pending_actions?: components["schemas"]["PendingActionRead"][];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            termination_reason: components["schemas"]["AgentTerminationReason"];
+            /** Tool Trace */
+            tool_trace?: components["schemas"]["ToolCallTraceRead"][];
+        };
         /**
          * ArtifactInspectRead
          * @description Bounded artifact-preview result. `preview` is a small head slice of the
@@ -1196,6 +1315,8 @@ export interface components {
          *     selected identity against this Project's read lens and fails closed.
          */
         ContextSelectionCreate: {
+            /** Artifact Ids */
+            artifact_ids?: string[] | null;
             /**
              * Graph Depth
              * @default 1
@@ -1727,6 +1848,25 @@ export interface components {
          */
         ObjectType: "protein" | "sequence" | "structure" | "variant" | "ligand" | "complex" | "dataset" | "assay" | "construct" | "other";
         /**
+         * PendingActionRead
+         * @description A PROPOSED action the Agent loop did NOT execute. It carries only the
+         *     validated, bounded, non-secret information needed to understand the proposed
+         *     operation; execution remains the existing human-authorized surface.
+         */
+        PendingActionRead: {
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+            autonomy: components["schemas"]["AgentToolAutonomy"];
+            /** Reason */
+            reason: string;
+            /** Summary */
+            summary: string;
+            /** Tool Id */
+            tool_id: string;
+        };
+        /**
          * Polarity
          * @enum {string}
          */
@@ -2128,6 +2268,20 @@ export interface components {
              * Format: uuid
              */
             superseding_decision_id: string;
+        };
+        /**
+         * ToolCallTraceRead
+         * @description Per-tool-call outcome inside one Agent turn: executed, pending (proposed),
+         *     failed (refused/malformed/unknown), or skipped by a per-turn budget.
+         */
+        ToolCallTraceRead: {
+            /** Error */
+            error?: string | null;
+            pending_action?: components["schemas"]["PendingActionRead"] | null;
+            result?: components["schemas"]["ToolResultRead"] | null;
+            status: components["schemas"]["AgentToolCallStatus"];
+            /** Tool Id */
+            tool_id: string;
         };
         /**
          * ToolCatalogRead
@@ -2678,43 +2832,6 @@ export interface operations {
             };
         };
     };
-    create_agent_proposal_api_projects__project_id__agent_proposals_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Actor-Id"?: string | null;
-            };
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["DecisionCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DecisionRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_agent_tools_api_projects__project_id__agent_tools_get: {
         parameters: {
             query?: never;
@@ -2735,6 +2852,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolCatalogRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_agent_turn_api_projects__project_id__agent_turns_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentTurnCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentTurnRead"];
                 };
             };
             /** @description Validation Error */

@@ -29,3 +29,10 @@ class ConflictError(DomainError):
     """Immutability / freeze / uniqueness / lifecycle conflicts."""
 
     status_code = 409
+
+
+class ModelUnavailableError(DomainError):
+    """The Agent model runtime is not configured, or the configured model
+    transport failed. Fails closed and locally: never a silent fake fallback."""
+
+    status_code = 503

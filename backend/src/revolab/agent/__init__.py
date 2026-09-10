@@ -1,33 +1,50 @@
-"""Agent Context domain (Phase 6) — the Agent is a consumer, never an owner.
+"""Agent Context & Runtime (Phase 6 + Phase 8) — the Agent is a consumer, never
+an owner.
 
-This package owns the read-only `ContextBuilder` (ContextSelection -> ProjectContext),
-the minimal `SkillCatalog` that points at `.agents/skills/`, and an ephemeral
-`AgentSession` value object. It consumes the Core domains' public contracts
-(Project/Evidence/Knowledge/Provider/Identity) and never writes project truth
-itself: every mutation is routed back through the same typed domain/application
-services ordinary API callers use.
+This package owns:
+- the read-only `ContextBuilder` (ContextSelection -> bounded ProjectContext),
+- the minimal `SkillCatalog` pointing at `.agents/skills/` + bounded skill bodies,
+- the `ModelBackend` boundary (one configured OpenAI-compatible adapter, or a
+  deterministic test double at the external boundary),
+- the bounded `AgentTurnRunner` loop (context -> model -> canonical ToolCatalog ->
+  LocalToolRuntime OR PendingAction -> result).
 
-The canonical `ToolCatalog` is owned by the Project Tool Harness
-(`revolab.tools`) in Phase 7; the Agent re-exports it so human and Agent share
-one catalog truth (TODO.md section 16).
+It consumes Core's public contracts and the Project Tool Harness (`revolab.tools`)
+and never writes project truth itself: every mutation routes through the same
+typed domain/application services ordinary API callers use.
 """
 
 from revolab.agent.builder import ContextBuilder, build_context
 from revolab.agent.inspect import inspect_artifact
-from revolab.agent.session import AgentProposal, AgentSession, propose_selection, record_proposal
-from revolab.agent.skills import SkillCatalog, select_skills
+from revolab.agent.model_backend import (
+    ChatMessage,
+    ModelBackend,
+    ModelRequest,
+    ModelResponse,
+    ModelToolCall,
+    OpenAICompatModelBackend,
+    ToolSpec,
+)
+from revolab.agent.runtime import AgentLoopBounds, AgentTurnRunner
+from revolab.agent.skills import SkillCatalog, load_skill_bodies, select_skills
 from revolab.agent.tools import ToolCatalog, build_tool_catalog
 
 __all__ = [
-    "AgentProposal",
-    "AgentSession",
+    "AgentLoopBounds",
+    "AgentTurnRunner",
+    "ChatMessage",
     "ContextBuilder",
+    "ModelBackend",
+    "ModelRequest",
+    "ModelResponse",
+    "ModelToolCall",
+    "OpenAICompatModelBackend",
     "SkillCatalog",
     "ToolCatalog",
+    "ToolSpec",
     "build_context",
     "build_tool_catalog",
     "inspect_artifact",
-    "propose_selection",
-    "record_proposal",
+    "load_skill_bodies",
     "select_skills",
 ]

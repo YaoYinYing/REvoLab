@@ -16,13 +16,13 @@ type ComputeSubmissionCreate = paths['/api/projects/{project_id}/compute/submiss
 type ContextSelectionCreate = NonNullable<
   paths['/api/projects/{project_id}/context']['post']['requestBody']
 >['content']['application/json']
-type AgentProposalCreate =
-  paths['/api/projects/{project_id}/agent/proposals']['post']['requestBody']['content']['application/json']
+type AgentTurnCreate =
+  paths['/api/projects/{project_id}/agent/turns']['post']['requestBody']['content']['application/json']
 type ToolInvocationCreate =
   paths['/api/projects/{project_id}/tools/invocations']['post']['requestBody']['content']['application/json']
 
 export type {
-  AgentProposalCreate,
+  AgentTurnCreate,
   ComputeSubmissionCreate,
   ContextSelectionCreate,
   DecisionCreate,
@@ -241,8 +241,8 @@ export function projectApi(actorId: string) {
         body,
       }),
 
-    createAgentProposal: (projectId: string, body: AgentProposalCreate) =>
-      api.POST('/api/projects/{project_id}/agent/proposals', {
+    createAgentTurn: (projectId: string, body: AgentTurnCreate) =>
+      api.POST('/api/projects/{project_id}/agent/turns', {
         headers,
         params: { path: { project_id: projectId } },
         body,

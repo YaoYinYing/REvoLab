@@ -123,6 +123,12 @@ Remote REvoCompute tools are projected through the same catalog
 `execution_class=remote`; they execute only through the existing capability
 endpoints — the Local Tool Runtime never invokes them.
 
+The Phase-8 Agent loop executes **local** tools through this same runtime. Remote
+tools are surfaced to the model from the same catalog but are not autonomously
+crossed in the loop: remote `explicit_action` becomes a `PendingAction`, and
+remote automatic/policy reads remain on the human capability endpoints
+(`docs/architecture/PROJECT_AGENT_RUNTIME.md`).
+
 ## Lightweight vs heavyweight execution boundary
 
 **REvoLab local tools** are appropriate for bounded metadata inspection, small table

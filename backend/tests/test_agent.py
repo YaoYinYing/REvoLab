@@ -20,19 +20,18 @@ from sqlalchemy import event, func, select
 
 from revolab import services
 from revolab.agent import (
+    AgentTurnRunner,
     build_context,
     build_tool_catalog,
     inspect_artifact,
-    propose_selection,
-    record_proposal,
 )
-from revolab.agent.session import AgentSession
 from revolab.agent.skills import SkillCatalog
 from revolab.capabilities import ArtifactHandle, CapabilityError, ExternalArtifactRef
 from revolab.content_store import ContentStore
-from revolab.domain.errors import AuthorizationError
+from revolab.domain.errors import AuthorizationError, ModelUnavailableError
 from revolab.drivers import DriverContext, DriverRegistry
 from revolab.enums import (
+    AgentTerminationReason,
     AgentToolAutonomy,
     CapabilityKind,
     DecisionStatus,
@@ -50,6 +49,9 @@ from revolab.models import (
 from revolab.schemas import ContextSelectionCreate
 from revolab.secret_store import InMemorySecretStore
 from revolab.testing.fake_compute import FakeComputeDriver
+from revolab.testing.fake_model import ScriptedModelBackend
+from revolab.tools.registry import build_default_registry
+from revolab.tools.runtime import LocalToolRuntime
 
 
 def _actor(session):
@@ -765,68 +767,126 @@ def test_viewer_never_sees_action_provider_tools(session):
 
 
 # ---------------------------------------------------------------------------
-# Proposal -> draft -> explicit authorized commit
+# Bounded Project Agent loop (Phase 8)
 # ---------------------------------------------------------------------------
 
 
-def test_agent_proposal_is_draft_then_explicit_commit(session):
+def _runner(session, actor, project, registry, store, tmp_path, *, model=None, bounds=None):
+    return AgentTurnRunner(
+        model if model is not None else ScriptedModelBackend(),
+        LocalToolRuntime(build_default_registry()),
+        registry,
+        store,
+        ContentStore(tmp_path),
+        bounds,
+    )
+
+
+def _draft_turn(steps):
+    return ScriptedModelBackend(steps=steps)
+
+
+def test_agent_loop_record_draft_stays_draft_then_explicit_commit(session, tmp_path):
     actor = _actor(session)
     project = _project(session, actor)
     series = _object(session, actor, project, "T5alphaH")
     revision = _revision(session, actor, project, series, {"chain": "A"})
     _evidence(session, actor, project, revision.revision_id)
 
-    registry = _registry()
-    context = build_context(
+    model = _draft_turn(
+        [
+            {
+                "finish": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call_draft",
+                        "name": "decision.record_draft",
+                        "arguments": {
+                            "title": "Select variant",
+                            "statement": "This variant is the candidate.",
+                            "next_actions": ["validate experimentally"],
+                            "cites": [],
+                            "selects": [
+                                {
+                                    "target_id": str(revision.revision_id),
+                                    "target_kind": "scientific_object_revision",
+                                }
+                            ],
+                        },
+                    }
+                ],
+            },
+            {"finish": "stop", "content": "Recorded a draft only."},
+        ]
+    )
+    runner = _runner(
+        session, actor, project, _registry(), InMemorySecretStore(), tmp_path, model=model
+    )
+    result = runner.run(
         session,
         actor,
         project.id,
-        registry,
+        "Draft a conclusion.",
         ContextSelectionCreate(series_ids=[series], graph_depth=0),
     )
-    proposal = propose_selection(context)
-    draft = record_proposal(session, actor, project.id, proposal)
+    assert result.termination_reason is AgentTerminationReason.FINAL_RESPONSE
+    assert [entry.tool_id for entry in result.tool_trace] == ["decision.record_draft"]
+    assert result.tool_trace[0].status.value == "completed"
+    assert result.pending_actions == []
 
-    assert draft.status == DecisionStatus.DRAFT.value
-    assert draft.committed_at is None
+    drafts = session.scalars(select(Decision)).all()
+    assert len(drafts) == 1
+    assert drafts[0].status == DecisionStatus.DRAFT.value
+    assert drafts[0].committed_at is None
     assert session.scalars(select(DecisionEvidence)).all() == []
     assert session.scalars(select(DecisionTarget)).all() == []
 
-    # A draft is visible as a draft, not as committed Knowledge truth.
-    documents = session.scalars(select(Decision)).all()
-    assert [d.status for d in documents] == [DecisionStatus.DRAFT.value]
-
-    committed = services.commit_decision(session, actor, project.id, draft.id)
+    committed = services.commit_decision(session, actor, project.id, drafts[0].id)
     assert committed.status == DecisionStatus.COMMITTED.value
-    assert committed.committed_at is not None
-    assert len(session.scalars(select(DecisionEvidence)).all()) == 1
+    assert len(session.scalars(select(DecisionEvidence)).all()) == 0
     assert len(session.scalars(select(DecisionTarget)).all()) == 1
 
 
-def test_agent_session_messages_never_enter_scientific_graph(session):
+def test_agent_turn_messages_never_enter_scientific_graph(session, tmp_path):
     actor = _actor(session)
     project = _project(session, actor)
     series = _object(session, actor, project, "V")
     _revision(session, actor, project, series, {"chain": "A"})
 
-    session_obj = AgentSession(actor_id=actor, project_id=project.id, messages=["hello", "propose X"])
-    assert [message for message in session_obj.messages] == ["hello", "propose X"]
-
-    proposal = propose_selection(
-        build_context(session, actor, project.id, _registry(), ContextSelectionCreate(series_ids=[series]))
+    model = _draft_turn([{"finish": "stop", "content": "hello, propose X — ignore me"}])
+    runner = _runner(
+        session, actor, project, _registry(), InMemorySecretStore(), tmp_path, model=model
     )
-    record_proposal(session, session_obj.actor_id, session_obj.project_id, proposal)
+    result = runner.run(
+        session,
+        actor,
+        project.id,
+        "propose X",
+        ContextSelectionCreate(series_ids=[series]),
+    )
+    assert result.final_response == "hello, propose X — ignore me"
 
-    # Chat never materializes as objects/evidence/provenance/decision truth: the
-    # only durable row is the intentional Decision draft, and its text is never
-    # the chat message.
+    # Conversation never materializes as object/evidence/provenance/decision truth.
     assert session.scalar(select(func.count()).select_from(ScientificObjectSeries)) == 1
     assert session.scalar(select(func.count()).select_from(Evidence)) == 0
     assert session.scalar(select(func.count()).select_from(GlobalProvenanceEdge)) == 0
-    decisions = session.scalars(select(Decision)).all()
-    assert len(decisions) == 1
-    assert decisions[0].status == DecisionStatus.DRAFT.value
-    assert "hello" not in decisions[0].statement
+    assert session.scalars(select(Decision)).all() == []
+
+
+def test_agent_loop_missing_model_fails_closed(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+
+    class _Unavailable:
+        def complete(self, request):
+            raise ModelUnavailableError("model transport failed")
+
+    runner = _runner(
+        session, actor, project, _registry(), InMemorySecretStore(), tmp_path, model=_Unavailable()
+    )
+    result = runner.run(session, actor, project.id, "hi")
+    assert result.termination_reason is AgentTerminationReason.MODEL_UNAVAILABLE
+    assert "model transport failed" in (result.final_response or "")
 
 
 # ---------------------------------------------------------------------------
@@ -834,68 +894,66 @@ def test_agent_session_messages_never_enter_scientific_graph(session):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_api_vertical_slice(client, tmp_path):
-    actor_id = client.post("/api/actors").json()["actor_id"]
-    headers = {"X-Actor-Id": actor_id}
-    project = client.post("/api/projects", json={"name": "Agent API"}, headers=headers).json()
-    pid = project["id"]
+def _install_fake_model():
+    from revolab import api
+    from revolab.main import app
 
-    created = client.post(
-        f"/api/projects/{pid}/objects",
-        json={"object_type": "protein", "name": "T5alphaH", "payload": {"organism": "T"}},
-        headers=headers,
-    )
-    assert created.status_code == 201
-    series_id = created.json()["series"]["series_id"]
-    revision_id = created.json()["visible_revisions"][0]["revision_id"]
+    app.dependency_overrides[api.get_model_backend] = lambda: ScriptedModelBackend()
+    return app
 
-    evidence = client.post(
-        f"/api/projects/{pid}/evidence",
-        json={
-            "kind": "computation",
-            "polarity": "supports",
-            "source_kind": "scientific_object_revision",
-            "source_id": revision_id,
-            "target_kind": "scientific_object_revision",
-            "target_id": revision_id,
-        },
-        headers=headers,
-    )
-    assert evidence.status_code == 201
-    evidence_id = evidence.json()["id"]
 
-    context = client.post(
-        f"/api/projects/{pid}/context",
-        json={"series_ids": [series_id]},
-        headers=headers,
-    )
-    assert context.status_code == 200
-    assert context.json()["budget"]["series_count"] == 1
+def test_agent_turn_api_vertical_slice(client):
+    app = _install_fake_model()
+    try:
+        actor_id = client.post("/api/actors").json()["actor_id"]
+        headers = {"X-Actor-Id": actor_id}
+        project = client.post("/api/projects", json={"name": "Agent Turn API"}, headers=headers).json()
+        pid = project["id"]
 
-    tools = client.get(f"/api/projects/{pid}/agent/tools", headers=headers)
-    assert tools.status_code == 200
-    tool_ids = {tool["id"] for tool in tools.json()["tools"]}
-    assert "decision.commit" in tool_ids
+        created = client.post(
+            f"/api/projects/{pid}/objects",
+            json={"object_type": "protein", "name": "T5alphaH", "payload": {"organism": "T"}},
+            headers=headers,
+        )
+        assert created.status_code == 201
+        series_id = created.json()["series"]["series_id"]
 
-    proposal = client.post(
-        f"/api/projects/{pid}/agent/proposals",
-        json={
-            "title": "Select variant",
-            "statement": "This variant is the current experimental candidate.",
-            "cites": [{"evidence_id": evidence_id, "cited_as": "supports"}],
-            "selects": [{"target_id": series_id, "target_kind": "scientific_object_series"}],
-        },
-        headers=headers,
-    )
-    assert proposal.status_code == 201
-    assert proposal.json()["status"] == "draft"
-    decision_id = proposal.json()["id"]
+        uploaded = client.post(
+            f"/api/projects/{pid}/artifacts",
+            files={"file": ("table.csv", b"x,y\n1,2\n3,4\n", "text/csv")},
+            headers=headers,
+        )
+        assert uploaded.status_code == 201
+        artifact_id = uploaded.json()["resource_id"]
 
-    committed = client.post(
-        f"/api/projects/{pid}/decisions/{decision_id}/commit", headers=headers
-    )
-    assert committed.status_code == 200
-    assert committed.json()["status"] == "committed"
+        turn = client.post(
+            f"/api/projects/{pid}/agent/turns",
+            json={
+                "message": "Describe this table and draft a conclusion based on it.",
+                "selection": {"series_ids": [series_id], "artifact_ids": [artifact_id]},
+            },
+            headers=headers,
+        )
+        assert turn.status_code == 200, turn.text
+        body = turn.json()
+        assert body["termination_reason"] == "final_response"
+        tool_ids = [entry["tool_id"] for entry in body["tool_trace"]]
+        assert tool_ids == ["table.describe", "decision.record_draft"]
+        assert all(entry["status"] == "completed" for entry in body["tool_trace"])
+        assert body["pending_actions"] == []
+
+        decisions = client.get(f"/api/projects/{pid}/decisions", headers=headers).json()
+        assert len(decisions) == 1
+        assert decisions[0]["status"] == "draft"
+        decision_id = decisions[0]["id"]
+
+        committed = client.post(
+            f"/api/projects/{pid}/decisions/{decision_id}/commit", headers=headers
+        )
+        assert committed.status_code == 200
+        assert committed.json()["status"] == "committed"
+    finally:
+        app.dependency_overrides.clear()
 
 
 def test_agent_tools_api_projects_available_provider_capabilities(client):
@@ -940,46 +998,73 @@ def test_inspect_artifact_api_returns_bounded_preview(client):
 
 
 def test_agent_http_viewer_is_read_only(client):
-    owner_id = _http_actor(client)
-    viewer_id = _http_actor(client)
-    pid = _http_project(client, owner_id, "Agent Viewer")["id"]
+    app = _install_fake_model()
+    try:
+        owner_id = _http_actor(client)
+        viewer_id = _http_actor(client)
+        pid = _http_project(client, owner_id, "Agent Viewer")["id"]
 
-    added = client.post(
-        f"/api/projects/{pid}/members",
-        json={"actor_id": viewer_id, "role": "viewer"},
-        headers=_headers(owner_id),
-    )
-    assert added.status_code == 201
+        added = client.post(
+            f"/api/projects/{pid}/members",
+            json={"actor_id": viewer_id, "role": "viewer"},
+            headers=_headers(owner_id),
+        )
+        assert added.status_code == 201
 
-    # Reads succeed; mutation tools are reported unavailable; the mutation path
-    # itself fails closed (403).
-    context = client.post(f"/api/projects/{pid}/context", json={}, headers=_headers(viewer_id))
-    assert context.status_code == 200
+        # Reads succeed; mutation tools are reported unavailable; the mutation
+        # path itself fails closed (403).
+        context = client.post(f"/api/projects/{pid}/context", json={}, headers=_headers(viewer_id))
+        assert context.status_code == 200
 
-    tools = client.get(f"/api/projects/{pid}/agent/tools", headers=_headers(viewer_id))
-    assert tools.status_code == 200
-    by_id = {tool["id"]: tool for tool in tools.json()["tools"]}
-    assert by_id["decision.record_draft"]["available"] is False
-    assert by_id["decision.commit"]["available"] is False
-    assert by_id["evidence.create"]["available"] is False
-    assert by_id["table.describe"]["available"] is True
+        tools = client.get(f"/api/projects/{pid}/agent/tools", headers=_headers(viewer_id))
+        assert tools.status_code == 200
+        by_id = {tool["id"]: tool for tool in tools.json()["tools"]}
+        assert by_id["decision.record_draft"]["available"] is False
+        assert by_id["decision.commit"]["available"] is False
+        assert by_id["evidence.create"]["available"] is False
+        assert by_id["table.describe"]["available"] is True
 
-    proposal = client.post(
-        f"/api/projects/{pid}/agent/proposals",
-        json={"title": "X", "statement": "not allowed for viewer"},
-        headers=_headers(viewer_id),
-    )
-    assert proposal.status_code == 403
+        # A policy tool requested by the model never executes for a viewer.
+        from revolab import api
 
-    # The existing authorized commit endpoint also fails closed for a viewer.
-    draft = client.post(
-        f"/api/projects/{pid}/agent/proposals",
-        json={"title": "Owner draft", "statement": "draft owned by the project owner"},
-        headers=_headers(owner_id),
-    )
-    assert draft.status_code == 201
-    draft_id = draft.json()["id"]
-    viewer_commit = client.post(
-        f"/api/projects/{pid}/decisions/{draft_id}/commit", headers=_headers(viewer_id)
-    )
-    assert viewer_commit.status_code == 403
+        app.dependency_overrides[api.get_model_backend] = lambda: ScriptedModelBackend(
+            steps=[
+                {
+                    "finish": "tool_calls",
+                    "tool_calls": [
+                        {
+                            "id": "call_draft",
+                            "name": "decision.record_draft",
+                            "arguments": {"title": "X", "statement": "not allowed"},
+                        }
+                    ],
+                },
+                {"finish": "stop", "content": "stopped"},
+            ]
+        )
+        turn = client.post(
+            f"/api/projects/{pid}/agent/turns",
+            json={"message": "record a draft"},
+            headers=_headers(viewer_id),
+        )
+        assert turn.status_code == 200
+        body = turn.json()
+        assert body["termination_reason"] == "final_response"
+        assert body["tool_trace"][0]["tool_id"] == "decision.record_draft"
+        assert body["tool_trace"][0]["status"] == "failed"
+        assert client.get(f"/api/projects/{pid}/decisions", headers=_headers(viewer_id)).json() == []
+
+        # The existing authorized commit endpoint also fails closed for a viewer.
+        draft = client.post(
+            f"/api/projects/{pid}/decisions",
+            json={"title": "Owner draft", "statement": "draft owned by the project owner"},
+            headers=_headers(owner_id),
+        )
+        assert draft.status_code == 201
+        draft_id = draft.json()["id"]
+        viewer_commit = client.post(
+            f"/api/projects/{pid}/decisions/{draft_id}/commit", headers=_headers(viewer_id)
+        )
+        assert viewer_commit.status_code == 403
+    finally:
+        app.dependency_overrides.clear()

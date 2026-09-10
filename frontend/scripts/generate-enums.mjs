@@ -33,6 +33,8 @@ const enumNames = [
   'ToolExecutionClass',
   'ToolSideEffectClass',
   'ToolResultKind',
+  'AgentTerminationReason',
+  'AgentToolCallStatus',
 ]
 
 const constName = (name) =>
@@ -57,6 +59,8 @@ const constName = (name) =>
     ToolExecutionClass: 'TOOL_EXECUTION_CLASSES',
     ToolSideEffectClass: 'TOOL_SIDE_EFFECT_CLASSES',
     ToolResultKind: 'TOOL_RESULT_KINDS',
+    AgentTerminationReason: 'AGENT_TERMINATION_REASONS',
+    AgentToolCallStatus: 'AGENT_TOOL_CALL_STATUSES',
   })[name]
 
 const lines = [

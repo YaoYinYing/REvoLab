@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-09-09
+Last verified: 2026-09-10
 
 This file records actual, machine-verified repository state — not future plans.
 
@@ -1045,9 +1045,90 @@ were reconciled (ToolResultKind = four producing kinds only; `/tools/invocations
 is documented as the LOCAL invocation surface; stale REvoDesign/OpenBio/Search/
 Design wording removed). No product code changed — documentation only.
 
+## Implemented (Phase 8)
+
+- **Model boundary** (`revolab/agent/model_backend.py`): `ModelBackend` protocol +
+  `ModelRequest`/`ModelResponse`/`ModelToolCall`/`ToolSpec` value objects and ONE
+  OpenAI-compatible chat/tool-call transport (`OpenAICompatModelBackend`) over the
+  already-approved `httpx`. Model transport failures map to `ModelUnavailableError`
+  (503) and never echo provider bodies/credentials. `revolab/testing/fake_model.py`
+  is the deterministic `ScriptedModelBackend` at the EXTERNAL model boundary (tests
+  + browser slice only; never a production fallback).
+- **Bounded Agent loop** (`revolab/agent/runtime.py`): `AgentTurnRunner` runs the
+  `PREPARE_CONTEXT → MODEL → TOOL_REQUEST → VALIDATE → EXECUTE → ...` state
+  machine with conservative ceilings (8 model turns, 16 tool calls, 4 calls/turn,
+  60k context chars, 20 history messages/20k chars, 4 skills/20k bytes, 12k
+  tool-result chars, 300s total duration). A bound hit is a typed
+  `AgentTerminationReason` terminal result; no recursion, background execution, or
+  silent retry.
+- **Prompt/trust separation** (`revolab/agent/prompt.py`): server-owned system
+  instructions + bounded skill bodies in the system role; ALL Project content
+  serialized once into a single `<untrusted_project_data>` user message. No
+  credential/secret/path is ever rendered because content asks for it.
+- **Tool-call validation**: every model tool call is untrusted — exact canonical
+  ToolCatalog lookup, availability, canonical Pydantic input schema, membership,
+  autonomy, execution class, side-effect class. `automatic`/`policy` LOCAL tools
+  execute through the REAL `LocalToolRuntime` (`persist=False`); `explicit_action`
+  (Decision commit, compute submit) becomes an ephemeral valid `PendingAction`;
+  unknown/malformed/remote reads fail closed; `never_agent` stays out of the
+  catalog. Remote tools are surfaced from the same catalog but the loop does not
+  autonomously cross the external boundary (documented deferral).
+- **Skills**: `SkillCatalog.skill_path` now confines ids below the configured root
+  (`resolve` + `is_relative_to`); `load_skill_bodies` applies count + byte budgets
+  before reading; skill body over-budget fails closed.
+- **Context artifact selection**: `ContextSelectionCreate.artifact_ids` lets a
+  turn explicitly select visible ArtifactReference identity cards (Phase-8
+  vertical slice); validated against the Project read lens like every selection.
+- **API** (`POST /api/projects/{project_id}/agent/turns`): one typed
+  `AgentTurnCreate → AgentTurnRead` surface (final response, per-tool trace,
+  pending explicit actions, termination reason, budget). Raw provider/model
+  response objects, hidden prompt text, and credentials are never exposed.
+  `GET /api/projects/{project_id}/agent/tools` unchanged.
+- **Deterministic proposal path removed**: `revolab/agent/session.py`
+  (`propose_selection`/`record_proposal`/`AgentProposal`) and
+  `POST /agent/proposals` are deleted; the fake survives ONLY as the
+  `ScriptedModelBackend` test double.
+- **Frontend** (`views/Agent.tsx`): real project Agent workspace — object +
+  artifact context selection, ephemeral session-local conversation, send/receive,
+  per-turn tool trace with autonomy-correct statuses, pending-explicit-action
+  display, and an always-visible Decision DRAFT vs COMMITTED truth boundary. No
+  raw-HTML rendering. Generated `AgentTerminationReason`/`AgentToolCallStatus`
+  enums wired into `contracts/enums`.
+- **Docs**: `docs/architecture/PROJECT_AGENT_RUNTIME.md`; `IMPLEMENTATION_ROADMAP.md`
+  Phase 8; `AGENT_CONTEXT.md` / `PROJECT_TOOL_HARNESS.md` reconciled.
+
+## Verified evidence (Phase 8)
+
+- Backend: `ruff check backend` and strict `mypy` pass (49 source files). `pytest`
+  passes **294 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  acceptance file). New regressions in `test_agent_runtime.py` cover: bounded
+  context reconstruction + artifact selection, hostile project text as DATA (not
+  system instruction), unknown-tool fail-close, malformed-argument fail-close,
+  cross-Project resource rejection at execution, `never_agent` absence from the
+  model-visible tool set, `decision.commit`/compute-submit never auto-executing
+  (PendingAction only), model-turn/tool-call/history/skill-body bounds, and
+  missing-model fail-closed.
+- OpenAPI/contracts: `python -m revolab.export_openapi` output is byte-identical
+  to `frontend/src/contracts/openapi.json`; `openapi-typescript` +
+  `generate-enums.mjs` regenerated `schema.d.ts`/`enums.generated.ts`; the
+  contract lockstep test now pins the `/agent/turns` request to the single
+  `AgentTurnCreate` component and asserts `/agent/proposals` is gone.
+- Frontend: `npm run typecheck`, `npm run test` (**15 tests**, incl. the new
+  Phase-8 Agent view + enum/contract lockstep), and `npm run build` pass.
+- Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real SQLite
+  + `REVOLAB_E2E_FAKE_MODEL=1`): all **4 specs** pass — smoke, collaboration,
+  tools, and the new `agent.spec.ts` (object → fake-compute tabular artifact →
+  Agent turn → `table.describe` → `decision.record_draft` → Decisions view draft →
+  explicit commit → reloaded committed Knowledge).
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
+- Remote provider tool execution inside the Agent loop (Phase 8 surfaces remote
+  tools from the same catalog and converts remote `explicit_action` to a
+  PendingAction, but does not autonomously cross the external boundary; remote
+  reads remain on the human capability endpoints — documented in
+  `docs/architecture/PROJECT_AGENT_RUNTIME.md`).
 - Live end-to-end acceptance against an authorized REvoCompute instance is
   external evidence: no authorized instance is configured in this development
   environment. The driver is built and tested against the documented public

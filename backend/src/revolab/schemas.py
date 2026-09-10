@@ -7,7 +7,7 @@ is duplicated by hand into the frontend or into project skills.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, SecretStr, model_validator
@@ -16,7 +16,9 @@ from revolab.capabilities import LEGAL_COMPUTE_INPUT_KINDS
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
     PROVIDER_KEY_PATTERN,
+    AgentTerminationReason,
     AgentToolAutonomy,
+    AgentToolCallStatus,
     CapabilityAvailability,
     CapabilityKind,
     CitedAs,
@@ -564,6 +566,10 @@ class ContextSelectionCreate(BaseModel):
 
     series_ids: list[UUID] | None = Field(default=None, max_length=200)
     revision_ids: list[UUID] | None = Field(default=None, max_length=400)
+    # Explicitly selected artifact-reference identity cards (Phase 8 vertical
+    # slice: "select the Artifact as Agent context"). Validated against the
+    # Project's read lens like every other selection; never payload bytes.
+    artifact_ids: list[UUID] | None = Field(default=None, max_length=50)
     include_relations: bool = True
     include_evidence: bool = True
     include_decisions: bool = True
@@ -890,4 +896,79 @@ class ArtifactInspectRead(BaseModel):
 # An Agent's proposed conclusion records a Decision DRAFT through the SAME typed
 # domain operation as the ordinary Decision creation (single source of truth, no
 # duplicate wire component). Commit remains a separate authorized operation.
-AgentProposalCreate = DecisionCreate
+# (Phase 8 replaces the deterministic proposal endpoint with the Agent turn loop;
+# the draft-only Decision creation primitive the proposal used remains canonical.)
+
+
+# ---------------------------------------------------------------------------
+# Bounded Project Agent Runtime (Phase 8): one typed Agent-turn surface. The
+# request carries a user message, an optional ContextSelection, and a strictly
+# bounded transient history (user/assistant only). The response is a typed,
+# non-secret summary of the turn — never a raw provider/model response object.
+# ---------------------------------------------------------------------------
+
+
+class AgentChatMessageCreate(BaseModel):
+    """One bounded transient-history message. Only `user`/`assistant` are legal;
+    the browser may never supply system instructions or tool-result authority."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=8000)
+
+
+class AgentTurnCreate(BaseModel):
+    """The canonical Project-scoped Agent-turn request (TODO.md section 12)."""
+
+    message: str = Field(min_length=1, max_length=8000)
+    selection: ContextSelectionCreate | None = None
+    history: list[AgentChatMessageCreate] | None = Field(default=None, max_length=20)
+
+
+class PendingActionRead(BaseModel):
+    """A PROPOSED action the Agent loop did NOT execute. It carries only the
+    validated, bounded, non-secret information needed to understand the proposed
+    operation; execution remains the existing human-authorized surface."""
+
+    tool_id: str
+    autonomy: AgentToolAutonomy
+    summary: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    reason: str
+
+
+class ToolCallTraceRead(BaseModel):
+    """Per-tool-call outcome inside one Agent turn: executed, pending (proposed),
+    failed (refused/malformed/unknown), or skipped by a per-turn budget."""
+
+    tool_id: str
+    status: AgentToolCallStatus
+    error: str | None = None
+    result: ToolResultRead | None = None
+    pending_action: PendingActionRead | None = None
+
+
+class AgentTurnBudgetRead(BaseModel):
+    """Actual counters vs the configured ceilings, so a bound hit is visible."""
+
+    model_turns: int = 0
+    max_model_turns: int = 0
+    tool_calls: int = 0
+    max_tool_calls: int = 0
+    history_messages: int = 0
+    max_history_messages: int = 0
+    skills_loaded: int = 0
+    max_skills: int = 0
+    context_truncated: bool = False
+
+
+class AgentTurnRead(BaseModel):
+    """The typed Agent-turn result: final response, tool-call trace, pending
+    explicit actions, termination reason, and budget state. Never exposes hidden
+    prompt text, raw provider/model response objects, or any credential/secret."""
+
+    project_id: UUID
+    termination_reason: AgentTerminationReason
+    final_response: str | None = None
+    tool_trace: list[ToolCallTraceRead] = Field(default_factory=list)
+    pending_actions: list[PendingActionRead] = Field(default_factory=list)
+    budget: AgentTurnBudgetRead = Field(default_factory=AgentTurnBudgetRead)

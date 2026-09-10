@@ -39,6 +39,8 @@ const ENUM_NAMES = [
   'ToolExecutionClass',
   'ToolSideEffectClass',
   'ToolResultKind',
+  'AgentTerminationReason',
+  'AgentToolCallStatus',
 ]
 
 describe('generated API contract boundary', () => {
@@ -77,14 +79,15 @@ describe('generated API contract boundary', () => {
     expect(enumsTs).toContain('export const CAPABILITY_AVAILABILITIES')
   })
 
-  it('the Agent proposal request is a single shared DecisionCreate component', () => {
-    // Phase-6 single-source-of-truth: an Agent proposal records a Decision DRAFT
-    // through the same typed request shape as ordinary Decision creation.
+  it('the Agent turn request is a single typed AgentTurnCreate component (no obsolete proposal path)', () => {
+    // Phase-8 supersedes the deterministic proposal endpoint: the Agent turn is
+    // one typed request -- a user message, a ContextSelection, bounded history.
     expect(spec.components.schemas.AgentProposalCreate).toBeUndefined()
-    const proposalPath = spec.paths['/api/projects/{project_id}/agent/proposals'] as {
+    expect(spec.paths['/api/projects/{project_id}/agent/proposals']).toBeUndefined()
+    const turnPath = spec.paths['/api/projects/{project_id}/agent/turns'] as {
       post?: { requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> } }
     }
-    const schemaRef = proposalPath.post?.requestBody?.content?.['application/json']?.schema?.$ref
-    expect(schemaRef).toBe('#/components/schemas/DecisionCreate')
+    const schemaRef = turnPath.post?.requestBody?.content?.['application/json']?.schema?.$ref
+    expect(schemaRef).toBe('#/components/schemas/AgentTurnCreate')
   })
 })

@@ -34,6 +34,11 @@ proposer*, never the owner. Chat is working memory; the DB is durable truth.
 > "Read context" is the context-assembly step (the `/context` fetch), not a Tool
 > inside the catalog.
 
+> Phase 8 realization: the deterministic proposal path is replaced by the bounded
+> Agent turn loop (`docs/architecture/PROJECT_AGENT_RUNTIME.md`). The Agent reads
+> bounded context, may call canonical tools, and its Decision output is always a
+> DRAFT until the human commits through the existing authorized surface.
+
 **Explicitly rejected** (overengineering): no AgentMemory DB wrapper, no RAG/
 semantic-index pipeline, no generic AgentGateway, no always-on skill encyclopedia.
 

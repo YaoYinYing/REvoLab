@@ -233,6 +233,36 @@ collaboration/sharing and the agent.
   arbitrary execution, workflow engines, LLM infrastructure, background-job
   queues, a full scientific-analysis suite.
 
+### Phase 8 — Bounded Project Agent Runtime & Conversational Tool Use
+
+- **Goal:** turn the deterministic Agent substrate into a real, **bounded**
+  Project Agent runtime: `Human message → ContextBuilder → bounded ProjectContext
+  → trusted Project skills → ModelBackend → typed tool call → canonical
+  ToolCatalog → authority + schema validation → LocalToolRuntime OR PendingAction
+  → bounded ToolResult → final conversational response`.
+- **Owned domains:** Agent Context (consumer), Project Tool Harness (Tool).
+- **Vertical slice:** a single typed Agent-turn surface
+  (`POST /api/projects/{project_id}/agent/turns`); one OpenAI-compatible
+  chat/tool-call `ModelBackend` (no generalized LLM framework); a bounded,
+  non-recursive Agent loop with explicit ceilings; model tool calls validated as
+  untrusted input against the ONE canonical ToolCatalog; `automatic`/`policy`
+  local tools execute through the REAL LocalToolRuntime, `explicit_action`
+  (Decision commit, compute submit) becomes an ephemeral `PendingAction`, and
+  `never_agent` operations remain absent from the catalog; trusted instructions
+  are separated from untrusted project data in prompt assembly. The deterministic
+  proposal path is removed; a scripted fake remains ONLY as a test ModelBackend.
+- **Acceptance evidence:** the Phase-8 vertical slice (`table.describe` →
+  `decision.record_draft` → Decision DRAFT → explicit human commit) runs
+  end-to-end over real Postgres and through the browser; negative slices prove
+  `decision.commit`/compute submission never auto-execute; prompt-injection
+  regressions prove hostile project text cannot widen executable authority;
+  every loop boundary is regression-tested; no raw provider/model response object
+  or credential is exposed; OpenAI/frontend contracts regenerated with no drift.
+- **Non-goals:** persistent chat, notebooks, RAG/vector memory, workflow engines,
+  background Agent jobs, recursive Agents/subagents, DeepSeek Harness as product
+  runtime, arbitrary Python/shell/filesystem/HTTP/SQL, authentication, RBAC,
+  generic approval workflows.
+
 ---
 
 ## Final architecture invariants (enter CLAUDE.md)
