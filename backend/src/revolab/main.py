@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from revolab import __version__
-from revolab.api import install_exception_handlers, router
+from revolab.api import close_model_backend, install_exception_handlers, router
 from revolab.bootstrap import build_driver_context, install_drivers
 from revolab.config import get_settings
 from revolab.drivers import default_registry
@@ -23,6 +23,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         default_registry.stop_all()
+        # Release the cached model transport (httpx.Client) at shutdown.
+        close_model_backend()
 
 
 app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)

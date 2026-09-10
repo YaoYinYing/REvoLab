@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Bot, GitCommitHorizontal, Send } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
@@ -36,6 +36,10 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
   const [actionError, setActionError] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [turn, setTurn] = useState<AgentTurnRead | null>(null)
+  // Synchronous view scope: updated on every render so an in-flight turn from a
+  // previous Actor x Project can be discarded even before the reset effect runs.
+  const scopeRef = useRef(`${actorId}:${projectId}`)
+  scopeRef.current = `${actorId}:${projectId}`
 
   // Conversation is session-local AND project-scoped: switching project/actor
   // must not leak one project's conversation into another project's turn.
@@ -55,6 +59,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
     setActionError(null)
     setBusy(true)
     setInput('')
+    const requestScope = scopeRef.current
 
     const history: AgentChatMessageCreate[] = messages.slice(-20).map((message) => ({
       role: message.role,
@@ -81,6 +86,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
       history,
     })
     setBusy(false)
+    if (scopeRef.current !== requestScope) return
     if (res.error || !res.data) {
       setActionError('The Agent turn failed. Check the model runtime and project context.')
       return

@@ -271,7 +271,9 @@ export function App() {
               onCompute={(revisionId) => openCompute(revisionId)}
             />
           ) : null}
-          {view === 'agent' ? <AgentView actorId={actorId} projectId={projectId} /> : null}
+          {view === 'agent' ? (
+            <AgentView key={`${actorId}:${projectId}`} actorId={actorId} projectId={projectId} />
+          ) : null}
           {view === 'compute' ? (
             <ComputeView actorId={actorId} projectId={projectId} initialRevisionId={computeRevisionId} />
           ) : null}

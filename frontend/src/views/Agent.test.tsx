@@ -140,4 +140,33 @@ describe('Agent view (Phase 8)', () => {
     rerender(<AgentView actorId="actor-1" projectId="project-2" />)
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
   })
+
+  it('never renders a project A response after switching to project B', async () => {
+    let resolveTurn!: (value: { data: AgentTurnRead; error: undefined; response: Response }) => void
+    const pending = new Promise<{ data: AgentTurnRead; error: undefined; response: Response }>(
+      (resolve) => {
+        resolveTurn = resolve
+      },
+    )
+    mockedProjectApi.mockReturnValue({
+      createAgentTurn: vi.fn().mockReturnValue(pending),
+    } as never)
+
+    const user = userEvent.setup()
+    const { rerender } = render(<AgentView actorId="actor-1" projectId="project-a" />)
+    await user.type(
+      screen.getByPlaceholderText(/Describe this table and draft a conclusion/),
+      'Describe this table',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    // Switch project while the turn is still in flight; then resolve the old
+    // (project A) response. Its content must be discarded, not shown in B.
+    rerender(<AgentView actorId="actor-1" projectId="project-b" />)
+    resolveTurn({ data: turn, error: undefined, response: new Response() })
+    await Promise.resolve()
+
+    expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
+    expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
+  })
 })

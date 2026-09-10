@@ -1080,3 +1080,30 @@ def test_agent_turn_without_model_config_fails_closed_http(client):
     )
     assert response.status_code == 503
     assert "no model runtime configured" in response.json()["detail"]
+
+
+def test_model_backend_shutdown_closes_transport_and_is_idempotent():
+    from revolab import api
+
+    class _TrackedBackend:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def complete(self, request):
+            raise AssertionError("unused in lifecycle test")
+
+        def close(self) -> None:
+            self.closed = True
+
+    tracked = _TrackedBackend()
+    api._model_backend_instance = tracked
+    api._model_backend_initialized = True
+
+    api.close_model_backend()
+    assert tracked.closed is True
+    assert api._model_backend_initialized is False
+    assert api._model_backend_instance is None
+
+    # Closing again with no instance is a no-op (shutdown may run more than once).
+    api.close_model_backend()
+    assert api._model_backend_initialized is False
