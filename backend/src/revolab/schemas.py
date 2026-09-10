@@ -927,7 +927,9 @@ class AgentTurnCreate(BaseModel):
 class PendingActionRead(BaseModel):
     """A PROPOSED action the Agent loop did NOT execute. It carries only the
     validated, bounded, non-secret information needed to understand the proposed
-    operation; execution remains the existing human-authorized surface."""
+    operation; execution remains the existing human-authorized surface. When the
+    validated argument payload is too large it is bounded to
+    `{"truncated": true, "preview": "<bounded json prefix>"}`."""
 
     tool_id: str
     autonomy: AgentToolAutonomy
@@ -948,16 +950,24 @@ class ToolCallTraceRead(BaseModel):
 
 
 class AgentTurnBudgetRead(BaseModel):
-    """Actual counters vs the configured ceilings, so a bound hit is visible."""
+    """Actual counters vs the configured ceilings, so a bound hit is visible.
+    Every loop ceiling the runtime enforces is represented here, so an operator
+    can see which bound terminated a turn without server logs."""
 
     model_turns: int = 0
     max_model_turns: int = 0
     tool_calls: int = 0
     max_tool_calls: int = 0
+    max_tool_calls_per_turn: int = 0
     history_messages: int = 0
     max_history_messages: int = 0
+    max_history_chars: int = 0
     skills_loaded: int = 0
     max_skills: int = 0
+    max_skill_bytes: int = 0
+    max_context_chars: int = 0
+    max_tool_result_chars: int = 0
+    total_turn_duration_seconds: float = 0
     context_truncated: bool = False
 
 

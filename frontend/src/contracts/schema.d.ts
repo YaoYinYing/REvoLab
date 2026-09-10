@@ -974,6 +974,8 @@ export interface components {
         /**
          * AgentTurnBudgetRead
          * @description Actual counters vs the configured ceilings, so a bound hit is visible.
+         *     Every loop ceiling the runtime enforces is represented here, so an operator
+         *     can see which bound terminated a turn without server logs.
          */
         AgentTurnBudgetRead: {
             /**
@@ -987,6 +989,16 @@ export interface components {
              */
             history_messages: number;
             /**
+             * Max Context Chars
+             * @default 0
+             */
+            max_context_chars: number;
+            /**
+             * Max History Chars
+             * @default 0
+             */
+            max_history_chars: number;
+            /**
              * Max History Messages
              * @default 0
              */
@@ -997,6 +1009,11 @@ export interface components {
              */
             max_model_turns: number;
             /**
+             * Max Skill Bytes
+             * @default 0
+             */
+            max_skill_bytes: number;
+            /**
              * Max Skills
              * @default 0
              */
@@ -1006,6 +1023,16 @@ export interface components {
              * @default 0
              */
             max_tool_calls: number;
+            /**
+             * Max Tool Calls Per Turn
+             * @default 0
+             */
+            max_tool_calls_per_turn: number;
+            /**
+             * Max Tool Result Chars
+             * @default 0
+             */
+            max_tool_result_chars: number;
             /**
              * Model Turns
              * @default 0
@@ -1021,6 +1048,11 @@ export interface components {
              * @default 0
              */
             tool_calls: number;
+            /**
+             * Total Turn Duration Seconds
+             * @default 0
+             */
+            total_turn_duration_seconds: number;
         };
         /**
          * AgentTurnCreate
@@ -1851,7 +1883,9 @@ export interface components {
          * PendingActionRead
          * @description A PROPOSED action the Agent loop did NOT execute. It carries only the
          *     validated, bounded, non-secret information needed to understand the proposed
-         *     operation; execution remains the existing human-authorized surface.
+         *     operation; execution remains the existing human-authorized surface. When the
+         *     validated argument payload is too large it is bounded to
+         *     `{"truncated": true, "preview": "<bounded json prefix>"}`.
          */
         PendingActionRead: {
             /** Arguments */

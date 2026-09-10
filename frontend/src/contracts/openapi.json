@@ -74,7 +74,7 @@
         "type": "string"
       },
       "AgentTurnBudgetRead": {
-        "description": "Actual counters vs the configured ceilings, so a bound hit is visible.",
+        "description": "Actual counters vs the configured ceilings, so a bound hit is visible.\nEvery loop ceiling the runtime enforces is represented here, so an operator\ncan see which bound terminated a turn without server logs.",
         "properties": {
           "context_truncated": {
             "default": false,
@@ -84,6 +84,16 @@
           "history_messages": {
             "default": 0,
             "title": "History Messages",
+            "type": "integer"
+          },
+          "max_context_chars": {
+            "default": 0,
+            "title": "Max Context Chars",
+            "type": "integer"
+          },
+          "max_history_chars": {
+            "default": 0,
+            "title": "Max History Chars",
             "type": "integer"
           },
           "max_history_messages": {
@@ -96,6 +106,11 @@
             "title": "Max Model Turns",
             "type": "integer"
           },
+          "max_skill_bytes": {
+            "default": 0,
+            "title": "Max Skill Bytes",
+            "type": "integer"
+          },
           "max_skills": {
             "default": 0,
             "title": "Max Skills",
@@ -104,6 +119,16 @@
           "max_tool_calls": {
             "default": 0,
             "title": "Max Tool Calls",
+            "type": "integer"
+          },
+          "max_tool_calls_per_turn": {
+            "default": 0,
+            "title": "Max Tool Calls Per Turn",
+            "type": "integer"
+          },
+          "max_tool_result_chars": {
+            "default": 0,
+            "title": "Max Tool Result Chars",
             "type": "integer"
           },
           "model_turns": {
@@ -120,6 +145,11 @@
             "default": 0,
             "title": "Tool Calls",
             "type": "integer"
+          },
+          "total_turn_duration_seconds": {
+            "default": 0,
+            "title": "Total Turn Duration Seconds",
+            "type": "number"
           }
         },
         "title": "AgentTurnBudgetRead",
@@ -2229,7 +2259,7 @@
         "type": "string"
       },
       "PendingActionRead": {
-        "description": "A PROPOSED action the Agent loop did NOT execute. It carries only the\nvalidated, bounded, non-secret information needed to understand the proposed\noperation; execution remains the existing human-authorized surface.",
+        "description": "A PROPOSED action the Agent loop did NOT execute. It carries only the\nvalidated, bounded, non-secret information needed to understand the proposed\noperation; execution remains the existing human-authorized surface. When the\nvalidated argument payload is too large it is bounded to\n`{\"truncated\": true, \"preview\": \"<bounded json prefix>\"}`.",
         "properties": {
           "arguments": {
             "additionalProperties": true,

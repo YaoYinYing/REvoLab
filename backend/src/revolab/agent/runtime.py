@@ -110,7 +110,7 @@ def _tool_descriptor_tools(catalog_tools: list[dict[str, Any]]) -> tuple[ToolSpe
     for tool in catalog_tools:
         if (
             tool["execution_class"] == ToolExecutionClass.REMOTE.value
-            and tool["autonomy"] is not AgentToolAutonomy.EXPLICIT_ACTION.value
+            and tool["autonomy"] != AgentToolAutonomy.EXPLICIT_ACTION.value
         ):
             continue
         specs.append(
@@ -172,12 +172,16 @@ def _validate_pending_input(tool_id: str, arguments: dict[str, Any]) -> dict[str
 
 def _bounded_pending_arguments(validated: dict[str, Any], limit: int) -> dict[str, Any]:
     """Bound the pending-action argument payload without losing validated info for
-    the common small case. Large dumps (e.g. compute submission params) become a
-    bounded preview so the Agent-turn response stays non-secret and bounded."""
-    text = _bounded_json(validated, limit)
-    if len(text) <= limit:
+    the common small case. Measure the FULL serialized size first: large dumps
+    (e.g. compute submission params) become a bounded preview so the Agent-turn
+    response stays non-secret and bounded."""
+    try:
+        full = json.dumps(validated, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        full = "{}"
+    if len(full) <= limit:
         return validated
-    return {"truncated": True, "preview": text}
+    return {"truncated": True, "preview": full[:limit]}
 
 
 class AgentTurnRunner:
@@ -310,8 +314,13 @@ class AgentTurnRunner:
                 trace.append(entry)
                 if pending_action is not None:
                     pending.append(pending_action)
-                content = result_text if result_text is not None else json.dumps(
-                    {"status": entry.status.value, "error": entry.error}, sort_keys=True
+                content = (
+                    result_text
+                    if result_text is not None
+                    else _bounded_json(
+                        {"status": entry.status.value, "error": entry.error},
+                        self._bounds.max_tool_result_chars,
+                    )
                 )
                 transcript.append(
                     ChatMessage(role="tool", content=content, tool_call_id=call.id, name=call.name)
@@ -333,10 +342,16 @@ class AgentTurnRunner:
             max_model_turns=self._bounds.max_model_turns,
             tool_calls=tool_calls_total,
             max_tool_calls=self._bounds.max_tool_calls,
+            max_tool_calls_per_turn=self._bounds.max_tool_calls_per_turn,
             history_messages=len(history_messages),
             max_history_messages=self._bounds.max_history_messages,
+            max_history_chars=self._bounds.max_history_chars,
             skills_loaded=len(skills),
             max_skills=self._bounds.max_skill_count,
+            max_skill_bytes=self._bounds.max_skill_bytes,
+            max_context_chars=self._bounds.max_context_chars,
+            max_tool_result_chars=self._bounds.max_tool_result_chars,
+            total_turn_duration_seconds=self._bounds.total_turn_duration_seconds,
             context_truncated=context_truncated,
         )
         return AgentTurnRead(
