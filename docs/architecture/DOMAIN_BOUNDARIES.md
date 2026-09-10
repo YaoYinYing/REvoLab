@@ -186,8 +186,11 @@ External systems own their capabilities and execution truth.
 - **Purpose:** give the Agent a bounded, reference-based view of project truth and
   typed ways to act, without making it an owner.
 - **Owned concepts:** ProjectContext (value object), ContextSelection,
-  ContextBuilder (read-only), AgentSession (ephemeral), SkillCatalog. The Agent
+  ContextBuilder (read-only), SkillCatalog, ModelBackend (boundary), and the
+  bounded AgentTurnRunner loop (ephemeral transcript, never persisted). The Agent
   **consumes** the Project Tool Harness's ToolCatalog (Phase 7); it does not own it.
+  (Phase 8 supersedes the deterministic proposal `AgentSession` with the real
+  bounded turn loop.)
 - **Owned mutable state:** none in the durable graph (sessions are ephemeral).
 - **Owned invariants:** chat history is not project truth; context references large
   artifacts instead of embedding them; the agent never raw-writes.
