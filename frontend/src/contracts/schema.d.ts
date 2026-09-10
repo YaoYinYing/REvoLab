@@ -149,7 +149,8 @@ export interface paths {
         /**
          * Get Project Conversation
          * @description Read the conversation and one bounded page of its persisted messages.
-         *     Pagination is a UI concern, separate from the server's model-context trim.
+         *     `latest` returns the most recent page (reload semantics); pagination is a UI
+         *     concern, separate from the server's model-context trim.
          */
         get: operations["get_project_conversation_api_projects__project_id__agent_conversations__conversation_id__get"];
         put?: never;
@@ -3156,6 +3157,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
+                latest?: boolean;
             };
             header?: {
                 "X-Actor-Id"?: string | null;

@@ -46,6 +46,10 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
   // previous Actor x Project can be discarded even before the reset effect runs.
   const scopeRef = useRef(`${actorId}:${projectId}`)
   scopeRef.current = `${actorId}:${projectId}`
+  // The currently selected conversation, tracked synchronously so an in-flight
+  // turn for conversation A is discarded once the user opens conversation B.
+  const activeConversationRef = useRef(activeConversationId)
+  activeConversationRef.current = activeConversationId
 
   useEffect(() => {
     let cancelled = false
@@ -71,7 +75,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
         setActiveConversationId((current) => current ?? first)
         if (first) {
           return projectApi(actorId)
-            .getConversation(projectId, first, { limit: MESSAGE_PAGE_LIMIT })
+            .getConversation(projectId, first, { limit: MESSAGE_PAGE_LIMIT, latest: true })
             .then((detail) => {
               if (cancelled) return
               if (detail.data) {
@@ -99,12 +103,18 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
     setActionError(null)
     const detail = await projectApi(actorId).getConversation(projectId, conversationId, {
       limit: MESSAGE_PAGE_LIMIT,
+      latest: true,
     })
     if (detail.error || !detail.data) {
       setActionError('Could not load the selected conversation.')
       return
     }
-    if (scopeRef.current !== `${actorId}:${projectId}`) return
+    if (
+      scopeRef.current !== `${actorId}:${projectId}` ||
+      activeConversationRef.current !== conversationId
+    ) {
+      return
+    }
     setMessages(detail.data.messages ?? [])
     setTotalMessages(detail.data.total_messages ?? 0)
     setTurn(null)
@@ -120,6 +130,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
     }
     setConversations((current) => [created.data!, ...current])
     setActiveConversationId(created.data!.id)
+    activeConversationRef.current = created.data!.id
     setMessages([])
     setTotalMessages(0)
     setTurn(null)
@@ -146,8 +157,10 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
       conversationId = created.data.id
       setConversations((current) => [created.data!, ...current])
       setActiveConversationId(conversationId)
+      activeConversationRef.current = conversationId
     }
 
+    const requestConversationId = conversationId
     const res = await projectApi(actorId).createConversationTurn(projectId, conversationId, {
       message: userMessage,
       selection: {
@@ -168,23 +181,29 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
       },
     })
     setBusy(false)
-    if (scopeRef.current !== requestScope) return
+    if (
+      scopeRef.current !== requestScope ||
+      activeConversationRef.current !== requestConversationId
+    ) {
+      return
+    }
     if (res.error || !res.data) {
       setActionError('The Agent turn failed. Check the model runtime and project context.')
       return
     }
     const persisted = res.data
     setTurn(persisted.turn)
-    const existing = new Set(messages.map((message) => message.id))
-    const appended: ConversationMessageRead[] = []
-    if (persisted.user_message && !existing.has(persisted.user_message.id)) {
-      appended.push(persisted.user_message)
-    }
-    if (persisted.assistant_message && !existing.has(persisted.assistant_message.id)) {
-      appended.push(persisted.assistant_message)
-    }
-    setMessages([...messages, ...appended])
-    setTotalMessages((current) => current + appended.length)
+    const nextUser = persisted.user_message
+    const nextAssistant = persisted.assistant_message
+    const newCount = (nextUser ? 1 : 0) + (nextAssistant ? 1 : 0)
+    setMessages((current) => {
+      const existing = new Set(current.map((message) => message.id))
+      const next = [...current]
+      if (nextUser && !existing.has(nextUser.id)) next.push(nextUser)
+      if (nextAssistant && !existing.has(nextAssistant.id)) next.push(nextAssistant)
+      return next
+    })
+    setTotalMessages((current) => current + newCount)
   }
 
   const pendingActions = turn?.pending_actions ?? []

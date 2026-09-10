@@ -42,6 +42,7 @@ from revolab.schemas import (
 
 # Bounded persistence limits (TODO.md section 13). The model only ever receives
 # the server-selected bounded suffix; these bounds cap what is DURABLY written.
+MAX_CONVERSATION_TITLE_CHARS = 200
 MAX_CONVERSATION_MESSAGE_CHARS = 8000
 MAX_TRACE_SUMMARY_ENTRIES = 64
 MAX_TRACE_SUMMARY_FIELD_CHARS = 500
@@ -63,13 +64,21 @@ def _owned_conversation(
     actor_id: UUID,
     project_id: UUID,
     conversation_id: UUID,
+    *,
+    with_for_update: bool = False,
 ) -> ProjectConversation:
     """Resolve a conversation the current Actor owns, proving at the same time
-    that the Actor can currently read an active Project. A guessed UUID (or a
-    conversation owned by another member) is indistinguishable from a missing
-    one: both fail closed with 404, never an existence oracle."""
+    that the Actor can currently read an active Project.
+
+    Fails closed: a non-member (or an inactive Project) raises 403 before the
+    conversation is even looked up; a guessed UUID or a conversation owned by
+    another member raises 404 — never an existence oracle. `with_for_update`
+    takes the per-conversation row lock so the whole load->run->persist section
+    serializes for turn execution."""
     readable_membership(session, actor_id, project_id)
-    conversation = session.get(ProjectConversation, conversation_id)
+    conversation = session.get(
+        ProjectConversation, conversation_id, with_for_update=with_for_update
+    )
     if (
         conversation is None
         or conversation.project_id != project_id
@@ -86,6 +95,8 @@ def create_conversation(
     title: str | None = None,
 ) -> ConversationRead:
     readable_membership(session, actor_id, project_id)
+    if title is not None and len(title) > MAX_CONVERSATION_TITLE_CHARS:
+        raise ValidationError("conversation title exceeds the maximum length")
     conversation = ProjectConversation(
         project_id=project_id,
         actor_id=actor_id,
@@ -130,6 +141,7 @@ def get_conversation(
     *,
     limit: int = 100,
     offset: int = 0,
+    latest: bool = False,
 ) -> ConversationDetailRead:
     conversation = _owned_conversation(session, actor_id, project_id, conversation_id)
     total = session.scalar(
@@ -137,17 +149,19 @@ def get_conversation(
         .select_from(ConversationMessage)
         .where(ConversationMessage.conversation_id == conversation_id)
     )
+    total = total or 0
+    effective_offset = max(0, total - limit) if latest else offset
     rows = session.scalars(
         select(ConversationMessage)
         .where(ConversationMessage.conversation_id == conversation_id)
         .order_by(ConversationMessage.seq.asc())
-        .offset(offset)
+        .offset(effective_offset)
         .limit(limit)
     )
     return ConversationDetailRead(
         **_conversation_read(conversation).model_dump(),
         messages=[_message_read(row) for row in rows],
-        total_messages=total or 0,
+        total_messages=total,
     )
 
 
@@ -162,6 +176,8 @@ def patch_conversation(
 ) -> ConversationRead:
     if title is None and archive is None:
         raise ValidationError("no conversation fields to update")
+    if title is not None and len(title) > MAX_CONVERSATION_TITLE_CHARS:
+        raise ValidationError("conversation title exceeds the maximum length")
     conversation = _owned_conversation(session, actor_id, project_id, conversation_id)
     if title is not None:
         conversation.title = title
@@ -184,37 +200,47 @@ def run_conversation_turn(
     *,
     message: str,
     selection: ContextSelectionCreate | None = None,
+    history_limit: int = 20,
 ) -> ConversationTurnRead:
-    """One durable turn: load server-owned bounded history, run the canonical
-    AgentTurnRunner, persist the bounded user/assistant transcript. The client
-    never supplies historical assistant messages; authority is still resolved by
-    the runner from the one canonical ToolCatalog and current Project state."""
-    conversation = _owned_conversation(session, actor_id, project_id, conversation_id)
+    """One durable turn: lock the conversation, load server-owned bounded
+    history, run the canonical AgentTurnRunner, then persist the bounded
+    user/assistant transcript. The load->run->persist section is serialized per
+    conversation, so a second concurrent turn always sees the first turn's
+    persisted messages. The client never supplies historical assistant
+    messages; authority is still resolved by the runner from the one canonical
+    ToolCatalog and current Project state."""
+    if len(message) > MAX_CONVERSATION_MESSAGE_CHARS:
+        raise ValidationError("message exceeds the maximum conversation message length")
+
+    # Row lock FIRST: the model loop may be slow, and conversational continuity
+    # requires that two concurrent turns on one conversation serialize their
+    # read->compute->write as a unit (PostgreSQL FOR UPDATE; SQLite is
+    # single-writer so the unique seq constraint is the backstop there).
+    conversation = _owned_conversation(
+        session, actor_id, project_id, conversation_id, with_for_update=True
+    )
     if conversation.archived_at is not None:
         raise ValidationError("archived conversation cannot accept new turns")
 
-    history_rows = session.scalars(
+    # Bounded suffix fetched in SQL (newest-first, then restored to ascending
+    # order); the runner still applies the char bound. Never load the whole
+    # transcript into memory for the model.
+    suffix = session.scalars(
         select(ConversationMessage)
         .where(ConversationMessage.conversation_id == conversation_id)
-        .order_by(ConversationMessage.seq.asc())
+        .order_by(ConversationMessage.seq.desc())
+        .limit(max(history_limit, 1))
     )
     history = [
         ChatMessage(
             role=cast(Literal["user", "assistant"], row.role),
             content=row.content,
         )
-        for row in history_rows
+        for row in reversed(list(suffix))
         if row.role in {ConversationRole.USER.value, ConversationRole.ASSISTANT.value}
     ]
 
-    result = runner.run(session, actor_id, project_id, message, selection, list(history))
-
-    # Re-read inside the write transaction with a row lock so two concurrent
-    # turns cannot mint the same seq (the unique constraint is defense-in-depth).
-    locked_conversation = session.get(ProjectConversation, conversation_id, with_for_update=True)
-    if locked_conversation is None:
-        raise NotFoundError("conversation not found")
-    conversation = locked_conversation
+    result = runner.run(session, actor_id, project_id, message, selection, history)
 
     last_seq = session.scalar(
         select(func.coalesce(func.max(ConversationMessage.seq), 0)).where(

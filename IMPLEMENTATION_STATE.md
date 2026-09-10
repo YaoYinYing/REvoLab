@@ -1257,8 +1257,10 @@ every job.
   per turn and never persisted; the transcript restores from the server after
   reload.
 - **Migration**: `6c88c6688930_phase9_persistent_project_conversations.py`
-  (project_conversations + conversation_messages; JSONB on PostgreSQL, CHECK
-  enum columns on both backends).
+  (project_conversations + conversation_messages; JSONB on PostgreSQL, and
+  database CHECK constraints on `role`/`termination_reason` via
+  `create_constraint=True` so the conversation columns are self-validating at
+  the DB boundary, not only in Pydantic/ORM).
 - **Docs**: `docs/architecture/PROJECT_CONVERSATIONS.md` (normative owner);
   `PROJECT_AGENT_RUNTIME.md` / `AGENT_CONTEXT.md` / `IMPLEMENTATION_ROADMAP.md`
   (Phase 9) reconciled.
@@ -1266,34 +1268,83 @@ every job.
 ## Verified evidence (Phase 9)
 
 - Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
-  `pytest` passes **326 passed, 7 skipped** (SQLite fast tests; the 7 skips are
-  the opt-in PostgreSQL acceptance file). New `test_conversations.py` regressions
+  `pytest` passes **332 passed, 9 skipped** (SQLite fast tests; the 9 skips are
+  the opt-in PostgreSQL acceptance file). `test_conversations.py` regressions
   cover: persist+reload, server-owned second-turn history, structural rejection
-  of client-supplied history, Actor isolation, cross-Project isolation, immediate
-  membership revocation, Project tombstone, lifecycle create/rename/archive,
-  message pagination, persisted hostile user/assistant text cannot widen tool
-  authority or become system authority, `never_agent` absence, no secret-material
-  persistence, context rebuilt after Project truth changes, and large-history
-  trimming without deleting UI history.
+  of client-supplied history, Actor isolation (incl. the OWNER cannot read a
+  member's private conversation), cross-Project isolation, immediate membership
+  revocation, Project tombstone, lifecycle create/rename/archive, message
+  pagination (incl. `latest` most-recent-page semantics), persisted hostile
+  user/assistant text cannot widen tool authority or become system authority,
+  `never_agent` absence, non-vacuous secret-material exclusion (a sentinel that
+  really entered the live `table.describe` result is absent from durable rows),
+  system-prompt/skill-body exclusion, DB CHECK presence on conversation
+  role/termination columns, service-level title/message bound rejection, context
+  rebuilt after Project truth changes, and large-history trimming without
+  deleting UI history.
 - PostgreSQL (migrated schema): `alembic upgrade head` and `alembic check`
   report **no drift** on PostgreSQL 16; `test_postgres_integration.py` passes
-  **7 passed** (incl. the new Phase-9 conversation persistence/isolation/
-  membership/tombstone acceptance).
+  **9 passed** (conversation create/turn persistence/second-turn server history/
+  Actor-Project isolation/membership change/Project tombstone, raw-insert role
+  CHECK enforcement, and two-concurrent-turn serialization where the second
+  turn's model provably sees the first turn's persisted messages).
 - OpenAPI/contracts: `python -m revolab.export_openapi` is byte-identical to
   `frontend/src/contracts/openapi.json`; `openapi-typescript` +
   `generate-enums.mjs` regenerated `schema.d.ts` (contract generation
   idempotent); the contract regression proves `/agent/turns`,
-  `AgentTurnCreate`, and `AgentChatMessageCreate` are gone and
-  `ConversationTurnCreate` owns the turn request.
-- Frontend: `npm run typecheck`, `npm run test` (**20 tests** — the new
-  Phase-9 Agent view: working-memory boundary, conversation list/restore, tool
-  trace + pending action, failure state, project-switch clearing, deferred
-  cross-project response discard), and `npm run build` pass.
+  `AgentTurnCreate`, and `AgentChatMessageCreate` are gone, that
+  `ConversationTurnCreate` owns the turn request, and that the conversation
+  create/patch/turn schemas all reject unknown fields (`additionalProperties:
+  false`).
+- Frontend: `npm run typecheck`, `npm run test` (**21 tests** — the Phase-9
+  Agent view: working-memory boundary, conversation list/restore, tool trace +
+  pending action, failure state, project-switch clearing, deferred
+  cross-project response discard, and deferred cross-conversation response
+  discard), and `npm run build` pass.
 - Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real
   SQLite + `REVOLAB_E2E_FAKE_MODEL=1` + `REVOLAB_E2E_FAKE_COMPUTE=1`): all
-  **4 specs** pass; `agent.spec.ts` now also reloads after the first turn,
-  verifies the server-owned transcript is restored, and runs a second turn.
+  **4 specs** pass; `agent.spec.ts` reloads after the first turn, verifies the
+  server-owned transcript is restored, and runs a second turn.
 - `git diff --check` clean.
+
+## Independent review (Phase 9)
+
+Five fresh read-only reviewers audited the PR diff on the five TODO.md lenses
+(A architecture/ownership, B runtime/bounds/race, C security/authority, D
+API/frontend/UX, E tests/PG/migrations/CI). **A and C returned PASS**; **B, D,
+and E returned REQUEST_CHANGES.** No P0s were reported.
+
+Reconciled valid P1s:
+
+- **Concurrent-turn race** (A/B): `run_conversation_turn` now takes the
+  per-conversation row lock BEFORE loading history and running the model, so the
+  load→run→persist section serializes; a PostgreSQL two-thread regression proves
+  the second turn's model saw the first turn's persisted user message.
+- **Frontend cross-conversation response leak** (D): `AgentView` now tracks the
+  active conversation synchronously and discards a turn that resolves after the
+  user opened a different conversation, appending transcript messages
+  functionally; a deferred-response regression covers it.
+- **Frontend "latest" pagination inversion** (D): `GET .../{conversation_id}`
+  gained a `latest` query flag returning the most recent message page; the
+  reload path uses it, with a backend regression.
+- **Vacuous secret-persistence negative** (E): the negative now drives a real
+  `table.describe` whose live ToolResult contains a sentinel column header and
+  asserts the sentinel/`secret_ref`/`api_key`/raw `result` are absent from
+  durable rows.
+- **Enum CHECK claim was false** (B/E): `_enum` learned `create_constraint=True`
+  for the two Phase-9 columns and the migration matches, so conversation
+  role/termination columns now carry real database CHECK constraints
+  (`alembic check` clean on both backends; raw-insert PG regression).
+- **Write-bound vs HTTP-bound limit** (B): title and durable-message length are
+  re-validated inside the persistence functions with typed rejection.
+
+In-scope P2s fixed: server-owned history now loads a bounded SQL suffix instead
+of the whole transcript; `ConversationCreate`/`ConversationPatch` reject unknown
+fields; owner-vs-member privacy and system-prompt/skill-body non-persistence
+regressions added. Out of scope / documented deferral: header-trust authentication
+(real OIDC/login remains deferred).
+
+
 
 ## Known deferrals (explicit, not silently postponed)
 

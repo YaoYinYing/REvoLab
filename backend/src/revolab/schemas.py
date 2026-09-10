@@ -992,12 +992,16 @@ class ConversationCreate(BaseModel):
     """Create an Actor x Project conversation. No sharing semantics: the
     conversation is private to the creating Actor within one active Project."""
 
+    model_config = ConfigDict(extra="forbid")
+
     title: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class ConversationPatch(BaseModel):
     """Rename and/or archive a conversation (TODO.md section 9). No destructive
     lifecycle, no cross-user sharing, no cascade into scientific resources."""
+
+    model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, min_length=1, max_length=200)
     archive: bool | None = None

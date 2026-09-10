@@ -14,7 +14,8 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 import pytest
-from sqlalchemy import Engine, create_engine, inspect, select
+from sqlalchemy import Engine, create_engine, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from revolab import services
@@ -619,3 +620,98 @@ def test_phase9_conversation_persistence_on_postgres(pg_session: Session, tmp_pa
     services.delete_project(pg_session, actor_a, project.id)
     with pytest.raises(AuthorizationError):
         get_conversation(pg_session, actor_a, project.id, conversation.id)
+
+
+def test_phase9_role_check_enforced_on_postgres(pg_session: Session) -> None:
+    """The Phase-9 durable-message role is DB CHECK constrained on PostgreSQL:
+    a raw (ORM-bypassed) invalid role must be rejected by the database itself."""
+    from uuid import uuid4
+
+    from revolab.agent.conversations import create_conversation
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Conv Check")
+    conversation = create_conversation(pg_session, actor, project.id)
+
+    with pytest.raises(IntegrityError):
+        pg_session.execute(
+            text(
+                "INSERT INTO conversation_messages "
+                "(id, conversation_id, seq, role, content) "
+                "VALUES (CAST(:id AS UUID), CAST(:conversation_id AS UUID), :seq, :role, :content)"
+            ),
+            {
+                "id": str(uuid4()),
+                "conversation_id": str(conversation.id),
+                "seq": 1,
+                "role": "bogus",
+                "content": "malformed role",
+            },
+        )
+    pg_session.rollback()
+
+
+def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_path) -> None:
+    """TODO.md #16 / reviewer race-find: two concurrent turns on ONE conversation
+    serialize their load->run->persist section. The second turn's model must see
+    the first turn's persisted messages (verified on PostgreSQL's row lock)."""
+    import threading
+    import time
+
+    from sqlalchemy.orm import Session as ORMSession
+
+    from revolab.agent.conversations import create_conversation, run_conversation_turn
+    from revolab.agent.model_backend import ModelResponse
+
+    class BlockingModel:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            self.requests = []
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def complete(self, request):
+            self.requests.append(request)
+            self.started.set()
+            if self.label == "A":
+                self.release.wait(timeout=15)
+            return ModelResponse(finish="stop", content=f"{self.label}-response")
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Conv Race")
+    conversation = create_conversation(pg_session, actor, project.id)
+    engine = pg_session.get_bind()
+
+    model_a = BlockingModel("A")
+    model_b = BlockingModel("B")
+    results: dict[str, object] = {}
+
+    def worker(label: str, model: BlockingModel, message: str) -> None:
+        with ORMSession(bind=engine) as session:
+            results[label] = run_conversation_turn(
+                session,
+                actor,
+                project.id,
+                conversation.id,
+                _phase9_runner(session, actor, project, tmp_path, model),
+                message=message,
+            )
+
+    thread_a = threading.Thread(target=worker, args=("A", model_a, "A-message"))
+    thread_a.start()
+    assert model_a.started.wait(timeout=10)  # A holds the conversation lock now
+
+    thread_b = threading.Thread(target=worker, args=("B", model_b, "B-message"))
+    thread_b.start()
+    time.sleep(0.75)
+    # B is still waiting on the conversation row lock; it has not reached the model.
+    assert len(model_b.requests) == 0
+
+    model_a.release.set()
+    thread_a.join(timeout=20)
+    thread_b.join(timeout=20)
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+
+    # The second turn's model saw the first turn's persisted user message.
+    assert any(message.content == "A-message" for message in model_b.requests[0].messages)

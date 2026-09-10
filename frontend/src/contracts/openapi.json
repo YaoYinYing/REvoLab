@@ -871,6 +871,7 @@
         "type": "object"
       },
       "ConversationCreate": {
+        "additionalProperties": false,
         "description": "Create an Actor x Project conversation. No sharing semantics: the\nconversation is private to the creating Actor within one active Project.",
         "properties": {
           "title": {
@@ -1017,6 +1018,7 @@
         "type": "object"
       },
       "ConversationPatch": {
+        "additionalProperties": false,
         "description": "Rename and/or archive a conversation (TODO.md section 9). No destructive\nlifecycle, no cross-user sharing, no cascade into scientific resources.",
         "properties": {
           "archive": {
@@ -4809,7 +4811,7 @@
     },
     "/api/projects/{project_id}/agent/conversations/{conversation_id}": {
       "get": {
-        "description": "Read the conversation and one bounded page of its persisted messages.\nPagination is a UI concern, separate from the server's model-context trim.",
+        "description": "Read the conversation and one bounded page of its persisted messages.\n`latest` returns the most recent page (reload semantics); pagination is a UI\nconcern, separate from the server's model-context trim.",
         "operationId": "get_project_conversation_api_projects__project_id__agent_conversations__conversation_id__get",
         "parameters": [
           {
@@ -4853,6 +4855,16 @@
               "minimum": 0,
               "title": "Offset",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "latest",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Latest",
+              "type": "boolean"
             }
           },
           {

@@ -51,16 +51,20 @@ from revolab.enums import (
 )
 
 
-def _enum(enum_cls: type[Any], name: str) -> Enum:
-    """A cross-backend CHECK-constrained enum column type.
+def _enum(enum_cls: type[Any], name: str, *, create_constraint: bool = False) -> Enum:
+    """A cross-backend enum column type.
 
-    `native_enum=False` keeps SQLite and PostgreSQL rendering identical (VARCHAR
-    + CHECK) so `alembic check` reports no drift on either backend.
+    `native_enum=False` keeps SQLite and PostgreSQL rendering identical (VARCHAR)
+    so `alembic check` reports no drift on either backend. Enforcement is
+    Python-side by default (Pydantic + `validate_strings=True`); set
+    `create_constraint=True` for columns that must also carry a database CHECK
+    constraint (the bounded durable-working-memory columns added in Phase 9 do).
     """
     return Enum(
         enum_cls,
         name=name,
         native_enum=False,
+        create_constraint=create_constraint,
         validate_strings=True,
         values_callable=lambda e: [member.value for member in e],
     )
@@ -78,8 +82,8 @@ _polarity = _enum(Polarity, "evidence_polarity")
 _confidence = _enum(Confidence, "evidence_confidence")
 _cited_as = _enum(CitedAs, "cited_as")
 _decision_status = _enum(DecisionStatus, "decision_status")
-_agent_termination = _enum(AgentTerminationReason, "agent_termination_reason")
-_conversation_role = _enum(ConversationRole, "conversation_role")
+_agent_termination = _enum(AgentTerminationReason, "agent_termination_reason", create_constraint=True)
+_conversation_role = _enum(ConversationRole, "conversation_role", create_constraint=True)
 
 
 class TimestampMixin:

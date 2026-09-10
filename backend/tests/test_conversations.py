@@ -13,7 +13,7 @@ from types import MappingProxyType
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from revolab import services
 from revolab.agent import AgentLoopBounds, AgentTurnRunner
@@ -478,11 +478,38 @@ def test_history_cannot_expose_never_agent_tools_or_credentials(session, tmp_pat
 def test_conversation_persistence_never_stores_secret_material(session, tmp_path):
     actor = _actor(session)
     project = _project(session, actor)
+    content_store = ContentStore(tmp_path)
     sentinel = "REVOLAB_SECRET_SENTINEL_9f8e7d6c5b4a"
-    _object(session, actor, project, name=sentinel)
 
+    # A CSV column HEADER carrying the sentinel makes the sentinel enter the LIVE
+    # `table.describe` ToolResult (column stats) during the turn, so the negative
+    # below is not vacuous: the value was really present in the turn, and must
+    # still be absent from the durable transcript.
+    artifact = services.create_internal_artifact(
+        session,
+        actor,
+        project.id,
+        content_store,
+        f"{sentinel},x\n1,2\n3,4\n".encode(),
+        content_type="text/csv",
+    )
+    model = ScriptedModelBackend(
+        steps=[
+            {
+                "finish": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call_describe",
+                        "name": "table.describe",
+                        "arguments": {"artifact_id": str(artifact.artifact_id)},
+                    }
+                ],
+            },
+            {"finish": "stop", "content": "described"},
+        ]
+    )
     conversation = create_conversation(session, actor, project.id)
-    run_conversation_turn(
+    result = run_conversation_turn(
         session,
         actor,
         project.id,
@@ -493,11 +520,18 @@ def test_conversation_persistence_never_stores_secret_material(session, tmp_path
             project,
             _registry(),
             InMemorySecretStore(),
-            ContentStore(tmp_path),
-            model=_CapturingModel([_stop("response with no secret")]),
+            content_store,
+            model=model,
         ),
-        message="hi",
+        message="describe the table",
     )
+
+    live = json.dumps(
+        [entry.model_dump(mode="json") for entry in result.turn.tool_trace],
+        sort_keys=True,
+        default=str,
+    )
+    assert sentinel in live  # the sentinel really reached the turn's tool result
 
     rows = session.scalars(
         select(ConversationMessage).where(ConversationMessage.conversation_id == conversation.id)
@@ -519,6 +553,44 @@ def test_conversation_persistence_never_stores_secret_material(session, tmp_path
     assert "api_key" not in dumped
     # Tool-trace summaries are inert: never raw ToolResult payloads.
     assert "result" not in dumped
+
+
+def test_persistence_never_stores_system_prompt_or_skill_bodies(session, tmp_path):
+    from revolab.agent.prompt import SYSTEM_INSTRUCTIONS
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    conversation = create_conversation(session, actor, project.id)
+    run_conversation_turn(
+        session,
+        actor,
+        project.id,
+        conversation.id,
+        _runner(
+            session,
+            actor,
+            project,
+            _registry(),
+            InMemorySecretStore(),
+            ContentStore(tmp_path),
+            model=_CapturingModel([_stop("ok")]),
+        ),
+        message="hi",
+    )
+
+    rows = session.scalars(
+        select(ConversationMessage).where(ConversationMessage.conversation_id == conversation.id)
+    ).all()
+    dumped = json.dumps(
+        [{"content": row.content, "tool_trace_summary": row.tool_trace_summary} for row in rows],
+        sort_keys=True,
+        default=str,
+    )
+    assert "You are the REvoLab Project Agent" not in dumped
+    assert "untrusted_project_data" not in dumped
+    assert "## Skill:" not in dumped
+    # The system prompt is server-owned; it never becomes durable conversation.
+    assert "You are the REvoLab Project Agent" in SYSTEM_INSTRUCTIONS
 
 
 def test_context_rebuilt_after_project_truth_changes(session, tmp_path):
@@ -591,6 +663,7 @@ def test_large_history_trimmed_for_model_without_deleting_ui_history(session, tm
             bounds=AgentLoopBounds(max_history_messages=3),
         ),
         message="new message",
+        history_limit=3,
     )
     assert result.turn.budget.history_messages == 3
     assert not any(message.content == "m0" for message in model.requests[0].messages)
@@ -599,3 +672,101 @@ def test_large_history_trimmed_for_model_without_deleting_ui_history(session, tm
     # UI history is untouched by model-context trimming.
     detail = get_conversation(session, actor, project.id, conversation.id)
     assert detail.total_messages == 32
+
+
+# ---------------------------------------------------------------------------
+# DB-level integrity, service bounds, latest-page pagination
+# ---------------------------------------------------------------------------
+
+
+def test_conversation_role_is_check_constrained_at_the_database(session, tmp_path):
+    from sqlalchemy import CheckConstraint
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    create_conversation(session, actor, project.id)
+    session.execute(
+        insert(ConversationMessage.__table__).values(
+            conversation_id=create_conversation(session, actor, project.id).id,
+            seq=1,
+            role=ConversationRole.USER.value,
+            content="valid",
+        )
+    )
+
+    checks = {
+        constraint.name: constraint
+        for constraint in ConversationMessage.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert "conversation_role" in checks
+    assert "agent_termination_reason" in checks
+    assert {column.name for column in checks["conversation_role"].columns} == {"role"}
+    assert "role IN" in str(checks["conversation_role"].sqltext)
+    assert "termination_reason IN" in str(checks["agent_termination_reason"].sqltext)
+
+
+def test_owner_cannot_read_member_private_conversation(session, tmp_path):
+    actor_a = _actor(session)
+    actor_b = _actor(session)
+    project = _project(session, actor_a)
+    services.add_membership(session, actor_a, project.id, actor_b, Role.MEMBER.value)
+    conversation = create_conversation(session, actor_b, project.id)
+
+    # Even the project OWNER cannot read a member's private working memory.
+    with pytest.raises(NotFoundError):
+        get_conversation(session, actor_a, project.id, conversation.id)
+
+
+def test_get_conversation_latest_returns_most_recent_page(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    conversation = create_conversation(session, actor, project.id)
+    for index in range(5):
+        session.add(
+            ConversationMessage(
+                conversation_id=conversation.id,
+                seq=index + 1,
+                role=ConversationRole.USER.value,
+                content=f"m{index}",
+            )
+        )
+    session.commit()
+
+    latest = get_conversation(session, actor, project.id, conversation.id, limit=2, latest=True)
+    assert latest.total_messages == 5
+    assert [message.content for message in latest.messages] == ["m3", "m4"]
+
+
+def test_run_conversation_turn_rejects_overlong_message(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    conversation = create_conversation(session, actor, project.id)
+    with pytest.raises(ValidationError):
+        run_conversation_turn(
+            session,
+            actor,
+            project.id,
+            conversation.id,
+            _runner(
+                session,
+                actor,
+                project,
+                _registry(),
+                InMemorySecretStore(),
+                ContentStore(tmp_path),
+                model=_CapturingModel([_stop("ok")]),
+            ),
+            message="x" * 8001,
+        )
+
+
+def test_create_and_patch_reject_overlong_title(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    with pytest.raises(ValidationError):
+        create_conversation(session, actor, project.id, title="y" * 201)
+
+    conversation = create_conversation(session, actor, project.id, title="ok")
+    with pytest.raises(ValidationError):
+        patch_conversation(session, actor, project.id, conversation.id, title="z" * 201)

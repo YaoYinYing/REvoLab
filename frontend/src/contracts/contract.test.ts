@@ -105,5 +105,12 @@ describe('generated API contract boundary', () => {
     expect(spec.components.schemas.AgentTerminationReason).toBeDefined()
     expect(schemaDts).toContain('ConversationRole:')
     expect(schemaDts).toContain('ConversationTurnCreate:')
+
+    // The conversation surface is strict: unknown keys are rejected, so a client
+    // can never smuggle history/authority-shaped fields past the wire contract.
+    for (const name of ['ConversationCreate', 'ConversationPatch', 'ConversationTurnCreate']) {
+      const model = spec.components.schemas[name] as { additionalProperties?: unknown }
+      expect(model.additionalProperties, `${name} should forbid extra fields`).toBe(false)
+    }
   })
 })

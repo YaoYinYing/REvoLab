@@ -236,4 +236,44 @@ describe('Agent view (Phase 9)', () => {
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
     expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
   })
+
+  it('never renders conversation A response after opening conversation B mid-turn', async () => {
+    const conversationB = {
+      ...conversation,
+      id: '66666666-6666-4666-8666-666666666666',
+      title: 'Conversation B',
+    }
+    let resolveTurn!: (value: { data: ConversationTurnRead; error: undefined; response: Response }) => void
+    const pending = new Promise<{ data: ConversationTurnRead; error: undefined; response: Response }>(
+      (resolve) => {
+        resolveTurn = resolve
+      },
+    )
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockResolvedValue({
+        data: [conversation, conversationB],
+        error: undefined,
+        response: new Response(),
+      }),
+      createConversationTurn: vi.fn().mockReturnValue(pending),
+    } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'Describe this table',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    // Switch to conversation B while the A turn is still in flight.
+    await user.click(await screen.findByRole('button', { name: /Conversation B/ }))
+
+    resolveTurn({ data: turnRead, error: undefined, response: new Response() })
+    await Promise.resolve()
+
+    expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
+    expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
+  })
 })

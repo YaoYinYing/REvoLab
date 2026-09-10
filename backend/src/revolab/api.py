@@ -1218,13 +1218,21 @@ def get_project_conversation(
     conversation_id: UUID,
     limit: int = Query(default=100, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    latest: bool = Query(default=False),
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
 ) -> schemas.ConversationDetailRead:
     """Read the conversation and one bounded page of its persisted messages.
-    Pagination is a UI concern, separate from the server's model-context trim."""
+    `latest` returns the most recent page (reload semantics); pagination is a UI
+    concern, separate from the server's model-context trim."""
     return get_conversation(
-        session, actor_id, project_id, conversation_id, limit=limit, offset=offset
+        session,
+        actor_id,
+        project_id,
+        conversation_id,
+        limit=limit,
+        offset=offset,
+        latest=latest,
     )
 
 
@@ -1288,6 +1296,7 @@ def create_agent_conversation_turn(
         runner,
         message=payload.message,
         selection=payload.selection,
+        history_limit=_agent_bounds().max_history_messages,
     )
 
 

@@ -272,7 +272,7 @@ export function projectApi(actorId: string) {
     getConversation: (
       projectId: string,
       conversationId: string,
-      query: { limit?: number; offset?: number } = {},
+      query: { limit?: number; offset?: number; latest?: boolean } = {},
     ) =>
       api.GET('/api/projects/{project_id}/agent/conversations/{conversation_id}', {
         headers,
