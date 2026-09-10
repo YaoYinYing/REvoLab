@@ -1100,26 +1100,58 @@ Design wording removed). No product code changed — documentation only.
 ## Verified evidence (Phase 8)
 
 - Backend: `ruff check backend` and strict `mypy` pass (49 source files). `pytest`
-  passes **294 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  passes **305 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
   acceptance file). New regressions in `test_agent_runtime.py` cover: bounded
   context reconstruction + artifact selection, hostile project text as DATA (not
   system instruction), unknown-tool fail-close, malformed-argument fail-close,
   cross-Project resource rejection at execution, `never_agent` absence from the
   model-visible tool set, `decision.commit`/compute-submit never auto-executing
-  (PendingAction only), model-turn/tool-call/history/skill-body bounds, and
-  missing-model fail-closed.
+  (PendingAction only), model-turn/tool-call/history/skill-body bounds, skill
+  path confinement, transcript feedback to the model, pending-argument bounding,
+  adapter timeout/transport mapping, and missing-model fail-closed.
 - OpenAPI/contracts: `python -m revolab.export_openapi` output is byte-identical
   to `frontend/src/contracts/openapi.json`; `openapi-typescript` +
   `generate-enums.mjs` regenerated `schema.d.ts`/`enums.generated.ts`; the
   contract lockstep test now pins the `/agent/turns` request to the single
   `AgentTurnCreate` component and asserts `/agent/proposals` is gone.
-- Frontend: `npm run typecheck`, `npm run test` (**15 tests**, incl. the new
-  Phase-8 Agent view + enum/contract lockstep), and `npm run build` pass.
+- Frontend: `npm run typecheck`, `npm run test` (**17 tests**, incl. the new
+  Phase-8 Agent view — ephemeral boundary, tool trace, pending action, failure
+  state — plus enum/contract lockstep), and `npm run build` pass.
 - Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real SQLite
   + `REVOLAB_E2E_FAKE_MODEL=1`): all **4 specs** pass — smoke, collaboration,
   tools, and the new `agent.spec.ts` (object → fake-compute tabular artifact →
   Agent turn → `table.describe` → `decision.record_draft` → Decisions view draft →
   explicit commit → reloaded committed Knowledge).
+
+## Independent review (Phase 8)
+
+Five fresh read-only reviewers audited the branch on the five TODO.md lenses
+(A architecture/ownership, B runtime/tool semantics, C security/authority,
+D API/frontend/contracts, E tests/CI). **A, C, D, E returned PASS** (P2s only);
+**B returned REQUEST_CHANGES with one P1.** All P0s: none.
+
+Reconciled findings (commit `6d12ec5`): the P1 — tool results and assistant
+tool-call messages were being assembled into a `transcript` but never fed back to
+the model between loop iterations (a multi-step turn would degenerate to burning
+turns) — plus the in-scope P2s: bounded PendingAction arguments, prompt-level
+context-truncation reporting (dead constant removed), skill-budget failure
+converted from a raw `FileNotFoundError` to a typed `ModelUnavailableError`
+(503), remote read-only tools no longer advertised to the model when the loop
+cannot execute them, a single local registry shared by catalog validation and
+execution, and a sanitized (non-exception-echoing) model-unavailable response.
+
+The first post-fix delta review (3 fresh reviewers) **requested changes**: the
+fix commit had accidentally emptied `backend/tests/test_agent_runtime.py` (a
+broken whitespace cleanup command truncated the file), and the PendingAction
+bounding helper was a no-op (it measured the already-truncated string, so it
+always returned the full payload). Both were corrected in `abbc958`: the entire
+runtime regression suite was restored and extended (transcript feedback,
+`max_history_chars`, per-turn tool-call overflow `SKIPPED`, total-duration,
+skill count/path traversal, adapter timeout/transport mapping, bounded pending
+args, model-tool projection excludes remote reads), the bounding helper now
+measures the FULL serialized size before truncating, the projection filter uses
+value comparison, the non-result transcript branch is size-bounded, and every
+loop ceiling is now wire-observable in `AgentTurnBudgetRead`.
 
 ## Known deferrals (explicit, not silently postponed)
 
