@@ -1153,6 +1153,14 @@ measures the FULL serialized size before truncating, the projection filter uses
 value comparison, the non-result transcript branch is size-bounded, and every
 loop ceiling is now wire-observable in `AgentTurnBudgetRead`.
 
+The final delta review (3 fresh read-only reviewers over the fixed delta) returned
+**PASS for all three lenses with no P0/P1** (remaining P2s are non-blocking
+coverage/enum notes). A PostgreSQL-acceptance failure found on the very first
+fixed head (a scoped runaway `Decision` count assertion in the shared PG
+database) was corrected in `955b395`; CI then went **green on every job**
+(backend + PostgreSQL acceptance + frontend + e2e). Head `955b395` is the final
+reviewed, CI-green state; PR #9 is marked ready for human review.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
