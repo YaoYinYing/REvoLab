@@ -1344,6 +1344,24 @@ fields; owner-vs-member privacy and system-prompt/skill-body non-persistence
 regressions added. Out of scope / documented deferral: header-trust authentication
 (real OIDC/login remains deferred).
 
+### Delta review (second round) + commit-threading fix
+
+The first delta round (architecture/runtime, security/authority, tests/contracts/
+frontend) returned **two PASS**; the architecture/runtime reviewer found one P1 —
+the `FOR UPDATE` row lock was released mid-turn whenever a POLICY truth tool
+(`decision.record_draft` / `evidence.create`) committed inside `AgentTurnRunner`,
+so the serialization fix was incomplete on the primary workflow. Confirmed
+empirically against PostgreSQL. Fixed by making the whole conversation turn ONE
+transaction: `InvocationContext.commit` now defaults to `True` for the human
+surface, and the Agent loop sets it `False`, threading `commit=False` through
+`create_evidence` / `create_decision` so `run_conversation_turn` is the sole
+commit point (the row lock is held to the end). The PostgreSQL concurrency
+regression was extended to have the first turn call `decision.record_draft`
+mid-run and block in its second model call, proving the second turn cannot reach
+the model until the first turn commits. All delta P2s (system-prompt/skill-body
+non-vacuousness, owner-side patch/run privacy, PG `termination_reason` CHECK)
+were also addressed.
+
 
 
 ## Known deferrals (explicit, not silently postponed)

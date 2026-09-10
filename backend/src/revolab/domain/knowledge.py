@@ -39,6 +39,7 @@ def create_decision_row(
     next_actions: list[str],
     cites: list[dict[str, Any]],
     selects: list[dict[str, Any]],
+    commit: bool = True,
 ) -> Decision:
     decision = Decision(
         project_id=project_id,
@@ -52,7 +53,9 @@ def create_decision_row(
     session.flush()
     _apply_draft_cites(session, project_id, decision, cites)
     _apply_draft_selects(session, project_id, decision, selects)
-    session.commit()
+    session.flush()
+    if commit:
+        session.commit()
     session.refresh(decision)
     return decision
 

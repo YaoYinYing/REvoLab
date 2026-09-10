@@ -257,6 +257,7 @@ class AgentTurnRunner:
             content_store=self._content_store,
             actor_id=actor_id,
             project_id=project_id,
+            commit=False,
         )
 
         while True:

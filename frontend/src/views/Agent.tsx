@@ -74,10 +74,18 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
         const first = list[0]?.id ?? null
         setActiveConversationId((current) => current ?? first)
         if (first) {
+          activeConversationRef.current = first
+          const requestConversationId = first
           return projectApi(actorId)
             .getConversation(projectId, first, { limit: MESSAGE_PAGE_LIMIT, latest: true })
             .then((detail) => {
               if (cancelled) return
+              if (
+                activeConversationRef.current !== requestConversationId ||
+                scopeRef.current !== `${actorId}:${projectId}`
+              ) {
+                return
+              }
               if (detail.data) {
                 setMessages(detail.data.messages ?? [])
                 setTotalMessages(detail.data.total_messages ?? 0)

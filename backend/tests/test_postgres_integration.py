@@ -623,8 +623,9 @@ def test_phase9_conversation_persistence_on_postgres(pg_session: Session, tmp_pa
 
 
 def test_phase9_role_check_enforced_on_postgres(pg_session: Session) -> None:
-    """The Phase-9 durable-message role is DB CHECK constrained on PostgreSQL:
-    a raw (ORM-bypassed) invalid role must be rejected by the database itself."""
+    """The Phase-9 durable-message enums are DB CHECK constrained on PostgreSQL:
+    raw (ORM-bypassed) invalid role/termination_reason values must be rejected
+    by the database itself."""
     from uuid import uuid4
 
     from revolab.agent.conversations import create_conversation
@@ -650,20 +651,40 @@ def test_phase9_role_check_enforced_on_postgres(pg_session: Session) -> None:
         )
     pg_session.rollback()
 
+    with pytest.raises(IntegrityError):
+        pg_session.execute(
+            text(
+                "INSERT INTO conversation_messages "
+                "(id, conversation_id, seq, role, content, termination_reason) "
+                "VALUES (CAST(:id AS UUID), CAST(:conversation_id AS UUID), :seq, :role, :content, :reason)"
+            ),
+            {
+                "id": str(uuid4()),
+                "conversation_id": str(conversation.id),
+                "seq": 2,
+                "role": "assistant",
+                "content": "malformed reason",
+                "reason": "bogus_reason",
+            },
+        )
+    pg_session.rollback()
+
 
 def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_path) -> None:
     """TODO.md #16 / reviewer race-find: two concurrent turns on ONE conversation
-    serialize their load->run->persist section. The second turn's model must see
-    the first turn's persisted messages (verified on PostgreSQL's row lock)."""
+    serialize their load->run->persist section. The first turn executes a POLICY
+    truth tool (decision.record_draft) mid-turn — the exact path that used to
+    commit and release the row lock early — and the second turn's model must not
+    run until the first turn fully commits."""
     import threading
     import time
 
     from sqlalchemy.orm import Session as ORMSession
 
     from revolab.agent.conversations import create_conversation, run_conversation_turn
-    from revolab.agent.model_backend import ModelResponse
+    from revolab.agent.model_backend import ModelResponse, ModelToolCall
 
-    class BlockingModel:
+    class BlockingTruthModel:
         def __init__(self, label: str) -> None:
             self.label = label
             self.requests = []
@@ -672,8 +693,20 @@ def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_
 
         def complete(self, request):
             self.requests.append(request)
-            self.started.set()
-            if self.label == "A":
+            if self.label == "A" and len(self.requests) == 1:
+                return ModelResponse(
+                    finish="tool_calls",
+                    tool_calls=(
+                        ModelToolCall(
+                            id="call_draft",
+                            name="decision.record_draft",
+                            arguments_raw='{"title": "Serialized draft", "statement": "draft"}',
+                            arguments={"title": "Serialized draft", "statement": "draft"},
+                        ),
+                    ),
+                )
+            if self.label == "A" and len(self.requests) == 2:
+                self.started.set()
                 self.release.wait(timeout=15)
             return ModelResponse(finish="stop", content=f"{self.label}-response")
 
@@ -682,11 +715,11 @@ def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_
     conversation = create_conversation(pg_session, actor, project.id)
     engine = pg_session.get_bind()
 
-    model_a = BlockingModel("A")
-    model_b = BlockingModel("B")
+    model_a = BlockingTruthModel("A")
+    model_b = BlockingTruthModel("B")
     results: dict[str, object] = {}
 
-    def worker(label: str, model: BlockingModel, message: str) -> None:
+    def worker(label: str, model: BlockingTruthModel, message: str) -> None:
         with ORMSession(bind=engine) as session:
             results[label] = run_conversation_turn(
                 session,
@@ -699,7 +732,10 @@ def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_
 
     thread_a = threading.Thread(target=worker, args=("A", model_a, "A-message"))
     thread_a.start()
-    assert model_a.started.wait(timeout=10)  # A holds the conversation lock now
+    # A has executed decision.record_draft and is blocking in its second model
+    # call. After the fix its truth-tool writes are uncommitted, so A still holds
+    # the conversation row lock (no mid-turn commit released it).
+    assert model_a.started.wait(timeout=10)
 
     thread_b = threading.Thread(target=worker, args=("B", model_b, "B-message"))
     thread_b.start()
@@ -713,5 +749,6 @@ def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_
     assert not thread_a.is_alive()
     assert not thread_b.is_alive()
 
-    # The second turn's model saw the first turn's persisted user message.
+    # The second turn's model saw the first turn's persisted user message, proving
+    # the record_draft-inside-turn path no longer breaks serialization.
     assert any(message.content == "A-message" for message in model_b.requests[0].messages)

@@ -561,6 +561,7 @@ def test_persistence_never_stores_system_prompt_or_skill_bodies(session, tmp_pat
     actor = _actor(session)
     project = _project(session, actor)
     conversation = create_conversation(session, actor, project.id)
+    model = _CapturingModel([_stop("ok")])
     run_conversation_turn(
         session,
         actor,
@@ -573,9 +574,18 @@ def test_persistence_never_stores_system_prompt_or_skill_bodies(session, tmp_pat
             _registry(),
             InMemorySecretStore(),
             ContentStore(tmp_path),
-            model=_CapturingModel([_stop("ok")]),
+            model=model,
         ),
         message="hi",
+    )
+
+    # Non-vacuous: the trusted instruction tokens were really assembled into the
+    # model request this turn before we assert they are never persisted.
+    assert "You are the REvoLab Project Agent" in model.requests[0].system
+    assert "## Skill: project-context" in model.requests[0].system
+    assert any(
+        message.content and "<untrusted_project_data>" in message.content
+        for message in model.requests[0].messages
     )
 
     rows = session.scalars(
@@ -713,9 +723,29 @@ def test_owner_cannot_read_member_private_conversation(session, tmp_path):
     services.add_membership(session, actor_a, project.id, actor_b, Role.MEMBER.value)
     conversation = create_conversation(session, actor_b, project.id)
 
-    # Even the project OWNER cannot read a member's private working memory.
+    # Even the project OWNER cannot read a member's private working memory
+    # (read, patch, or run) — the conversation is the creating Actor's alone.
     with pytest.raises(NotFoundError):
         get_conversation(session, actor_a, project.id, conversation.id)
+    with pytest.raises(NotFoundError):
+        patch_conversation(session, actor_a, project.id, conversation.id, title="hijack")
+    with pytest.raises(NotFoundError):
+        run_conversation_turn(
+            session,
+            actor_a,
+            project.id,
+            conversation.id,
+            _runner(
+                session,
+                actor_a,
+                project,
+                _registry(),
+                InMemorySecretStore(),
+                ContentStore(tmp_path),
+                model=_CapturingModel([_stop("nope")]),
+            ),
+            message="hijack",
+        )
 
 
 def test_get_conversation_latest_returns_most_recent_page(session, tmp_path):
