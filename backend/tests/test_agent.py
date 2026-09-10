@@ -772,13 +772,15 @@ def test_viewer_never_sees_action_provider_tools(session):
 
 
 def _runner(session, actor, project, registry, store, tmp_path, *, model=None, bounds=None):
+    local_registry = build_default_registry()
     return AgentTurnRunner(
         model if model is not None else ScriptedModelBackend(),
-        LocalToolRuntime(build_default_registry()),
+        LocalToolRuntime(local_registry),
         registry,
         store,
         ContentStore(tmp_path),
         bounds,
+        local_registry=local_registry,
     )
 
 
@@ -886,7 +888,7 @@ def test_agent_loop_missing_model_fails_closed(session, tmp_path):
     )
     result = runner.run(session, actor, project.id, "hi")
     assert result.termination_reason is AgentTerminationReason.MODEL_UNAVAILABLE
-    assert "model transport failed" in (result.final_response or "")
+    assert result.final_response == "The model runtime is unavailable for this turn."
 
 
 # ---------------------------------------------------------------------------
@@ -1068,3 +1070,13 @@ def test_agent_http_viewer_is_read_only(client):
         assert viewer_commit.status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+def test_agent_turn_without_model_config_fails_closed_http(client):
+    actor_id = _http_actor(client)
+    pid = _http_project(client, actor_id, "No Model")["id"]
+    response = client.post(
+        f"/api/projects/{pid}/agent/turns", json={"message": "hi"}, headers=_headers(actor_id)
+    )
+    assert response.status_code == 503
+    assert "no model runtime configured" in response.json()["detail"]

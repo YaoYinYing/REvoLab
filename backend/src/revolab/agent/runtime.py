@@ -40,7 +40,7 @@ from revolab.agent.model_backend import (
     ModelToolCall,
     ToolSpec,
 )
-from revolab.agent.prompt import build_model_request
+from revolab.agent.prompt import build_model_request, serialize_context
 from revolab.agent.skills import load_skill_bodies
 from revolab.content_store import ContentStore
 from revolab.domain.errors import DomainError, ModelUnavailableError
@@ -64,6 +64,7 @@ from revolab.schemas import (
 )
 from revolab.secret_store import SecretStore
 from revolab.tools.catalog import build_tool_catalog
+from revolab.tools.registry import LocalToolRegistry
 from revolab.tools.runtime import LocalToolRuntime
 from revolab.tools.types import InvocationContext
 
@@ -101,8 +102,17 @@ class AgentLoopBounds:
 
 
 def _tool_descriptor_tools(catalog_tools: list[dict[str, Any]]) -> tuple[ToolSpec, ...]:
+    """Project the Agent-facing tool surface. Only local tools and remote
+    explicit-action tools are offered: remote automatic/policy reads are surfaced
+    in the human catalog but are never executed by the Agent loop, so advertising
+    them would waste model turns on tools that can only be refused."""
     specs: list[ToolSpec] = []
     for tool in catalog_tools:
+        if (
+            tool["execution_class"] == ToolExecutionClass.REMOTE.value
+            and tool["autonomy"] is not AgentToolAutonomy.EXPLICIT_ACTION.value
+        ):
+            continue
         specs.append(
             ToolSpec(
                 name=tool["id"],
@@ -160,6 +170,16 @@ def _validate_pending_input(tool_id: str, arguments: dict[str, Any]) -> dict[str
         return None
 
 
+def _bounded_pending_arguments(validated: dict[str, Any], limit: int) -> dict[str, Any]:
+    """Bound the pending-action argument payload without losing validated info for
+    the common small case. Large dumps (e.g. compute submission params) become a
+    bounded preview so the Agent-turn response stays non-secret and bounded."""
+    text = _bounded_json(validated, limit)
+    if len(text) <= limit:
+        return validated
+    return {"truncated": True, "preview": text}
+
+
 class AgentTurnRunner:
     """Run one bounded Agent turn. Stateless across turns (context + catalog are
     rebuilt fresh on every call), process-local only."""
@@ -172,6 +192,7 @@ class AgentTurnRunner:
         secret_store: SecretStore,
         content_store: ContentStore,
         bounds: AgentLoopBounds | None = None,
+        local_registry: LocalToolRegistry | None = None,
     ) -> None:
         self._model = model
         self._local_runtime = local_runtime
@@ -179,6 +200,7 @@ class AgentTurnRunner:
         self._secret_store = secret_store
         self._content_store = content_store
         self._bounds = bounds or AgentLoopBounds()
+        self._local_registry = local_registry
 
     def run(
         self,
@@ -191,16 +213,29 @@ class AgentTurnRunner:
     ) -> AgentTurnRead:
         started = time.monotonic()
         context = build_context(session, actor_id, project_id, self._registry, selection)
-        catalog = build_tool_catalog(session, actor_id, project_id, self._registry)
-        by_id = _catalog_by_id(catalog)
-        skills = load_skill_bodies(
-            selection,
-            max_count=self._bounds.max_skill_count,
-            max_bytes=self._bounds.max_skill_bytes,
+        catalog = build_tool_catalog(
+            session, actor_id, project_id, self._registry, self._local_registry
         )
+        by_id = _catalog_by_id(catalog)
+        try:
+            skills = load_skill_bodies(
+                selection,
+                max_count=self._bounds.max_skill_count,
+                max_bytes=self._bounds.max_skill_bytes,
+            )
+        except FileNotFoundError as exc:
+            # A missing skill root or an over-budget skill body is a deployment
+            # misconfiguration, NOT a model failure. Fail closed with a sanitized,
+            # typed 503 — never an unhandled raw FileNotFoundError.
+            raise ModelUnavailableError("skill loading failed (bound or missing skill)") from exc
         tool_specs = _tool_descriptor_tools(
             [tool.model_dump(mode="json") for tool in catalog.tools]
         )
+
+        # Prompt-level context char truncation is separate from the builder's
+        # category caps: report it so a bound hit is visible in the turn budget.
+        context_serialized = serialize_context(context)
+        context_truncated = context.budget.truncated or len(context_serialized) > self._bounds.max_context_chars
 
         history_messages = self._bounded_history(history)
         transcript: list[ChatMessage] = []
@@ -231,7 +266,7 @@ class AgentTurnRunner:
                 break
 
             request = build_model_request(
-                history=history_messages,
+                history=history_messages + tuple(transcript),
                 context=context,
                 message=message,
                 skills=skills,
@@ -240,9 +275,9 @@ class AgentTurnRunner:
             )
             try:
                 response = self._model.complete(request)
-            except ModelUnavailableError as exc:
+            except ModelUnavailableError:
                 termination = AgentTerminationReason.MODEL_UNAVAILABLE
-                final_response = f"The model runtime is unavailable: {exc}"
+                final_response = "The model runtime is unavailable for this turn."
                 break
             model_turns += 1
 
@@ -302,7 +337,7 @@ class AgentTurnRunner:
             max_history_messages=self._bounds.max_history_messages,
             skills_loaded=len(skills),
             max_skills=self._bounds.max_skill_count,
-            context_truncated=context.budget.truncated,
+            context_truncated=context_truncated,
         )
         return AgentTurnRead(
             project_id=project_id,
@@ -398,7 +433,7 @@ class AgentTurnRunner:
                 tool_id=call.name,
                 autonomy=descriptor.autonomy,
                 summary=f"The model proposed {call.name}; it was NOT executed.",
-                arguments=validated,
+                arguments=_bounded_pending_arguments(validated, self._bounds.max_tool_result_chars),
                 reason="explicit actions require an authorized human action",
             )
             return (

@@ -58,7 +58,7 @@ from revolab.models import (
 )
 from revolab.secret_store import SecretStore, default_secret_store
 from revolab.tools import build_tool_catalog, inspect_artifact
-from revolab.tools.registry import build_default_registry
+from revolab.tools.registry import LocalToolRegistry, build_default_registry
 from revolab.tools.runtime import LocalToolRuntime
 from revolab.tools.types import InvocationContext
 
@@ -138,14 +138,15 @@ def get_secret_store() -> SecretStore:
     return default_secret_store()
 
 
+@lru_cache
+def _local_registry() -> LocalToolRegistry:
+    """The ONE local tool registry wired into both the human invocation surface
+    and the Agent loop catalog so validation and execution share the same set."""
+    return build_default_registry()
+
+
 def get_local_runtime() -> LocalToolRuntime:
-    from functools import lru_cache
-
-    @lru_cache
-    def _runtime() -> LocalToolRuntime:
-        return LocalToolRuntime(build_default_registry())
-
-    return _runtime()
+    return LocalToolRuntime(_local_registry())
 
 
 @lru_cache
@@ -1148,7 +1149,15 @@ def create_agent_turn(
     against the canonical ToolCatalog and executed only through LocalToolRuntime,
     explicit actions become PendingActions, and the only Decision shape
     producible is a DRAFT. No raw provider/model response object is exposed."""
-    runner = AgentTurnRunner(model, runtime, registry, store, _content_store(), _agent_bounds())
+    runner = AgentTurnRunner(
+        model,
+        runtime,
+        registry,
+        store,
+        _content_store(),
+        _agent_bounds(),
+        local_registry=_local_registry(),
+    )
     return runner.run(
         session,
         actor_id,

@@ -30,8 +30,6 @@ from revolab.agent.model_backend import ChatMessage, ModelRequest, ToolSpec
 _DATA_OPEN = "<untrusted_project_data>"
 _DATA_CLOSE = "</untrusted_project_data>"
 
-_PROMPT_MAX_CONTEXT_CHARS = 60_000
-
 SYSTEM_INSTRUCTIONS = """You are the REvoLab Project Agent. You read bounded, read-only
 Project context and reason about it. You never own project truth and you cannot
 write it directly.

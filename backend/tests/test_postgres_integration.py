@@ -365,12 +365,14 @@ def test_phase6_agent_vertical_slice_on_postgres(pg_session: Session, tmp_path) 
             {"finish": "stop", "content": "Recorded a draft only."},
         ]
     )
+    local_registry = build_default_registry()
     runner = AgentTurnRunner(
         model,
-        LocalToolRuntime(build_default_registry()),
+        LocalToolRuntime(local_registry),
         registry,
         InMemorySecretStore(),
         ContentStore(tmp_path),
+        local_registry=local_registry,
     )
     result = runner.run(
         pg_session,
