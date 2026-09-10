@@ -1100,7 +1100,7 @@ Design wording removed). No product code changed — documentation only.
 ## Verified evidence (Phase 8)
 
 - Backend: `ruff check backend` and strict `mypy` pass (49 source files). `pytest`
-  passes **305 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
+  passes **311 passed, 6 skipped** (the six skips are the opt-in PostgreSQL
   acceptance file). New regressions in `test_agent_runtime.py` cover: bounded
   context reconstruction + artifact selection, hostile project text as DATA (not
   system instruction), unknown-tool fail-close, malformed-argument fail-close,
@@ -1108,15 +1108,18 @@ Design wording removed). No product code changed — documentation only.
   model-visible tool set, `decision.commit`/compute-submit never auto-executing
   (PendingAction only), model-turn/tool-call/history/skill-body bounds, skill
   path confinement, transcript feedback to the model, pending-argument bounding,
-  adapter timeout/transport mapping, and missing-model fail-closed.
+  adapter timeout/transport mapping, safe OpenAI function-name mapping, malformed
+  200-response typing, whole-group history trimming, deadline recheck before tool
+  execution, and missing-model fail-closed.
 - OpenAPI/contracts: `python -m revolab.export_openapi` output is byte-identical
   to `frontend/src/contracts/openapi.json`; `openapi-typescript` +
   `generate-enums.mjs` regenerated `schema.d.ts`/`enums.generated.ts`; the
   contract lockstep test now pins the `/agent/turns` request to the single
   `AgentTurnCreate` component and asserts `/agent/proposals` is gone.
-- Frontend: `npm run typecheck`, `npm run test` (**17 tests**, incl. the new
+- Frontend: `npm run typecheck`, `npm run test` (**19 tests**, incl. the new
   Phase-8 Agent view — ephemeral boundary, tool trace, pending action, failure
-  state — plus enum/contract lockstep), and `npm run build` pass.
+  state, project-switch clearing, and deferred cross-project response discard —
+  plus enum/contract lockstep), and `npm run build` pass.
 - Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real SQLite
   + `REVOLAB_E2E_FAKE_MODEL=1`): all **4 specs** pass — smoke, collaboration,
   tools, and the new `agent.spec.ts` (object → fake-compute tabular artifact →
@@ -1190,6 +1193,29 @@ reconciled with regressions:
 Full gates re-ran green after the fixes: backend **309 passed / 6 skipped**,
 frontend typecheck + **18 tests** + build, Playwright **4 specs**, OpenAPI fresh,
 contracts idempotent. CI green on pushed head `e5b0597`.
+
+### Pre-merge hardening pass + final review (`f6debb8`, `c2839b6`)
+
+- **P1 (cross-Project in-flight response race).** `AgentView` is now keyed by
+  `actorId:projectId` in `App.tsx` (remount on switch) AND carries a synchronous
+  `actorId:projectId` scope guard that discards a resolve whose scope no longer
+  matches. A deferred-response regression proves a Project A turn resolved after
+  switching to B never renders A content.
+- **P2 (model transport lifecycle).** The cached `OpenAICompatModelBackend` /
+  `httpx.Client` now has an explicit `close_model_backend()` wired into the
+  FastAPI lifespan `finally`; construction is guarded by a lock so concurrent
+  first turns share ONE transport (concurrency regression asserts a single build
+  across 8 racing accesses). No generalized resource framework.
+- Three fresh read-only final reviewers (Agent/runtime architecture;
+  security/project isolation; contracts/tests/resource lifecycle) returned
+  **PASS with no P0/P1**. The one recurring P2 — the unlocked lazy singleton —
+  was fixed in `c2839b6`. All five Codex findings are re-verified as fixed and
+  regression-pinned.
+
+Final machine evidence on head `c2839b6`: backend **311 passed / 6 skipped**,
+PostgreSQL + Alembic drift + OpenAPI drift green in CI, frontend typecheck +
+**19 tests** + build, Playwright **4 specs**, `check:contracts` clean. CI green on
+every job.
 
 ## Known deferrals (explicit, not silently postponed)
 
