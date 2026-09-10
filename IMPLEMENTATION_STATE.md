@@ -1161,6 +1161,36 @@ database) was corrected in `955b395`; CI then went **green on every job**
 (backend + PostgreSQL acceptance + frontend + e2e). Head `955b395` is the final
 reviewed, CI-green state; PR #9 is marked ready for human review.
 
+### Codex review follow-up (two P1 + three P2, reconciled in `e5b0597`)
+
+After the PR was marked ready, an automated Codex review left five findings, all
+reconciled with regressions:
+
+- **P1 — dotted tool ids were invalid OpenAI function names.** The
+  `OpenAICompatModelBackend` now maps canonical tool ids to API-safe wire names
+  (letters/digits/`_`/`-`, ≤64 chars, digest-suffixed for long ids), reverse-maps
+  emitted calls, and fails closed on collision. A capture transport proves the
+  wire only carries `decision_record_draft`/`artifact_inspect`-style names and
+  that the loop still sees the canonical ids.
+- **P1 — Agent conversation leaked across project switches.** `AgentView` now
+  resets all session-local state (messages, turn, error, selected context) when
+  `projectId`/`actorId` change; a frontend regression asserts a prior project's
+  response disappears after the project switch.
+- **P2 — history trimming could split an assistant tool-call group.** `_bounded_history`
+  now groups an assistant `tool_calls` message with its consecutive tool
+  responses and trims whole groups, so no advertised `tool_call_id` is ever
+  orphaned in a bounded transcript.
+- **P2 — total-turn deadline only checked at loop top.** The deadline is now
+  rechecked after the model returns and again before EACH tool execution, so the
+  duration ceiling is a hard bound for side effects (clock-scripted regression).
+- **P2 — malformed HTTP-200 model responses escaped as untyped 500s.** The
+  adapter validates `choices`/choice/message structure and maps empty/non-object
+  responses to a typed `ModelUnavailableError` (503).
+
+Full gates re-ran green after the fixes: backend **309 passed / 6 skipped**,
+frontend typecheck + **18 tests** + build, Playwright **4 specs**, OpenAPI fresh,
+contracts idempotent. CI green on pushed head `e5b0597`.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
