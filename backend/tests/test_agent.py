@@ -1107,3 +1107,28 @@ def test_model_backend_shutdown_closes_transport_and_is_idempotent():
     # Closing again with no instance is a no-op (shutdown may run more than once).
     api.close_model_backend()
     assert api._model_backend_initialized is False
+
+
+def test_model_backend_singleton_is_shared_across_concurrent_first_access(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from revolab import api
+
+    class _TrackedBackend:
+        def complete(self, request):
+            raise AssertionError("unused in singleton test")
+
+        def close(self) -> None:
+            pass
+
+    built: list[int] = []
+    api._model_backend_instance = None
+    api._model_backend_initialized = False
+    monkeypatch.setattr(api, "_build_model_backend", lambda: (built.append(1) or _TrackedBackend()))
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(lambda _: api._model_backend(), range(8)))
+
+    # One transport, not a race that leaks extra httpx clients.
+    assert len(built) == 1
+    assert all(result is results[0] for result in results)

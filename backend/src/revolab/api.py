@@ -8,6 +8,7 @@ generic relation writer.
 
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 from typing import Any
 from uuid import UUID
@@ -151,6 +152,7 @@ def get_local_runtime() -> LocalToolRuntime:
 
 _model_backend_instance: ModelBackend | None = None
 _model_backend_initialized = False
+_model_backend_lock = threading.Lock()
 
 
 def _build_model_backend() -> ModelBackend | None:
@@ -179,24 +181,30 @@ def _model_backend() -> ModelBackend | None:
     """Resolve ONE configured concrete model backend (TODO.md section 4). No
     generalized provider framework; no silent fake fallback in production. The
     returned instance owns a transport (httpx.Client) whose lifetime is the
-    application's, closed explicitly via `close_model_backend`."""
+    application's, closed explicitly via `close_model_backend`. Construction is
+    guarded so concurrent first requests share ONE transport instead of racing
+    to build (and leak) several."""
     global _model_backend_instance, _model_backend_initialized
-    if not _model_backend_initialized:
-        _model_backend_instance = _build_model_backend()
-        _model_backend_initialized = True
-    return _model_backend_instance
+    if _model_backend_initialized:
+        return _model_backend_instance
+    with _model_backend_lock:
+        if not _model_backend_initialized:
+            _model_backend_instance = _build_model_backend()
+            _model_backend_initialized = True
+        return _model_backend_instance
 
 
 def close_model_backend() -> None:
     """Close the cached model transport at application shutdown. Idempotent and
     safe when no backend was ever built or the backend has no `close`."""
     global _model_backend_instance, _model_backend_initialized
-    backend = _model_backend_instance
-    _model_backend_instance = None
-    _model_backend_initialized = False
-    closer = getattr(backend, "close", None)
-    if callable(closer):
-        closer()
+    with _model_backend_lock:
+        backend = _model_backend_instance
+        _model_backend_instance = None
+        _model_backend_initialized = False
+        closer = getattr(backend, "close", None)
+        if callable(closer):
+            closer()
 
 
 def get_model_backend() -> ModelBackend:
