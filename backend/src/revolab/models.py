@@ -35,8 +35,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from revolab.db import Base, JSONType
 from revolab.enums import (
+    AgentTerminationReason,
     CitedAs,
     Confidence,
+    ConversationRole,
     DecisionStatus,
     EvidenceKind,
     EvidenceRole,
@@ -76,6 +78,8 @@ _polarity = _enum(Polarity, "evidence_polarity")
 _confidence = _enum(Confidence, "evidence_confidence")
 _cited_as = _enum(CitedAs, "cited_as")
 _decision_status = _enum(DecisionStatus, "decision_status")
+_agent_termination = _enum(AgentTerminationReason, "agent_termination_reason")
+_conversation_role = _enum(ConversationRole, "conversation_role")
 
 
 class TimestampMixin:
@@ -601,3 +605,57 @@ class ToolInvocation(Base, TimestampMixin):
         ForeignKey("global_resource_registry.resource_id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False)
+
+
+class ProjectConversation(Base, TimestampMixin):
+    """Actor x Project scoped durable working memory (Phase 9). A conversation is
+    NOT a ScientificObject, a provenance node, or a GlobalResourceRegistry entry:
+    it never enters the scientific graph and never becomes Project truth.
+
+    Access must always verify the current Actor owns the conversation AND can
+    currently read the Project AND the Project is active. A guessed UUID never
+    grants access. Lifecycle is create / read / rename / archive only — no
+    cross-user sharing semantics in this phase."""
+
+    __tablename__ = "project_conversations"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    actor_id: Mapped[UUID] = mapped_column(
+        ForeignKey("actors.actor_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ConversationMessage(Base, TimestampMixin):
+    """One durable bounded transcript entry: `role` is exactly user|assistant.
+    `content` is conversational working memory — ALWAYS untrusted, never system
+    authority. `termination_reason` and `tool_trace_summary` belong to an
+    assistant message: the summary is a bounded INERT snapshot of the turn's
+    tool-call outcomes (tool id + status + bounded error/refusal), never raw
+    ToolResult payloads and never a second conversation truth.
+
+    Persist only bounded user-visible state. Never: system prompt, trusted skill
+    bodies, raw model/provider request/response, credentials, CredentialLease,
+    ProjectContext/ToolCatalog serialization, or hidden reasoning."""
+
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "seq", name="uq_conversation_message_seq"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project_conversations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(_conversation_role, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    termination_reason: Mapped[str | None] = mapped_column(_agent_termination, nullable=True)
+    tool_trace_summary: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONType)

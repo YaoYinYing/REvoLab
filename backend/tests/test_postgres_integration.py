@@ -521,3 +521,101 @@ def test_phase7_tool_harness_vertical_slice_on_postgres(pg_session: Session, tmp
     )
     assert described.value is not None
     assert described.value["rows"] == 3
+
+
+def _phase9_runner(pg_session: Session, actor, project, tmp_path, model) -> AgentTurnRunner:
+    from revolab.content_store import ContentStore
+    from revolab.tools.registry import build_default_registry
+    from revolab.tools.runtime import LocalToolRuntime
+
+    local_registry = build_default_registry()
+    registry = DriverRegistry()
+    registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
+    return AgentTurnRunner(
+        model,
+        LocalToolRuntime(local_registry),
+        registry,
+        InMemorySecretStore(),
+        ContentStore(tmp_path),
+        local_registry=local_registry,
+    )
+
+
+def test_phase9_conversation_persistence_on_postgres(pg_session: Session, tmp_path) -> None:
+    """TODO.md #14 PostgreSQL acceptance: conversation create, turn persistence,
+    second-turn server-owned history, Actor/Project isolation, membership change,
+    and Project tombstone all work on the migrated schema."""
+    from revolab.agent.conversations import (
+        create_conversation,
+        get_conversation,
+        list_conversations,
+        run_conversation_turn,
+    )
+    from revolab.domain.errors import AuthorizationError, NotFoundError
+    from revolab.enums import ConversationRole, Role
+    from revolab.models import ConversationMessage, ProjectConversation
+    from revolab.testing.fake_model import ScriptedModelBackend
+
+    actor_a = services.create_actor(pg_session)
+    actor_b = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor_a, "PG Conversations")
+    services.add_membership(pg_session, actor_a, project.id, actor_b, Role.MEMBER.value)
+
+    conversation = create_conversation(pg_session, actor_a, project.id, title="PG slice")
+    assert pg_session.get(ProjectConversation, conversation.id) is not None
+
+    first_model = ScriptedModelBackend(steps=[{"finish": "stop", "content": "first response overwrite"}])
+    run_conversation_turn(
+        pg_session,
+        actor_a,
+        project.id,
+        conversation.id,
+        _phase9_runner(pg_session, actor_a, project, tmp_path, first_model),
+        message="first message",
+    )
+
+    # Turn persistence + server-owned second-turn history over PostgreSQL.
+    second_model = ScriptedModelBackend(steps=[{"finish": "stop", "content": "second response"}])
+    result = run_conversation_turn(
+        pg_session,
+        actor_a,
+        project.id,
+        conversation.id,
+        _phase9_runner(pg_session, actor_a, project, tmp_path, second_model),
+        message="second message",
+    )
+    assert result.turn.budget.history_messages == 2
+    assert any(message.content == "first message" for message in second_model.requests[0].messages)
+    assert any(message.content == "first response overwrite" for message in second_model.requests[0].messages)
+
+    detail = get_conversation(pg_session, actor_a, project.id, conversation.id)
+    assert [message.role for message in detail.messages] == [
+        ConversationRole.USER,
+        ConversationRole.ASSISTANT,
+        ConversationRole.USER,
+        ConversationRole.ASSISTANT,
+    ]
+    assert detail.total_messages == 4
+    assert pg_session.scalar(
+        select(ConversationMessage.role).where(
+            ConversationMessage.conversation_id == conversation.id,
+            ConversationMessage.seq == 1,
+        )
+    ) == ConversationRole.USER.value
+
+    # Actor/Project isolation: another member cannot read a private conversation.
+    assert list_conversations(pg_session, actor_b, project.id) == []
+    with pytest.raises(NotFoundError):
+        get_conversation(pg_session, actor_b, project.id, conversation.id)
+
+    # Membership revocation takes effect immediately, even for a persisted row.
+    own = create_conversation(pg_session, actor_b, project.id, title="B private")
+    assert get_conversation(pg_session, actor_b, project.id, own.id).id == own.id
+    services.remove_membership(pg_session, actor_a, project.id, actor_b)
+    with pytest.raises(AuthorizationError):
+        get_conversation(pg_session, actor_b, project.id, own.id)
+
+    # Project tombstone blocks all conversation access for the owner too.
+    services.delete_project(pg_session, actor_a, project.id)
+    with pytest.raises(AuthorizationError):
+        get_conversation(pg_session, actor_a, project.id, conversation.id)

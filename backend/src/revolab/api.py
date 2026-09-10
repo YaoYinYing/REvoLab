@@ -30,6 +30,13 @@ from sqlalchemy.orm import Session
 
 from revolab import queries, schemas, services
 from revolab.agent.builder import build_context
+from revolab.agent.conversations import (
+    create_conversation,
+    get_conversation,
+    list_conversations,
+    patch_conversation,
+    run_conversation_turn,
+)
 from revolab.agent.model_backend import ModelBackend, OpenAICompatModelBackend
 from revolab.agent.runtime import AgentLoopBounds, AgentTurnRunner
 from revolab.capabilities import CapabilityError, ExternalArtifactRef, InputBinding
@@ -1164,24 +1171,106 @@ def invocation_read(row: ToolInvocation) -> dict[str, Any]:
 
 
 @router.post(
-    "/projects/{project_id}/agent/turns",
-    response_model=schemas.AgentTurnRead,
+    "/projects/{project_id}/agent/conversations",
+    status_code=201,
+    response_model=schemas.ConversationRead,
 )
-def create_agent_turn(
+def create_project_conversation(
     project_id: UUID,
-    payload: schemas.AgentTurnCreate,
+    payload: schemas.ConversationCreate | None = None,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.ConversationRead:
+    """Create an Actor x Project scoped persistent conversation (durable working
+    memory, NOT Project truth). No sharing semantics: only the creating Actor
+    can read it, and only while the Project stays active and readable."""
+    return create_conversation(session, actor_id, project_id, payload.title if payload else None)
+
+
+@router.get(
+    "/projects/{project_id}/agent/conversations",
+    response_model=list[schemas.ConversationRead],
+)
+def list_project_conversations(
+    project_id: UUID,
+    include_archived: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> list[schemas.ConversationRead]:
+    return list_conversations(
+        session,
+        actor_id,
+        project_id,
+        include_archived=include_archived,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/agent/conversations/{conversation_id}",
+    response_model=schemas.ConversationDetailRead,
+)
+def get_project_conversation(
+    project_id: UUID,
+    conversation_id: UUID,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.ConversationDetailRead:
+    """Read the conversation and one bounded page of its persisted messages.
+    Pagination is a UI concern, separate from the server's model-context trim."""
+    return get_conversation(
+        session, actor_id, project_id, conversation_id, limit=limit, offset=offset
+    )
+
+
+@router.patch(
+    "/projects/{project_id}/agent/conversations/{conversation_id}",
+    response_model=schemas.ConversationRead,
+)
+def patch_project_conversation(
+    project_id: UUID,
+    conversation_id: UUID,
+    payload: schemas.ConversationPatch,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.ConversationRead:
+    """Rename and/or archive a conversation. Namespace-scoped, non-destructive."""
+    return patch_conversation(
+        session,
+        actor_id,
+        project_id,
+        conversation_id,
+        title=payload.title,
+        archive=payload.archive,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/agent/conversations/{conversation_id}/turns",
+    status_code=201,
+    response_model=schemas.ConversationTurnRead,
+)
+def create_agent_conversation_turn(
+    project_id: UUID,
+    conversation_id: UUID,
+    payload: schemas.ConversationTurnCreate,
     session: Session = Depends(get_session),
     actor_id: UUID = Depends(get_actor),
     registry: DriverRegistry = Depends(get_driver_registry),
     store: SecretStore = Depends(get_secret_store),
     runtime: LocalToolRuntime = Depends(get_local_runtime),
     model: ModelBackend = Depends(get_model_backend),
-) -> schemas.AgentTurnRead:
-    """Run one bounded Project Agent turn. The Agent is a consumer, never an
-    owner: context is rebuilt from Project truth, tool calls are validated
-    against the canonical ToolCatalog and executed only through LocalToolRuntime,
-    explicit actions become PendingActions, and the only Decision shape
-    producible is a DRAFT. No raw provider/model response object is exposed."""
+) -> schemas.ConversationTurnRead:
+    """Run one bounded Project Agent turn and persist it into the conversation.
+    The backend resolves the conversation and loads its own bounded prior
+    history; the client names only `conversation_id`, the new user message, and
+    an optional current ContextSelection. Authority is still rebuilt fresh every
+    turn from the one canonical ToolCatalog and current Project state."""
     runner = AgentTurnRunner(
         model,
         runtime,
@@ -1191,13 +1280,14 @@ def create_agent_turn(
         _agent_bounds(),
         local_registry=_local_registry(),
     )
-    return runner.run(
+    return run_conversation_turn(
         session,
         actor_id,
         project_id,
-        payload.message,
-        payload.selection,
-        payload.history,
+        conversation_id,
+        runner,
+        message=payload.message,
+        selection=payload.selection,
     )
 
 

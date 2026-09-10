@@ -15,31 +15,6 @@
         "title": "ActorRead",
         "type": "object"
       },
-      "AgentChatMessageCreate": {
-        "description": "One bounded transient-history message. Only `user`/`assistant` are legal;\nthe browser may never supply system instructions or tool-result authority.",
-        "properties": {
-          "content": {
-            "maxLength": 8000,
-            "minLength": 1,
-            "title": "Content",
-            "type": "string"
-          },
-          "role": {
-            "enum": [
-              "user",
-              "assistant"
-            ],
-            "title": "Role",
-            "type": "string"
-          }
-        },
-        "required": [
-          "role",
-          "content"
-        ],
-        "title": "AgentChatMessageCreate",
-        "type": "object"
-      },
       "AgentTerminationReason": {
         "description": "Why one bounded Agent turn ended. A bound hit is a typed, user-visible\nterminal result, never a silent continuation.",
         "enum": [
@@ -153,47 +128,6 @@
           }
         },
         "title": "AgentTurnBudgetRead",
-        "type": "object"
-      },
-      "AgentTurnCreate": {
-        "description": "The canonical Project-scoped Agent-turn request (TODO.md section 12).",
-        "properties": {
-          "history": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/AgentChatMessageCreate"
-                },
-                "maxItems": 20,
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "History"
-          },
-          "message": {
-            "maxLength": 8000,
-            "minLength": 1,
-            "title": "Message",
-            "type": "string"
-          },
-          "selection": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ContextSelectionCreate"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "message"
-        ],
-        "title": "AgentTurnCreate",
         "type": "object"
       },
       "AgentTurnRead": {
@@ -934,6 +868,370 @@
           }
         },
         "title": "ContextSelectionCreate",
+        "type": "object"
+      },
+      "ConversationCreate": {
+        "description": "Create an Actor x Project conversation. No sharing semantics: the\nconversation is private to the creating Actor within one active Project.",
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ConversationCreate",
+        "type": "object"
+      },
+      "ConversationDetailRead": {
+        "description": "Conversation + one bounded page of its persisted messages (paginated\nseparately from model-context trimming \u2014 TODO.md sections 5/13).",
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationMessageRead"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "total_messages": {
+            "default": 0,
+            "title": "Total Messages",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "actor_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConversationDetailRead",
+        "type": "object"
+      },
+      "ConversationMessageRead": {
+        "description": "One persisted transcript entry. `content` is untrusted conversational\ndata (user or assistant) \u2014 never system authority, never Project truth.",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/ConversationRole"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "termination_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentTerminationReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tool_trace": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationToolTraceSummaryRead"
+            },
+            "title": "Tool Trace",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "conversation_id",
+          "seq",
+          "role",
+          "content",
+          "created_at"
+        ],
+        "title": "ConversationMessageRead",
+        "type": "object"
+      },
+      "ConversationPatch": {
+        "description": "Rename and/or archive a conversation (TODO.md section 9). No destructive\nlifecycle, no cross-user sharing, no cascade into scientific resources.",
+        "properties": {
+          "archive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ConversationPatch",
+        "type": "object"
+      },
+      "ConversationRead": {
+        "description": "An Actor x Project conversation identity (not a global resource).",
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "actor_id",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ConversationRead",
+        "type": "object"
+      },
+      "ConversationRole": {
+        "description": "The only two durable roles of a persisted conversation message. A stored\ntranscript is conversational working memory: `user` text and `assistant`\ntext are BOTH untrusted conversational data, never system authority.\nTool results are not stored as their own role \u2014 they survive only inside a\nbounded inert summary attached to the assistant message that produced them.",
+        "enum": [
+          "user",
+          "assistant"
+        ],
+        "title": "ConversationRole",
+        "type": "string"
+      },
+      "ConversationToolTraceSummaryRead": {
+        "description": "A bounded INERT summary of one tool-call outcome inside a persisted\nassistant message. Never the raw ToolResult payload, never PendingAction\narguments, never a secret or model/provider response body.",
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "pending_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Reason"
+          },
+          "pending_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Summary"
+          },
+          "pending_tool_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Tool Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentToolCallStatus"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool_id",
+          "status"
+        ],
+        "title": "ConversationToolTraceSummaryRead",
+        "type": "object"
+      },
+      "ConversationTurnCreate": {
+        "additionalProperties": false,
+        "description": "The canonical durable-conversation turn request (TODO.md section 7).\nThe client names only `conversation_id`, the new user message, and an\noptional current ContextSelection. The server resolves the conversation and\nloads its own bounded persisted history \u2014 the browser may never supply\narbitrary historical assistant messages.",
+        "properties": {
+          "message": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ContextSelectionCreate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ConversationTurnCreate",
+        "type": "object"
+      },
+      "ConversationTurnRead": {
+        "description": "Result of running one turn through the canonical AgentTurnRunner and\npersisting the bounded transcript. `turn` is the live execution result for\nthis turn; `user_message`/`assistant_message` are the durable rows that\nsurvive reload (with the assistant row carrying an inert tool-trace\nsummary, never raw ToolResult payloads).",
+        "properties": {
+          "assistant_message": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConversationMessageRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "conversation_id": {
+            "format": "uuid",
+            "title": "Conversation Id",
+            "type": "string"
+          },
+          "turn": {
+            "$ref": "#/components/schemas/AgentTurnRead"
+          },
+          "user_message": {
+            "$ref": "#/components/schemas/ConversationMessageRead"
+          }
+        },
+        "required": [
+          "conversation_id",
+          "turn",
+          "user_message"
+        ],
+        "title": "ConversationTurnRead",
         "type": "object"
       },
       "CredentialBindingRead": {
@@ -4344,6 +4642,413 @@
         "summary": "Patch Project"
       }
     },
+    "/api/projects/{project_id}/agent/conversations": {
+      "get": {
+        "operationId": "list_project_conversations_api_projects__project_id__agent_conversations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ConversationRead"
+                  },
+                  "title": "Response List Project Conversations Api Projects  Project Id  Agent Conversations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Project Conversations"
+      },
+      "post": {
+        "description": "Create an Actor x Project scoped persistent conversation (durable working\nmemory, NOT Project truth). No sharing semantics: only the creating Actor\ncan read it, and only while the Project stays active and readable.",
+        "operationId": "create_project_conversation_api_projects__project_id__agent_conversations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ConversationCreate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project Conversation"
+      }
+    },
+    "/api/projects/{project_id}/agent/conversations/{conversation_id}": {
+      "get": {
+        "description": "Read the conversation and one bounded page of its persisted messages.\nPagination is a UI concern, separate from the server's model-context trim.",
+        "operationId": "get_project_conversation_api_projects__project_id__agent_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDetailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Conversation"
+      },
+      "patch": {
+        "description": "Rename and/or archive a conversation. Namespace-scoped, non-destructive.",
+        "operationId": "patch_project_conversation_api_projects__project_id__agent_conversations__conversation_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Project Conversation"
+      }
+    },
+    "/api/projects/{project_id}/agent/conversations/{conversation_id}/turns": {
+      "post": {
+        "description": "Run one bounded Project Agent turn and persist it into the conversation.\nThe backend resolves the conversation and loads its own bounded prior\nhistory; the client names only `conversation_id`, the new user message, and\nan optional current ContextSelection. Authority is still rebuilt fresh every\nturn from the one canonical ToolCatalog and current Project state.",
+        "operationId": "create_agent_conversation_turn_api_projects__project_id__agent_conversations__conversation_id__turns_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationTurnCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationTurnRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Agent Conversation Turn"
+      }
+    },
     "/api/projects/{project_id}/agent/tools": {
       "get": {
         "operationId": "list_agent_tools_api_projects__project_id__agent_tools_get",
@@ -4398,73 +5103,6 @@
           }
         },
         "summary": "List Agent Tools"
-      }
-    },
-    "/api/projects/{project_id}/agent/turns": {
-      "post": {
-        "description": "Run one bounded Project Agent turn. The Agent is a consumer, never an\nowner: context is rebuilt from Project truth, tool calls are validated\nagainst the canonical ToolCatalog and executed only through LocalToolRuntime,\nexplicit actions become PendingActions, and the only Decision shape\nproducible is a DRAFT. No raw provider/model response object is exposed.",
-        "operationId": "create_agent_turn_api_projects__project_id__agent_turns_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "project_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Project Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-Actor-Id",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Actor-Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentTurnCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentTurnRead"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Agent Turn"
       }
     },
     "/api/projects/{project_id}/artifacts": {

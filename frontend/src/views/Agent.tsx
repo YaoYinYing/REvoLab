@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, GitCommitHorizontal, Send } from 'lucide-react'
+import { Bot, GitCommitHorizontal, MessageSquarePlus, Send } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
 import { useObjects, useResources } from '../api/hooks'
-import type { AgentChatMessageCreate, AgentTurnRead } from '../api/types'
+import type {
+  AgentTurnRead,
+  ConversationMessageRead,
+  ConversationRead,
+} from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
 import {
@@ -14,11 +18,6 @@ import {
   RESOURCE_KIND_ARTIFACT,
 } from '../contracts/enums'
 
-interface Message {
-  role: 'user' | 'assistant'
-  content: string
-}
-
 function traceTone(status: string): 'neutral' | 'good' | 'warn' {
   if (status === AGENT_TOOL_CALL_STATUS_COMPLETED) return 'good'
   if (status === AGENT_TOOL_CALL_STATUS_PENDING) return 'warn'
@@ -26,46 +25,130 @@ function traceTone(status: string): 'neutral' | 'good' | 'warn' {
   return 'neutral'
 }
 
+const MESSAGE_PAGE_LIMIT = 200
+
 export function AgentView({ actorId, projectId }: { actorId: string; projectId: string }) {
   const { data: objects } = useObjects(actorId, projectId)
   const { data: artifacts } = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
   const [selectedSeriesId, setSelectedSeriesId] = useState('')
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
   const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
+  const [conversations, setConversations] = useState<ConversationRead[]>([])
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
+  const [messages, setMessages] = useState<ConversationMessageRead[]>([])
+  const [totalMessages, setTotalMessages] = useState(0)
   const [turn, setTurn] = useState<AgentTurnRead | null>(null)
+
   // Synchronous view scope: updated on every render so an in-flight turn from a
   // previous Actor x Project can be discarded even before the reset effect runs.
   const scopeRef = useRef(`${actorId}:${projectId}`)
   scopeRef.current = `${actorId}:${projectId}`
 
-  // Conversation is session-local AND project-scoped: switching project/actor
-  // must not leak one project's conversation into another project's turn.
   useEffect(() => {
+    let cancelled = false
+    if (!actorId || !projectId) return
+    // Conversation state is Actor x Project scoped: switching either boundary
+    // must not leak one project's conversation into another.
+    setLoading(true)
     setMessages([])
+    setTotalMessages(0)
     setTurn(null)
+    setActiveConversationId(null)
     setActionError(null)
     setInput('')
     setSelectedSeriesId('')
     setSelectedArtifactId('')
-  }, [projectId, actorId])
+    projectApi(actorId)
+      .listConversations(projectId)
+      .then((res) => {
+        if (cancelled) return
+        const list = res.data ?? []
+        setConversations(list)
+        const first = list[0]?.id ?? null
+        setActiveConversationId((current) => current ?? first)
+        if (first) {
+          return projectApi(actorId)
+            .getConversation(projectId, first, { limit: MESSAGE_PAGE_LIMIT })
+            .then((detail) => {
+              if (cancelled) return
+              if (detail.data) {
+                setMessages(detail.data.messages ?? [])
+                setTotalMessages(detail.data.total_messages ?? 0)
+              }
+            })
+        }
+        return undefined
+      })
+      .catch(() => {
+        if (!cancelled) setActionError('Could not load project conversations.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [actorId, projectId])
+
+  async function openConversation(conversationId: string) {
+    if (!actorId || !projectId) return
+    setActiveConversationId(conversationId)
+    setActionError(null)
+    const detail = await projectApi(actorId).getConversation(projectId, conversationId, {
+      limit: MESSAGE_PAGE_LIMIT,
+    })
+    if (detail.error || !detail.data) {
+      setActionError('Could not load the selected conversation.')
+      return
+    }
+    if (scopeRef.current !== `${actorId}:${projectId}`) return
+    setMessages(detail.data.messages ?? [])
+    setTotalMessages(detail.data.total_messages ?? 0)
+    setTurn(null)
+  }
+
+  async function newConversation() {
+    if (!actorId || !projectId || busy || loading) return
+    setActionError(null)
+    const created = await projectApi(actorId).createConversation(projectId)
+    if (created.error || !created.data) {
+      setActionError('Could not create a conversation.')
+      return
+    }
+    setConversations((current) => [created.data!, ...current])
+    setActiveConversationId(created.data!.id)
+    setMessages([])
+    setTotalMessages(0)
+    setTurn(null)
+    setInput('')
+  }
 
   async function send(event: React.FormEvent) {
     event.preventDefault()
-    if (!input.trim() || busy) return
+    if (!input.trim() || busy || !actorId || !projectId) return
     const userMessage = input.trim()
     setActionError(null)
     setBusy(true)
     setInput('')
     const requestScope = scopeRef.current
 
-    const history: AgentChatMessageCreate[] = messages.slice(-20).map((message) => ({
-      role: message.role,
-      content: message.content,
-    }))
-    const res = await projectApi(actorId).createAgentTurn(projectId, {
+    let conversationId = activeConversationId
+    if (!conversationId) {
+      const created = await projectApi(actorId).createConversation(projectId)
+      if (created.error || !created.data) {
+        setBusy(false)
+        setActionError('Could not create a conversation.')
+        return
+      }
+      conversationId = created.data.id
+      setConversations((current) => [created.data!, ...current])
+      setActiveConversationId(conversationId)
+    }
+
+    const res = await projectApi(actorId).createConversationTurn(projectId, conversationId, {
       message: userMessage,
       selection: {
         ...(selectedSeriesId ? { series_ids: [selectedSeriesId] } : {}),
@@ -83,7 +166,6 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
         max_decisions: 100,
         max_references: 100,
       },
-      history,
     })
     setBusy(false)
     if (scopeRef.current !== requestScope) return
@@ -91,12 +173,18 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
       setActionError('The Agent turn failed. Check the model runtime and project context.')
       return
     }
-    setTurn(res.data)
-    setMessages((current) => [
-      ...current,
-      { role: 'user', content: userMessage },
-      ...(res.data?.final_response ? [{ role: 'assistant' as const, content: res.data.final_response }] : []),
-    ])
+    const persisted = res.data
+    setTurn(persisted.turn)
+    const existing = new Set(messages.map((message) => message.id))
+    const appended: ConversationMessageRead[] = []
+    if (persisted.user_message && !existing.has(persisted.user_message.id)) {
+      appended.push(persisted.user_message)
+    }
+    if (persisted.assistant_message && !existing.has(persisted.assistant_message.id)) {
+      appended.push(persisted.assistant_message)
+    }
+    setMessages([...messages, ...appended])
+    setTotalMessages((current) => current + appended.length)
   }
 
   const pendingActions = turn?.pending_actions ?? []
@@ -107,9 +195,9 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
       <div className="view-header">
         <h1>Agent</h1>
         <p>
-          The Agent reads a freshly assembled bounded Project context, reasons, and can call canonical
-          Project Tools. Conversation here is ephemeral working memory — never durable project truth. A
-          Decision created by the Agent is a <Badge tone="warn">draft</Badge> until you commit it.
+          The Agent reads freshly assembled bounded Project context and acts only through canonical
+          Project Tools. A conversation here is durable working memory — never durable project truth.
+          A Decision created by the Agent is a <Badge tone="warn">draft</Badge> until you commit it.
         </p>
       </div>
 
@@ -147,15 +235,56 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
         </div>
       </Section>
 
-      <Section title="Conversation (session-local, not persisted)">
+      {loading && conversations.length === 0 && messages.length === 0 ? (
+        <Loading label="Loading conversations…" />
+      ) : (
+        <Section title="Conversations (persisted working memory)">
+          <div className="list-row">
+            <Button type="button" onClick={newConversation} disabled={busy || loading}>
+              <MessageSquarePlus size={15} /> New conversation
+            </Button>
+          </div>
+          {conversations.length === 0 ? <Empty label="No conversations yet. Start one to talk to the Agent." /> : null}
+          {conversations.map((conversation) => (
+            <div
+              className={`list-row conversation-row ${conversation.id === activeConversationId ? 'active' : ''}`}
+              key={conversation.id}
+            >
+              <button type="button" className="conversation-link" onClick={() => openConversation(conversation.id)}>
+                <strong>{conversation.title}</strong>
+                <small>{conversation.updated_at.slice(0, 16).replace('T', ' ')}</small>
+              </button>
+            </div>
+          ))}
+        </Section>
+      )}
+
+      <Section title="Conversation">
         {messages.length === 0 ? <Empty label="Ask the Agent to analyze the selected context." /> : null}
-        {messages.map((message, index) => (
-          <div className={`list-row ${message.role === 'assistant' ? 'assistant-row' : ''}`} key={index}>
+        {totalMessages - messages.length > 0 ? (
+          <p className="muted-note">
+            Showing the latest {messages.length} of {totalMessages} messages.
+          </p>
+        ) : null}
+        {messages.map((message) => (
+          <div
+            className={`list-row ${message.role === 'assistant' ? 'assistant-row' : ''}`}
+            key={message.id}
+          >
             <div className="list-row-head">
               {message.role === 'assistant' ? <Bot size={15} /> : null}
               <strong>{message.role === 'assistant' ? 'Agent' : 'You'}</strong>
+              {message.role === 'assistant' && message.termination_reason && message.termination_reason !== AGENT_TERMINATION_REASON_FINAL_RESPONSE ? (
+                <Badge tone="warn">{message.termination_reason}</Badge>
+              ) : null}
             </div>
             <p className="pre-line">{message.content}</p>
+            {(message.tool_trace ?? []).length > 0 ? (
+              <small className="muted-note">
+                Tools:{' '}
+                {(message.tool_trace ?? []).map((entry) => entry.tool_id).join(', ')}
+              </small>
+            ) : null}
           </div>
         ))}
 
@@ -179,7 +308,8 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
       {turn ? (
         <Section title="Last turn">
           <p>
-            Termination: <Badge tone={turn.termination_reason === AGENT_TERMINATION_REASON_FINAL_RESPONSE ? 'good' : 'warn'}>
+            Termination:{' '}
+            <Badge tone={turn.termination_reason === AGENT_TERMINATION_REASON_FINAL_RESPONSE ? 'good' : 'warn'}>
               {turn.termination_reason}
             </Badge>
           </p>

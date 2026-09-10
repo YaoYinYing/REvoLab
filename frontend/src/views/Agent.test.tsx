@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { projectApi } from '../api/backend'
 import { useObjects, useResources } from '../api/hooks'
-import type { AgentTurnRead } from '../api/types'
+import type { AgentTurnRead, ConversationRead, ConversationTurnRead } from '../api/types'
 import { AgentView } from './Agent'
 
 vi.mock('../api/hooks', () => ({
@@ -74,26 +74,74 @@ const turn: AgentTurnRead = {
   },
 }
 
+const conversation: ConversationRead = {
+  id: '22222222-2222-4222-8222-222222222222',
+  project_id: 'project-1',
+  actor_id: 'actor-1',
+  title: 'New conversation',
+  created_at: '2026-09-10T00:00:00Z',
+  updated_at: '2026-09-10T00:00:00Z',
+  archived_at: null,
+}
+
+const turnRead: ConversationTurnRead = {
+  conversation_id: conversation.id,
+  turn,
+  user_message: {
+    id: '44444444-4444-4444-8444-444444444444',
+    conversation_id: conversation.id,
+    seq: 1,
+    role: 'user',
+    content: 'Describe this table',
+    termination_reason: null,
+    tool_trace: [],
+    created_at: '2026-09-10T00:00:01Z',
+  },
+  assistant_message: {
+    id: '55555555-5555-4555-8555-555555555555',
+    conversation_id: conversation.id,
+    seq: 2,
+    role: 'assistant',
+    content: 'The table is described; a draft decision was recorded.',
+    termination_reason: 'final_response',
+    tool_trace: [
+      { tool_id: 'table.describe', status: 'completed', error: null, pending_tool_id: null, pending_summary: null, pending_reason: null },
+      { tool_id: 'decision.commit', status: 'pending', error: null, pending_tool_id: 'decision.commit', pending_summary: 'The model proposed decision.commit; it was NOT executed.', pending_reason: 'explicit actions require an authorized human action' },
+    ],
+    created_at: '2026-09-10T00:00:02Z',
+  },
+}
+
+const defaultApi = () => ({
+  listConversations: vi.fn().mockResolvedValue({ data: [], error: undefined, response: new Response() }),
+  getConversation: vi.fn().mockResolvedValue({
+    data: { ...conversation, messages: [], total_messages: 0 },
+    error: undefined,
+    response: new Response(),
+  }),
+  createConversation: vi.fn().mockResolvedValue({ data: conversation, error: undefined, response: new Response() }),
+  createConversationTurn: vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() }),
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockedUseObjects.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
   mockedUseResources.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
-  mockedProjectApi.mockReturnValue({
-    createAgentTurn: vi.fn().mockResolvedValue({ data: turn, error: undefined, response: new Response() }),
-  } as never)
+  mockedProjectApi.mockReturnValue(defaultApi() as never)
 })
 
-describe('Agent view (Phase 8)', () => {
-  it('makes the ephemeral-vs-project-truth boundary visible', () => {
+describe('Agent view (Phase 9)', () => {
+  it('makes the working-memory-vs-project-truth boundary visible', async () => {
     render(<AgentView actorId="actor-1" projectId="project-1" />)
-    expect(screen.getByText(/Conversation \(session-local, not persisted\)/)).toBeInTheDocument()
+    expect(await screen.findByText(/persisted working memory/)).toBeInTheDocument()
     expect(screen.getAllByText(/Agent output ≠ committed Project Knowledge/).length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText(/draft/i).length).toBeGreaterThanOrEqual(1)
   })
 
-  it('renders the chat entry surface', () => {
+  it('renders the chat entry surface and conversation list', async () => {
     render(<AgentView actorId="actor-1" projectId="project-1" />)
-    expect(screen.getByPlaceholderText(/Describe this table and draft a conclusion/)).toBeInTheDocument()
+    expect(await screen.findByPlaceholderText(/Describe this table and draft a conclusion/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /New conversation/ })).toBeInTheDocument()
     expect(screen.getByText('Send')).toBeInTheDocument()
   })
 
@@ -101,7 +149,7 @@ describe('Agent view (Phase 8)', () => {
     const user = userEvent.setup()
     render(<AgentView actorId="actor-1" projectId="project-1" />)
     await user.type(
-      screen.getByPlaceholderText(/Describe this table and draft a conclusion/),
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
       'Describe this table',
     )
     await user.click(screen.getByRole('button', { name: 'Send' }))
@@ -109,61 +157,80 @@ describe('Agent view (Phase 8)', () => {
     expect(await screen.findByText('table.describe')).toBeInTheDocument()
     expect(screen.getAllByText('decision.commit').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText(/The model proposed decision.commit; it was NOT executed\./)).toBeInTheDocument()
-    // The response is a conversational assistant message, never raw truth.
     expect(screen.getAllByText(/The table is described/).length).toBeGreaterThanOrEqual(1)
   })
 
   it('shows a failure state when the turn errors', async () => {
     mockedProjectApi.mockReturnValue({
-      createAgentTurn: vi.fn().mockResolvedValue({ data: undefined, error: new Error('boom'), response: new Response() }),
+      ...defaultApi(),
+      createConversationTurn: vi.fn().mockResolvedValue({ data: undefined, error: new Error('boom'), response: new Response() }),
     } as never)
     const user = userEvent.setup()
     render(<AgentView actorId="actor-1" projectId="project-1" />)
     await user.type(
-      screen.getByPlaceholderText(/Describe this table and draft a conclusion/),
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
       'Describe this table',
     )
     await user.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByText(/The Agent turn failed/)).toBeInTheDocument()
   })
 
-  it('clears session-local conversation when the project changes', async () => {
+  it('restores a persisted conversation from the server on load', async () => {
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: turnRead.user_message ? [turnRead.user_message, turnRead.assistant_message!] : [], total_messages: 2 },
+        error: undefined,
+        response: new Response(),
+      }),
+    } as never)
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    expect(await screen.findByText('Describe this table')).toBeInTheDocument()
+    expect(screen.getAllByText(/The table is described/).length).toBeGreaterThanOrEqual(1)
+    // Durable transcript keeps an inert tool summary, not a lost turn.
+    expect(screen.getByText(/Tools:/)).toBeInTheDocument()
+  })
+
+  it('clears conversation content when the project changes', async () => {
     const user = userEvent.setup()
     const { rerender } = render(<AgentView actorId="actor-1" projectId="project-1" />)
     await user.type(
-      screen.getByPlaceholderText(/Describe this table and draft a conclusion/),
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
       'Describe this table',
     )
     await user.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByText(/The table is described/)).toBeInTheDocument()
 
+    mockedProjectApi.mockReturnValue(defaultApi() as never)
     rerender(<AgentView actorId="actor-1" projectId="project-2" />)
+    expect(await screen.findByText(/persisted working memory/)).toBeInTheDocument()
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
   })
 
   it('never renders a project A response after switching to project B', async () => {
-    let resolveTurn!: (value: { data: AgentTurnRead; error: undefined; response: Response }) => void
-    const pending = new Promise<{ data: AgentTurnRead; error: undefined; response: Response }>(
+    let resolveTurn!: (value: { data: ConversationTurnRead; error: undefined; response: Response }) => void
+    const pending = new Promise<{ data: ConversationTurnRead; error: undefined; response: Response }>(
       (resolve) => {
         resolveTurn = resolve
       },
     )
     mockedProjectApi.mockReturnValue({
-      createAgentTurn: vi.fn().mockReturnValue(pending),
+      ...defaultApi(),
+      createConversationTurn: vi.fn().mockReturnValue(pending),
     } as never)
 
     const user = userEvent.setup()
     const { rerender } = render(<AgentView actorId="actor-1" projectId="project-a" />)
     await user.type(
-      screen.getByPlaceholderText(/Describe this table and draft a conclusion/),
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
       'Describe this table',
     )
     await user.click(screen.getByRole('button', { name: 'Send' }))
 
-    // Switch project while the turn is still in flight; then resolve the old
-    // (project A) response. Its content must be discarded, not shown in B.
+    mockedProjectApi.mockReturnValue(defaultApi() as never)
     rerender(<AgentView actorId="actor-1" projectId="project-b" />)
-    resolveTurn({ data: turn, error: undefined, response: new Response() })
+    resolveTurn({ data: turnRead, error: undefined, response: new Response() })
     await Promise.resolve()
 
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()

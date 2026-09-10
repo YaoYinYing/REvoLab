@@ -20,7 +20,7 @@ Agent-tool schema, a chat/vector store, or any developer-agent authority model
 ## Execution path
 
 ```text
-POST /api/projects/{project_id}/agent/turns
+POST /api/projects/{project_id}/agent/conversations/{conversation_id}/turns
     ↓
 ContextBuilder                 (fresh bounded ProjectContext, rebuilt every turn)
     ↓
@@ -44,10 +44,13 @@ bounded ToolResult back to the model
 final conversational response
 ```
 
-Every turn is stateless across turns: context and catalog are rebuilt from
-canonical Project truth; conversation history is strictly bounded transient
-working memory (`user`/`assistant` only, finite count and bytes, never persisted,
-never client-supplied system instructions).
+Every turn is stateless with respect to truth: context and catalog are rebuilt
+from canonical Project truth on every call. Conversation history is
+server-owned and strictly bounded (`user`/`assistant` only, finite count and
+bytes); Phase 9 persists exactly that history as durable working memory
+(`docs/architecture/PROJECT_CONVERSATIONS.md`), never as Project truth, system
+authority, a stale ProjectContext snapshot, or client-supplied system
+instructions.
 
 ## Model boundary
 
@@ -165,23 +168,31 @@ visibility, or cause arbitrary filesystem/HTTP/shell execution (TODO.md §11).
 
 ## API / frontend
 
-`POST /api/projects/{project_id}/agent/turns` is the one typed Agent-turn surface:
+`POST /api/projects/{project_id}/agent/conversations/{conversation_id}/turns`
+is the one typed Agent-turn execution surface; persistence orchestration
+(`revolab/agent/conversations.py`) wraps `AgentTurnRunner` and resolves the
+server-owned history. The transient `/agent/turns` path is superseded and
+removed. The full conversation surface (create / list / read / patch / turn) is
+owned by `docs/architecture/PROJECT_CONVERSATIONS.md`:
 
 ```text
-request    AgentTurnCreate { message, selection?, bounded history? }
-response   AgentTurnRead    { final_response, tool_trace, pending_actions,
-                             termination_reason, budget }
+request    ConversationTurnCreate { message, selection? }
+response   ConversationTurnRead    { turn: AgentTurnRead, user_message,
+                                    assistant_message? }
 ```
 
-The response never exposes the raw provider/model response object, hidden prompt
-text, token/API credentials, or any secret. The frontend Agent workspace shows the
-ephemeral conversation, the tools used during the last turn, pending explicit
-actions, and the Decision DRAFT vs COMMITTED truth boundary.
+`AgentTurnRead` (final response, tool trace, pending actions, termination
+reason, budget) never exposes the raw provider/model response object, hidden
+prompt text, token/API credentials, or any secret. The frontend Agent workspace
+shows the persisted conversation list/transcript, the tools used during the
+last turn, pending explicit actions, and the Decision DRAFT vs COMMITTED truth
+boundary.
 
 ## Deferrals (explicit)
 
-- Persistent chat/conversation database, notebooks, RAG/vector memory, semantic
-  memory, workflow engines, background jobs, recursive Agents, Agent subagents.
+- Notebooks/structured working notes, RAG/vector/semantic memory, workflow
+  engines, background jobs, recursive Agents, Agent subagents, conversation
+  sharing, conversation search, generic approval workflows.
 - Authentication/OIDC (the endpoint uses the existing `X-Actor-Id` seam).
 - Live-model acceptance in CI (CI uses the deterministic fake; a live smoke test
   would be opt-in and is not part of normal gates).

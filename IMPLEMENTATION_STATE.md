@@ -6,10 +6,15 @@ This file records actual, machine-verified repository state — not future plans
 
 ## Status
 
-The accepted architecture (merged into `main`, commit `a58e8f4`) is implemented as
-Phase 1 ("Scientific context core + minimal authority substrate"). The earlier
-backend/frontend prototype has been replaced; obsolete prototype paths were
-removed, not shimmed.
+The accepted architecture is implemented through **Phase 9** (persistent Project
+conversations) on top of Phases 1–8 (scientific context core → workspace slice →
+provider identity → REvoCompute → collaboration → agent context → project tool
+harness → bounded Project Agent runtime). Phase 9 adds durable, Actor × Project
+scoped conversation working memory with server-owned history; it does NOT add
+RAG, Agent memory, a second scientific data model, or any new authority path.
+The governing invariant is unchanged:
+
+> **Persist working memory, never stale truth or authority.**
 
 ## Implemented (Phase 1)
 
@@ -1216,6 +1221,79 @@ Final machine evidence on head `c2839b6`: backend **311 passed / 6 skipped**,
 PostgreSQL + Alembic drift + OpenAPI drift green in CI, frontend typecheck +
 **19 tests** + build, Playwright **4 specs**, `check:contracts` clean. CI green on
 every job.
+
+## Implemented (Phase 9)
+
+- **Conversation model** (`revolab/models.py`): `ProjectConversation` (opaque
+  UUID, `project_id`, `actor_id`, `title`, `created_at`/`updated_at`,
+  `archived_at`) and `ConversationMessage`
+  (`conversation_id`, `seq`, `role` user|assistant, `content`,
+  `termination_reason`, bounded inert `tool_trace_summary`, `created_at`).
+  Neither table is a `GlobalResourceRegistry` entry or a provenance node.
+- **Enum** (`ConversationRole` in `revolab/enums.py`): the only two durable
+  transcript roles; wire-generated, never hand-copied into the frontend.
+- **Persistence orchestration** (`revolab/agent/conversations.py`):
+  create/list/get/patch/run-turn wrap `AgentTurnRunner` instead of forking it.
+  `run_conversation_turn` loads server-owned bounded history, runs the real loop,
+  then persists the bounded user/assistant transcript (assistant carries
+  termination reason + inert tool-trace summary — never raw `ToolResult` or
+  `PendingAction` arguments). Access every operation verifies Actor ownership +
+  current readable membership + active Project; a guessed UUID is a 404.
+- **Canonical API** (`revolab/api.py`):
+  `POST/GET` `/project/{id}/agent/conversations`,
+  `GET/PATCH` `/project/{id}/agent/conversations/{conversation_id}`,
+  `POST` `.../conversations/{conversation_id}/turns`. The transient
+  `POST /agent/turns` surface (and `AgentTurnCreate`/`AgentChatMessageCreate`)
+  is removed — one Agent-turn execution contract. `ConversationTurnCreate`
+  rejects unknown fields (`extra="forbid"`), so the client cannot inject
+  arbitrary historical assistant messages.
+- **Bounded limits** (`revolab/agent/conversations.py`): title 200, durable
+  message 8000, message page default 100 / max 200, inert trace summary capped
+  at 64 entries with 500-char bounded fields; model-context trimming stays the
+  Phase-8 `max_history_messages`/`max_history_chars`.
+- **Frontend** (`views/Agent.tsx`): persistent conversation list + new
+  conversation + reload-restored transcript + send turn + live tool trace +
+  pending actions + Decision DRAFT/COMMITTED boundary. Context selection is sent
+  per turn and never persisted; the transcript restores from the server after
+  reload.
+- **Migration**: `6c88c6688930_phase9_persistent_project_conversations.py`
+  (project_conversations + conversation_messages; JSONB on PostgreSQL, CHECK
+  enum columns on both backends).
+- **Docs**: `docs/architecture/PROJECT_CONVERSATIONS.md` (normative owner);
+  `PROJECT_AGENT_RUNTIME.md` / `AGENT_CONTEXT.md` / `IMPLEMENTATION_ROADMAP.md`
+  (Phase 9) reconciled.
+
+## Verified evidence (Phase 9)
+
+- Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
+  `pytest` passes **326 passed, 7 skipped** (SQLite fast tests; the 7 skips are
+  the opt-in PostgreSQL acceptance file). New `test_conversations.py` regressions
+  cover: persist+reload, server-owned second-turn history, structural rejection
+  of client-supplied history, Actor isolation, cross-Project isolation, immediate
+  membership revocation, Project tombstone, lifecycle create/rename/archive,
+  message pagination, persisted hostile user/assistant text cannot widen tool
+  authority or become system authority, `never_agent` absence, no secret-material
+  persistence, context rebuilt after Project truth changes, and large-history
+  trimming without deleting UI history.
+- PostgreSQL (migrated schema): `alembic upgrade head` and `alembic check`
+  report **no drift** on PostgreSQL 16; `test_postgres_integration.py` passes
+  **7 passed** (incl. the new Phase-9 conversation persistence/isolation/
+  membership/tombstone acceptance).
+- OpenAPI/contracts: `python -m revolab.export_openapi` is byte-identical to
+  `frontend/src/contracts/openapi.json`; `openapi-typescript` +
+  `generate-enums.mjs` regenerated `schema.d.ts` (contract generation
+  idempotent); the contract regression proves `/agent/turns`,
+  `AgentTurnCreate`, and `AgentChatMessageCreate` are gone and
+  `ConversationTurnCreate` owns the turn request.
+- Frontend: `npm run typecheck`, `npm run test` (**20 tests** — the new
+  Phase-9 Agent view: working-memory boundary, conversation list/restore, tool
+  trace + pending action, failure state, project-switch clearing, deferred
+  cross-project response discard), and `npm run build` pass.
+- Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real
+  SQLite + `REVOLAB_E2E_FAKE_MODEL=1` + `REVOLAB_E2E_FAKE_COMPUTE=1`): all
+  **4 specs** pass; `agent.spec.ts` now also reloads after the first turn,
+  verifies the server-owned transcript is restored, and runs a second turn.
+- `git diff --check` clean.
 
 ## Known deferrals (explicit, not silently postponed)
 

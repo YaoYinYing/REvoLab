@@ -86,15 +86,43 @@ export type ToolInvocationCreate =
 export type ToolResultRead =
   paths['/api/projects/{project_id}/tools/invocations']['post']['responses']['201']['content']['application/json']
 
-// Phase-8 Bounded Project Agent Runtime.
-export type AgentTurnCreate =
-  paths['/api/projects/{project_id}/agent/turns']['post']['requestBody']['content']['application/json']
-
-export type AgentTurnRead =
-  paths['/api/projects/{project_id}/agent/turns']['post']['responses']['200']['content']['application/json']
-
-export type AgentChatMessageCreate = NonNullable<AgentTurnCreate['history']>[number]
-export type ToolCallTraceRead = NonNullable<AgentTurnRead['tool_trace']>[number]
-export type PendingActionRead = NonNullable<AgentTurnRead['pending_actions']>[number]
+// Phase-9 persistent Project conversations + the bounded Agent-turn execution
+// result they persist. The rich per-turn result is `AgentTurnRead`; the durable
+// transcript rows are `ConversationMessageRead` (inert tool-trace summaries only).
+export type AgentTurnRead = components['schemas']['AgentTurnRead']
+export type ToolCallTraceRead = components['schemas']['ToolCallTraceRead']
+export type PendingActionRead = components['schemas']['PendingActionRead']
 export type AgentTerminationReason = components['schemas']['AgentTerminationReason']
 export type AgentToolCallStatus = components['schemas']['AgentToolCallStatus']
+
+export type ConversationCreate = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/agent/conversations']['post']['requestBody']
+  >['content']['application/json']
+>
+
+export type ConversationPatch = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/agent/conversations/{conversation_id}']['patch']['requestBody']
+  >['content']['application/json']
+>
+
+export type ConversationRead =
+  paths['/api/projects/{project_id}/agent/conversations']['get']['responses']['200']['content']['application/json'][number]
+
+export type ConversationDetailRead =
+  paths['/api/projects/{project_id}/agent/conversations/{conversation_id}']['get']['responses']['200']['content']['application/json']
+
+export type ConversationMessageRead = NonNullable<ConversationDetailRead['messages']>[number]
+export type ConversationToolTraceSummaryRead = NonNullable<ConversationMessageRead['tool_trace']>[number]
+
+export type ConversationTurnCreate = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/agent/conversations/{conversation_id}/turns']['post']['requestBody']
+  >['content']['application/json']
+>
+
+export type ConversationTurnRead =
+  paths['/api/projects/{project_id}/agent/conversations/{conversation_id}/turns']['post']['responses']['201']['content']['application/json']
+
+export type ConversationRole = components['schemas']['ConversationRole']
