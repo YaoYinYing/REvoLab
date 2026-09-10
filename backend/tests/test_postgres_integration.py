@@ -383,10 +383,12 @@ def test_phase6_agent_vertical_slice_on_postgres(pg_session: Session, tmp_path) 
     )
     assert result.termination_reason.value == "final_response"
     assert [entry.tool_id for entry in result.tool_trace] == ["decision.record_draft"]
-
-    drafts = pg_session.scalars(select(Decision)).all()
-    assert len(drafts) == 1
-    draft = drafts[0]
+    # Scope to the Decision THIS turn produced (the shared PG database also
+    # holds decisions from earlier slices in this file).
+    traced = result.tool_trace[0].result
+    assert traced is not None and traced.resource_id is not None
+    draft = pg_session.get(Decision, traced.resource_id)
+    assert draft is not None
     assert draft.status == DecisionStatus.DRAFT.value
     assert draft.committed_at is None
 
