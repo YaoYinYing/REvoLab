@@ -54,6 +54,7 @@ def handle_evidence_create(ctx: InvocationContext, parsed: EvidenceCreate) -> Ha
         source_id=parsed.source_id,
         target_kind=parsed.target_kind.value,
         target_id=parsed.target_id,
+        commit=ctx.commit,
     )
     value = EvidenceRead(**queries.evidence_summary(evidence, frozen=False))
     return HandlerOutput(kind=ToolResultKind.EVIDENCE, value=value, resource_id=evidence.id)
@@ -69,6 +70,7 @@ def handle_decision_record_draft(ctx: InvocationContext, parsed: DecisionCreate)
         next_actions=parsed.next_actions,
         cites=[{"evidence_id": c.evidence_id, "cited_as": c.cited_as.value} for c in parsed.cites],
         selects=[{"target_id": s.target_id, "target_kind": s.target_kind.value} for s in parsed.selects],
+        commit=ctx.commit,
     )
     value = DecisionRead(**queries.decision_summary(ctx.session, decision))
     return HandlerOutput(kind=ToolResultKind.DECISION, value=value, resource_id=decision.id)

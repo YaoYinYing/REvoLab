@@ -402,6 +402,7 @@ def create_evidence_row(
     source_id: UUID | None = None,
     target_kind: str = "scientific_object_revision",
     target_id: UUID | None = None,
+    commit: bool = True,
 ) -> Evidence:
     source_kind_value = ResourceKind(source_kind) if source_kind else None
     if source_id is not None:
@@ -461,7 +462,9 @@ def create_evidence_row(
         created_by=actor_id,
     )
     session.add(row)
-    session.commit()
+    session.flush()
+    if commit:
+        session.commit()
     session.refresh(row)
     return row
 

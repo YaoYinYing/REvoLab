@@ -79,15 +79,38 @@ describe('generated API contract boundary', () => {
     expect(enumsTs).toContain('export const CAPABILITY_AVAILABILITIES')
   })
 
-  it('the Agent turn request is a single typed AgentTurnCreate component (no obsolete proposal path)', () => {
-    // Phase-8 supersedes the deterministic proposal endpoint: the Agent turn is
-    // one typed request -- a user message, a ContextSelection, bounded history.
-    expect(spec.components.schemas.AgentProposalCreate).toBeUndefined()
-    expect(spec.paths['/api/projects/{project_id}/agent/proposals']).toBeUndefined()
-    const turnPath = spec.paths['/api/projects/{project_id}/agent/turns'] as {
+  it('conversation turn surface supersedes the transient /agent/turns path', () => {
+    // Phase 9 removes the client-supplied-history surface in favor of one
+    // canonical server-owned conversation path.
+    expect(spec.components.schemas.AgentTurnCreate).toBeUndefined()
+    expect(spec.components.schemas.AgentChatMessageCreate).toBeUndefined()
+    expect(spec.paths['/api/projects/{project_id}/agent/turns']).toBeUndefined()
+
+    const create = spec.paths['/api/projects/{project_id}/agent/conversations'] as {
+      post?: { responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }> }
+    }
+    expect(create.post).toBeDefined()
+
+    const turnPath = spec.paths[
+      '/api/projects/{project_id}/agent/conversations/{conversation_id}/turns'
+    ] as {
       post?: { requestBody?: { content?: Record<string, { schema?: { $ref?: string } }> } }
     }
     const schemaRef = turnPath.post?.requestBody?.content?.['application/json']?.schema?.$ref
-    expect(schemaRef).toBe('#/components/schemas/AgentTurnCreate')
+    expect(schemaRef).toBe('#/components/schemas/ConversationTurnCreate')
+
+    // Message roles and termination reason are generated contract values, not
+    // hand-maintained frontend literals.
+    expect(spec.components.schemas.ConversationRole).toBeDefined()
+    expect(spec.components.schemas.AgentTerminationReason).toBeDefined()
+    expect(schemaDts).toContain('ConversationRole:')
+    expect(schemaDts).toContain('ConversationTurnCreate:')
+
+    // The conversation surface is strict: unknown keys are rejected, so a client
+    // can never smuggle history/authority-shaped fields past the wire contract.
+    for (const name of ['ConversationCreate', 'ConversationPatch', 'ConversationTurnCreate']) {
+      const model = spec.components.schemas[name] as { additionalProperties?: unknown }
+      expect(model.additionalProperties, `${name} should forbid extra fields`).toBe(false)
+    }
   })
 })

@@ -6,10 +6,15 @@ This file records actual, machine-verified repository state — not future plans
 
 ## Status
 
-The accepted architecture (merged into `main`, commit `a58e8f4`) is implemented as
-Phase 1 ("Scientific context core + minimal authority substrate"). The earlier
-backend/frontend prototype has been replaced; obsolete prototype paths were
-removed, not shimmed.
+The accepted architecture is implemented through **Phase 9** (persistent Project
+conversations) on top of Phases 1–8 (scientific context core → workspace slice →
+provider identity → REvoCompute → collaboration → agent context → project tool
+harness → bounded Project Agent runtime). Phase 9 adds durable, Actor × Project
+scoped conversation working memory with server-owned history; it does NOT add
+RAG, Agent memory, a second scientific data model, or any new authority path.
+The governing invariant is unchanged:
+
+> **Persist working memory, never stale truth or authority.**
 
 ## Implemented (Phase 1)
 
@@ -1216,6 +1221,163 @@ Final machine evidence on head `c2839b6`: backend **311 passed / 6 skipped**,
 PostgreSQL + Alembic drift + OpenAPI drift green in CI, frontend typecheck +
 **19 tests** + build, Playwright **4 specs**, `check:contracts` clean. CI green on
 every job.
+
+## Implemented (Phase 9)
+
+- **Conversation model** (`revolab/models.py`): `ProjectConversation` (opaque
+  UUID, `project_id`, `actor_id`, `title`, `created_at`/`updated_at`,
+  `archived_at`) and `ConversationMessage`
+  (`conversation_id`, `seq`, `role` user|assistant, `content`,
+  `termination_reason`, bounded inert `tool_trace_summary`, `created_at`).
+  Neither table is a `GlobalResourceRegistry` entry or a provenance node.
+- **Enum** (`ConversationRole` in `revolab/enums.py`): the only two durable
+  transcript roles; wire-generated, never hand-copied into the frontend.
+- **Persistence orchestration** (`revolab/agent/conversations.py`):
+  create/list/get/patch/run-turn wrap `AgentTurnRunner` instead of forking it.
+  `run_conversation_turn` loads server-owned bounded history, runs the real loop,
+  then persists the bounded user/assistant transcript (assistant carries
+  termination reason + inert tool-trace summary — never raw `ToolResult` or
+  `PendingAction` arguments). Access every operation verifies Actor ownership +
+  current readable membership + active Project; a guessed UUID is a 404.
+- **Canonical API** (`revolab/api.py`):
+  `POST/GET` `/project/{id}/agent/conversations`,
+  `GET/PATCH` `/project/{id}/agent/conversations/{conversation_id}`,
+  `POST` `.../conversations/{conversation_id}/turns`. The transient
+  `POST /agent/turns` surface (and `AgentTurnCreate`/`AgentChatMessageCreate`)
+  is removed — one Agent-turn execution contract. `ConversationTurnCreate`
+  rejects unknown fields (`extra="forbid"`), so the client cannot inject
+  arbitrary historical assistant messages.
+- **Bounded limits** (`revolab/agent/conversations.py`): title 200, durable
+  message 8000, message page default 100 / max 200, inert trace summary capped
+  at 64 entries with 500-char bounded fields; model-context trimming stays the
+  Phase-8 `max_history_messages`/`max_history_chars`.
+- **Frontend** (`views/Agent.tsx`): persistent conversation list + new
+  conversation + reload-restored transcript + send turn + live tool trace +
+  pending actions + Decision DRAFT/COMMITTED boundary. Context selection is sent
+  per turn and never persisted; the transcript restores from the server after
+  reload.
+- **Migration**: `6c88c6688930_phase9_persistent_project_conversations.py`
+  (project_conversations + conversation_messages; JSONB on PostgreSQL, and
+  database CHECK constraints on `role`/`termination_reason` via
+  `create_constraint=True` so the conversation columns are self-validating at
+  the DB boundary, not only in Pydantic/ORM).
+- **Docs**: `docs/architecture/PROJECT_CONVERSATIONS.md` (normative owner);
+  `PROJECT_AGENT_RUNTIME.md` / `AGENT_CONTEXT.md` / `IMPLEMENTATION_ROADMAP.md`
+  (Phase 9) reconciled.
+
+## Verified evidence (Phase 9)
+
+- Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
+  `pytest` passes **332 passed, 9 skipped** (SQLite fast tests; the 9 skips are
+  the opt-in PostgreSQL acceptance file). `test_conversations.py` regressions
+  cover: persist+reload, server-owned second-turn history, structural rejection
+  of client-supplied history, Actor isolation (incl. the OWNER cannot read a
+  member's private conversation), cross-Project isolation, immediate membership
+  revocation, Project tombstone, lifecycle create/rename/archive, message
+  pagination (incl. `latest` most-recent-page semantics), persisted hostile
+  user/assistant text cannot widen tool authority or become system authority,
+  `never_agent` absence, non-vacuous secret-material exclusion (a sentinel that
+  really entered the live `table.describe` result is absent from durable rows),
+  system-prompt/skill-body exclusion, DB CHECK presence on conversation
+  role/termination columns, service-level title/message bound rejection, context
+  rebuilt after Project truth changes, and large-history trimming without
+  deleting UI history.
+- PostgreSQL (migrated schema): `alembic upgrade head` and `alembic check`
+  report **no drift** on PostgreSQL 16; `test_postgres_integration.py` passes
+  **9 passed** (conversation create/turn persistence/second-turn server history/
+  Actor-Project isolation/membership change/Project tombstone, raw-insert role
+  CHECK enforcement, and two-concurrent-turn serialization where the second
+  turn's model provably sees the first turn's persisted messages).
+- OpenAPI/contracts: `python -m revolab.export_openapi` is byte-identical to
+  `frontend/src/contracts/openapi.json`; `openapi-typescript` +
+  `generate-enums.mjs` regenerated `schema.d.ts` (contract generation
+  idempotent); the contract regression proves `/agent/turns`,
+  `AgentTurnCreate`, and `AgentChatMessageCreate` are gone, that
+  `ConversationTurnCreate` owns the turn request, and that the conversation
+  create/patch/turn schemas all reject unknown fields (`additionalProperties:
+  false`).
+- Frontend: `npm run typecheck`, `npm run test` (**23 tests** — the Phase-9
+  Agent view: working-memory boundary, conversation list/restore, tool trace +
+  pending action, failure state, project-switch clearing, deferred
+  cross-project response discard, deferred cross-conversation response discard,
+  send-disabled-while-loading, and deferred initial-restore discard), and
+  `npm run build` pass.
+- Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real
+  SQLite + `REVOLAB_E2E_FAKE_MODEL=1` + `REVOLAB_E2E_FAKE_COMPUTE=1`): all
+  **4 specs** pass; `agent.spec.ts` reloads after the first turn, verifies the
+  server-owned transcript is restored, and runs a second turn.
+- `git diff --check` clean.
+
+## Independent review (Phase 9)
+
+Five fresh read-only reviewers audited the PR diff on the five TODO.md lenses
+(A architecture/ownership, B runtime/bounds/race, C security/authority, D
+API/frontend/UX, E tests/PG/migrations/CI). **A and C returned PASS**; **B, D,
+and E returned REQUEST_CHANGES.** No P0s were reported.
+
+Reconciled valid P1s:
+
+- **Concurrent-turn race** (A/B): `run_conversation_turn` now takes the
+  per-conversation row lock BEFORE loading history and running the model, so the
+  load→run→persist section serializes; a PostgreSQL two-thread regression proves
+  the second turn's model saw the first turn's persisted user message.
+- **Frontend cross-conversation response leak** (D): `AgentView` now tracks the
+  active conversation synchronously and discards a turn that resolves after the
+  user opened a different conversation, appending transcript messages
+  functionally; a deferred-response regression covers it.
+- **Frontend "latest" pagination inversion** (D): `GET .../{conversation_id}`
+  gained a `latest` query flag returning the most recent message page; the
+  reload path uses it, with a backend regression.
+- **Vacuous secret-persistence negative** (E): the negative now drives a real
+  `table.describe` whose live ToolResult contains a sentinel column header and
+  asserts the sentinel/`secret_ref`/`api_key`/raw `result` are absent from
+  durable rows.
+- **Enum CHECK claim was false** (B/E): `_enum` learned `create_constraint=True`
+  for the two Phase-9 columns and the migration matches, so conversation
+  role/termination columns now carry real database CHECK constraints
+  (`alembic check` clean on both backends; raw-insert PG regression).
+- **Write-bound vs HTTP-bound limit** (B): title and durable-message length are
+  re-validated inside the persistence functions with typed rejection.
+
+In-scope P2s fixed: server-owned history now loads a bounded SQL suffix instead
+of the whole transcript; `ConversationCreate`/`ConversationPatch` reject unknown
+fields; owner-vs-member privacy and system-prompt/skill-body non-persistence
+regressions added. Out of scope / documented deferral: header-trust authentication
+(real OIDC/login remains deferred).
+
+### Delta review (second round) + commit-threading fix
+
+The first delta round (architecture/runtime, security/authority, tests/contracts/
+frontend) returned **two PASS**; the architecture/runtime reviewer found one P1 —
+the `FOR UPDATE` row lock was released mid-turn whenever a POLICY truth tool
+(`decision.record_draft` / `evidence.create`) committed inside `AgentTurnRunner`,
+so the serialization fix was incomplete on the primary workflow. Confirmed
+empirically against PostgreSQL. Fixed by making the whole conversation turn ONE
+transaction: `InvocationContext.commit` now defaults to `True` for the human
+surface, and the Agent loop sets it `False`, threading `commit=False` through
+`create_evidence` / `create_decision` so `run_conversation_turn` is the sole
+commit point (the row lock is held to the end). The PostgreSQL concurrency
+regression was extended to have the first turn call `decision.record_draft`
+mid-run and block in its second model call, proving the second turn cannot reach
+the model until the first turn commits. All delta P2s (system-prompt/skill-body
+non-vacuousness, owner-side patch/run privacy, PG `termination_reason` CHECK)
+were also addressed.
+
+The second delta round confirmed the commit-threading fix with **PASS** on
+architecture/runtime and security/authority; the tests/contracts/frontend
+reviewer found one residual P1 — the initial-load restore guard unconditionally
+clamped the active-conversation ref while `send` was not gated on `loading`.
+Fixed by letting the ref follow only the programmatic auto-select (never a
+user's already-opened conversation) and disabling Send while the initial list
+loads; a dedicated initial-restore discard regression was added.
+
+The third delta round (fresh reviewers over the guard fix) returned **PASS on
+all three lenses** with no P0/P1. Its only operational note — the shipped
+initial-restore regression was non-differentiating on the pre-fix code — was
+closed by adding a `send`-disabled-while-loading regression that fails before
+the guard and passes after it; the final frontend count is **23 tests**.
+
+
 
 ## Known deferrals (explicit, not silently postponed)
 

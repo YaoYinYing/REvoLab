@@ -263,6 +263,30 @@ collaboration/sharing and the agent.
   runtime, arbitrary Python/shell/filesystem/HTTP/SQL, authentication, RBAC,
   generic approval workflows.
 
+### Phase 9 — Persistent Project Conversations & Server-Owned Working Memory
+
+- **Goal:** make the Phase-8 bounded Agent runtime survive page reloads and
+  later sessions as durable working memory — without turning conversation into
+  Project truth, Agent memory, RAG, or a scientific data model.
+- **Owned domains:** Agent Context (consumer), Presentation (conversation
+  workspace component).
+- **Vertical slice:** Actor × Project scoped `ProjectConversation` +
+  role-tagged `ConversationMessage` persistence; one canonical conversation API
+  (`POST/GET/GET/PATCH` conversations + `POST .../turns`) that supersedes the
+  transient `/agent/turns` path; `AgentTurnRunner` wrapped (not forked) by a
+  persistence orchestration; server-owned bounded history; the browser reload
+  restores the same transcript and a second turn sends with server-supplied
+  history; Decision output remains DRAFT until explicit commit.
+- **Acceptance evidence:** conversation survives reload/session boundaries;
+  history is server-owned; Actor × Project isolation enforced; fresh
+  ProjectContext rebuilt every turn; stored transcript never becomes authority;
+  Decision promotion boundary unchanged; no RAG/memory framework introduced;
+  PostgreSQL/OpenAPI/frontend/browser gates green.
+- **Non-goals:** RAG, embeddings, vector/semantic memory, `AgentMemory`,
+  notebooks, shared conversations, conversation search, background Agents,
+  recursive Agents/subagents, workflow engines, generic approval workflow,
+  remote provider Agent execution, authentication/OIDC, RBAC, public sharing.
+
 ---
 
 ## Final architecture invariants (enter CLAUDE.md)

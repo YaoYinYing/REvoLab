@@ -7,10 +7,10 @@ is duplicated by hand into the frontend or into project skills.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 from revolab.capabilities import LEGAL_COMPUTE_INPUT_KINDS
 from revolab.enums import (
@@ -23,6 +23,7 @@ from revolab.enums import (
     CapabilityKind,
     CitedAs,
     Confidence,
+    ConversationRole,
     DecisionStatus,
     EvidenceKind,
     EvidenceRole,
@@ -908,20 +909,17 @@ class ArtifactInspectRead(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class AgentChatMessageCreate(BaseModel):
-    """One bounded transient-history message. Only `user`/`assistant` are legal;
-    the browser may never supply system instructions or tool-result authority."""
+class ConversationTurnCreate(BaseModel):
+    """The canonical durable-conversation turn request (TODO.md section 7).
+    The client names only `conversation_id`, the new user message, and an
+    optional current ContextSelection. The server resolves the conversation and
+    loads its own bounded persisted history — the browser may never supply
+    arbitrary historical assistant messages."""
 
-    role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=8000)
-
-
-class AgentTurnCreate(BaseModel):
-    """The canonical Project-scoped Agent-turn request (TODO.md section 12)."""
+    model_config = ConfigDict(extra="forbid")
 
     message: str = Field(min_length=1, max_length=8000)
     selection: ContextSelectionCreate | None = None
-    history: list[AgentChatMessageCreate] | None = Field(default=None, max_length=20)
 
 
 class PendingActionRead(BaseModel):
@@ -982,3 +980,88 @@ class AgentTurnRead(BaseModel):
     tool_trace: list[ToolCallTraceRead] = Field(default_factory=list)
     pending_actions: list[PendingActionRead] = Field(default_factory=list)
     budget: AgentTurnBudgetRead = Field(default_factory=AgentTurnBudgetRead)
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Persistent Project Conversations (durable working memory, NOT
+# Project truth, Agent authority, RAG, or a scientific data model).
+# ---------------------------------------------------------------------------
+
+
+class ConversationCreate(BaseModel):
+    """Create an Actor x Project conversation. No sharing semantics: the
+    conversation is private to the creating Actor within one active Project."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class ConversationPatch(BaseModel):
+    """Rename and/or archive a conversation (TODO.md section 9). No destructive
+    lifecycle, no cross-user sharing, no cascade into scientific resources."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    archive: bool | None = None
+
+
+class ConversationToolTraceSummaryRead(BaseModel):
+    """A bounded INERT summary of one tool-call outcome inside a persisted
+    assistant message. Never the raw ToolResult payload, never PendingAction
+    arguments, never a secret or model/provider response body."""
+
+    tool_id: str
+    status: AgentToolCallStatus
+    error: str | None = None
+    pending_tool_id: str | None = None
+    pending_summary: str | None = None
+    pending_reason: str | None = None
+
+
+class ConversationMessageRead(BaseModel):
+    """One persisted transcript entry. `content` is untrusted conversational
+    data (user or assistant) — never system authority, never Project truth."""
+
+    id: UUID
+    conversation_id: UUID
+    seq: int
+    role: ConversationRole
+    content: str
+    termination_reason: AgentTerminationReason | None = None
+    tool_trace: list[ConversationToolTraceSummaryRead] = Field(default_factory=list)
+    created_at: datetime
+
+
+class ConversationRead(BaseModel):
+    """An Actor x Project conversation identity (not a global resource)."""
+
+    id: UUID
+    project_id: UUID
+    actor_id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+
+
+class ConversationDetailRead(ConversationRead):
+    """Conversation + one bounded page of its persisted messages (paginated
+    separately from model-context trimming — TODO.md sections 5/13)."""
+
+    messages: list[ConversationMessageRead] = Field(default_factory=list)
+    total_messages: int = 0
+
+
+class ConversationTurnRead(BaseModel):
+    """Result of running one turn through the canonical AgentTurnRunner and
+    persisting the bounded transcript. `turn` is the live execution result for
+    this turn; `user_message`/`assistant_message` are the durable rows that
+    survive reload (with the assistant row carrying an inert tool-trace
+    summary, never raw ToolResult payloads)."""
+
+    conversation_id: UUID
+    turn: AgentTurnRead
+    user_message: ConversationMessageRead
+    assistant_message: ConversationMessageRead | None = None

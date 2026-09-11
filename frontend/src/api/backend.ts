@@ -16,15 +16,30 @@ type ComputeSubmissionCreate = paths['/api/projects/{project_id}/compute/submiss
 type ContextSelectionCreate = NonNullable<
   paths['/api/projects/{project_id}/context']['post']['requestBody']
 >['content']['application/json']
-type AgentTurnCreate =
-  paths['/api/projects/{project_id}/agent/turns']['post']['requestBody']['content']['application/json']
+type ConversationCreate = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/agent/conversations']['post']['requestBody']
+  >['content']['application/json']
+>
+type ConversationPatch = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/agent/conversations/{conversation_id}']['patch']['requestBody']
+  >['content']['application/json']
+>
+type ConversationTurnCreate = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/agent/conversations/{conversation_id}/turns']['post']['requestBody']
+  >['content']['application/json']
+>
 type ToolInvocationCreate =
   paths['/api/projects/{project_id}/tools/invocations']['post']['requestBody']['content']['application/json']
 
 export type {
-  AgentTurnCreate,
   ComputeSubmissionCreate,
   ContextSelectionCreate,
+  ConversationCreate,
+  ConversationPatch,
+  ConversationTurnCreate,
   DecisionCreate,
   DecisionPatch,
   EvidenceCreate,
@@ -241,10 +256,40 @@ export function projectApi(actorId: string) {
         body,
       }),
 
-    createAgentTurn: (projectId: string, body: AgentTurnCreate) =>
-      api.POST('/api/projects/{project_id}/agent/turns', {
+    listConversations: (projectId: string, query: { include_archived?: boolean } = {}) =>
+      api.GET('/api/projects/{project_id}/agent/conversations', {
+        headers,
+        params: { path: { project_id: projectId }, query },
+      }),
+
+    createConversation: (projectId: string, body?: ConversationCreate) =>
+      api.POST('/api/projects/{project_id}/agent/conversations', {
         headers,
         params: { path: { project_id: projectId } },
+        ...(body !== undefined ? { body } : {}),
+      }),
+
+    getConversation: (
+      projectId: string,
+      conversationId: string,
+      query: { limit?: number; offset?: number; latest?: boolean } = {},
+    ) =>
+      api.GET('/api/projects/{project_id}/agent/conversations/{conversation_id}', {
+        headers,
+        params: { path: { project_id: projectId, conversation_id: conversationId }, query },
+      }),
+
+    patchConversation: (projectId: string, conversationId: string, body: ConversationPatch) =>
+      api.PATCH('/api/projects/{project_id}/agent/conversations/{conversation_id}', {
+        headers,
+        params: { path: { project_id: projectId, conversation_id: conversationId } },
+        body,
+      }),
+
+    createConversationTurn: (projectId: string, conversationId: string, body: ConversationTurnCreate) =>
+      api.POST('/api/projects/{project_id}/agent/conversations/{conversation_id}/turns', {
+        headers,
+        params: { path: { project_id: projectId, conversation_id: conversationId } },
         body,
       }),
 

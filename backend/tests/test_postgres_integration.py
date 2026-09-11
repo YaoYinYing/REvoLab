@@ -14,7 +14,8 @@ from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 
 import pytest
-from sqlalchemy import Engine, create_engine, inspect, select
+from sqlalchemy import Engine, create_engine, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from revolab import services
@@ -521,3 +522,249 @@ def test_phase7_tool_harness_vertical_slice_on_postgres(pg_session: Session, tmp
     )
     assert described.value is not None
     assert described.value["rows"] == 3
+
+
+def _phase9_runner(pg_session: Session, actor, project, tmp_path, model) -> AgentTurnRunner:
+    from revolab.content_store import ContentStore
+    from revolab.tools.registry import build_default_registry
+    from revolab.tools.runtime import LocalToolRuntime
+
+    local_registry = build_default_registry()
+    registry = DriverRegistry()
+    registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
+    return AgentTurnRunner(
+        model,
+        LocalToolRuntime(local_registry),
+        registry,
+        InMemorySecretStore(),
+        ContentStore(tmp_path),
+        local_registry=local_registry,
+    )
+
+
+def test_phase9_conversation_persistence_on_postgres(pg_session: Session, tmp_path) -> None:
+    """TODO.md #14 PostgreSQL acceptance: conversation create, turn persistence,
+    second-turn server-owned history, Actor/Project isolation, membership change,
+    and Project tombstone all work on the migrated schema."""
+    from revolab.agent.conversations import (
+        create_conversation,
+        get_conversation,
+        list_conversations,
+        run_conversation_turn,
+    )
+    from revolab.domain.errors import AuthorizationError, NotFoundError
+    from revolab.enums import ConversationRole, Role
+    from revolab.models import ConversationMessage, ProjectConversation
+    from revolab.testing.fake_model import ScriptedModelBackend
+
+    actor_a = services.create_actor(pg_session)
+    actor_b = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor_a, "PG Conversations")
+    services.add_membership(pg_session, actor_a, project.id, actor_b, Role.MEMBER.value)
+
+    conversation = create_conversation(pg_session, actor_a, project.id, title="PG slice")
+    assert pg_session.get(ProjectConversation, conversation.id) is not None
+
+    first_model = ScriptedModelBackend(steps=[{"finish": "stop", "content": "first response overwrite"}])
+    run_conversation_turn(
+        pg_session,
+        actor_a,
+        project.id,
+        conversation.id,
+        _phase9_runner(pg_session, actor_a, project, tmp_path, first_model),
+        message="first message",
+    )
+
+    # Turn persistence + server-owned second-turn history over PostgreSQL.
+    second_model = ScriptedModelBackend(steps=[{"finish": "stop", "content": "second response"}])
+    result = run_conversation_turn(
+        pg_session,
+        actor_a,
+        project.id,
+        conversation.id,
+        _phase9_runner(pg_session, actor_a, project, tmp_path, second_model),
+        message="second message",
+    )
+    assert result.turn.budget.history_messages == 2
+    assert any(message.content == "first message" for message in second_model.requests[0].messages)
+    assert any(message.content == "first response overwrite" for message in second_model.requests[0].messages)
+
+    detail = get_conversation(pg_session, actor_a, project.id, conversation.id)
+    assert [message.role for message in detail.messages] == [
+        ConversationRole.USER,
+        ConversationRole.ASSISTANT,
+        ConversationRole.USER,
+        ConversationRole.ASSISTANT,
+    ]
+    assert detail.total_messages == 4
+    assert pg_session.scalar(
+        select(ConversationMessage.role).where(
+            ConversationMessage.conversation_id == conversation.id,
+            ConversationMessage.seq == 1,
+        )
+    ) == ConversationRole.USER.value
+
+    # Actor/Project isolation: another member cannot read a private conversation.
+    assert list_conversations(pg_session, actor_b, project.id) == []
+    with pytest.raises(NotFoundError):
+        get_conversation(pg_session, actor_b, project.id, conversation.id)
+
+    # Membership revocation takes effect immediately, even for a persisted row.
+    own = create_conversation(pg_session, actor_b, project.id, title="B private")
+    assert get_conversation(pg_session, actor_b, project.id, own.id).id == own.id
+    services.remove_membership(pg_session, actor_a, project.id, actor_b)
+    with pytest.raises(AuthorizationError):
+        get_conversation(pg_session, actor_b, project.id, own.id)
+
+    # Project tombstone blocks all conversation access for the owner too.
+    services.delete_project(pg_session, actor_a, project.id)
+    with pytest.raises(AuthorizationError):
+        get_conversation(pg_session, actor_a, project.id, conversation.id)
+
+
+def test_phase9_role_check_enforced_on_postgres(pg_session: Session) -> None:
+    """The Phase-9 durable-message enums are DB CHECK constrained on PostgreSQL:
+    raw (ORM-bypassed) invalid role/termination_reason values must be rejected
+    by the database itself."""
+    from uuid import uuid4
+
+    from revolab.agent.conversations import create_conversation
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Conv Check")
+    conversation = create_conversation(pg_session, actor, project.id)
+
+    with pytest.raises(IntegrityError):
+        pg_session.execute(
+            text(
+                "INSERT INTO conversation_messages "
+                "(id, conversation_id, seq, role, content) "
+                "VALUES (CAST(:id AS UUID), CAST(:conversation_id AS UUID), :seq, :role, :content)"
+            ),
+            {
+                "id": str(uuid4()),
+                "conversation_id": str(conversation.id),
+                "seq": 1,
+                "role": "bogus",
+                "content": "malformed role",
+            },
+        )
+    pg_session.rollback()
+
+    with pytest.raises(IntegrityError):
+        pg_session.execute(
+            text(
+                "INSERT INTO conversation_messages "
+                "(id, conversation_id, seq, role, content, termination_reason) "
+                "VALUES (CAST(:id AS UUID), CAST(:conversation_id AS UUID), :seq, :role, :content, :reason)"
+            ),
+            {
+                "id": str(uuid4()),
+                "conversation_id": str(conversation.id),
+                "seq": 2,
+                "role": "assistant",
+                "content": "malformed reason",
+                "reason": "bogus_reason",
+            },
+        )
+    pg_session.rollback()
+
+
+def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_path) -> None:
+    """TODO.md #16 / reviewer race-find: two concurrent turns on ONE conversation
+    serialize their load->run->persist section. The first turn executes a POLICY
+    truth tool (decision.record_draft) mid-turn — the exact path that used to
+    commit and release the row lock early — and the second turn's model must not
+    run until the first turn fully commits."""
+    import threading
+    import time
+
+    from sqlalchemy.orm import Session as ORMSession
+
+    from revolab.agent.conversations import create_conversation, run_conversation_turn
+    from revolab.agent.model_backend import ModelResponse, ModelToolCall
+
+    class BlockingTruthModel:
+        def __init__(self, label: str) -> None:
+            self.label = label
+            self.requests = []
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def complete(self, request):
+            self.requests.append(request)
+            if self.label == "A" and len(self.requests) == 1:
+                return ModelResponse(
+                    finish="tool_calls",
+                    tool_calls=(
+                        ModelToolCall(
+                            id="call_draft",
+                            name="decision.record_draft",
+                            arguments_raw='{"title": "Serialized draft", "statement": "draft"}',
+                            arguments={"title": "Serialized draft", "statement": "draft"},
+                        ),
+                    ),
+                )
+            if self.label == "A" and len(self.requests) == 2:
+                self.started.set()
+                self.release.wait(timeout=15)
+            return ModelResponse(finish="stop", content=f"{self.label}-response")
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Conv Race")
+    conversation = create_conversation(pg_session, actor, project.id)
+    engine = pg_session.get_bind()
+
+    model_a = BlockingTruthModel("A")
+    model_b = BlockingTruthModel("B")
+    results: dict[str, object] = {}
+
+    def worker(label: str, model: BlockingTruthModel, message: str) -> None:
+        with ORMSession(bind=engine) as session:
+            results[label] = run_conversation_turn(
+                session,
+                actor,
+                project.id,
+                conversation.id,
+                _phase9_runner(session, actor, project, tmp_path, model),
+                message=message,
+            )
+
+    thread_a = threading.Thread(target=worker, args=("A", model_a, "A-message"))
+    thread_a.start()
+    # A has executed decision.record_draft and is blocking in its second model
+    # call. After the fix its truth-tool writes are uncommitted, so A still holds
+    # the conversation row lock (no mid-turn commit released it).
+    assert model_a.started.wait(timeout=10)
+
+    thread_b = threading.Thread(target=worker, args=("B", model_b, "B-message"))
+    thread_b.start()
+    time.sleep(0.75)
+    # B is still waiting on the conversation row lock; it has not reached the model.
+    assert len(model_b.requests) == 0
+
+    model_a.release.set()
+    thread_a.join(timeout=20)
+    thread_b.join(timeout=20)
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+
+    # The second turn's model saw the first turn's persisted user message, proving
+    # the record_draft-inside-turn path no longer breaks serialization.
+    assert any(message.content == "A-message" for message in model_b.requests[0].messages)
+
+    # The mid-turn truth tool REALLY executed (not silently refused): its trace
+    # is COMPLETED and the Decision draft committed only when the turn committed.
+    from revolab.enums import DecisionStatus
+    from revolab.models import Decision
+
+    turn_a = results["A"]
+    trace_ids = [entry.tool_id for entry in turn_a.turn.tool_trace]
+    assert trace_ids == ["decision.record_draft"]
+    assert turn_a.turn.tool_trace[0].status.value == "completed"
+    with ORMSession(bind=engine) as check:
+        draft = check.scalar(
+            select(Decision).where(Decision.project_id == project.id).order_by(Decision.created_at.desc()).limit(1)
+        )
+        assert draft is not None
+        assert draft.status == DecisionStatus.DRAFT.value

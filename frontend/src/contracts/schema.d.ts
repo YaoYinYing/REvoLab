@@ -116,6 +116,79 @@ export interface paths {
         patch: operations["patch_project_api_projects__project_id__patch"];
         trace?: never;
     };
+    "/api/projects/{project_id}/agent/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Conversations */
+        get: operations["list_project_conversations_api_projects__project_id__agent_conversations_get"];
+        put?: never;
+        /**
+         * Create Project Conversation
+         * @description Create an Actor x Project scoped persistent conversation (durable working
+         *     memory, NOT Project truth). No sharing semantics: only the creating Actor
+         *     can read it, and only while the Project stays active and readable.
+         */
+        post: operations["create_project_conversation_api_projects__project_id__agent_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/agent/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Project Conversation
+         * @description Read the conversation and one bounded page of its persisted messages.
+         *     `latest` returns the most recent page (reload semantics); pagination is a UI
+         *     concern, separate from the server's model-context trim.
+         */
+        get: operations["get_project_conversation_api_projects__project_id__agent_conversations__conversation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Project Conversation
+         * @description Rename and/or archive a conversation. Namespace-scoped, non-destructive.
+         */
+        patch: operations["patch_project_conversation_api_projects__project_id__agent_conversations__conversation_id__patch"];
+        trace?: never;
+    };
+    "/api/projects/{project_id}/agent/conversations/{conversation_id}/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Agent Conversation Turn
+         * @description Run one bounded Project Agent turn and persist it into the conversation.
+         *     The backend resolves the conversation and loads its own bounded prior
+         *     history; the client names only `conversation_id`, the new user message, and
+         *     an optional current ContextSelection. Authority is still rebuilt fresh every
+         *     turn from the one canonical ToolCatalog and current Project state.
+         */
+        post: operations["create_agent_conversation_turn_api_projects__project_id__agent_conversations__conversation_id__turns_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/agent/tools": {
         parameters: {
             query?: never;
@@ -127,30 +200,6 @@ export interface paths {
         get: operations["list_agent_tools_api_projects__project_id__agent_tools_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/projects/{project_id}/agent/turns": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create Agent Turn
-         * @description Run one bounded Project Agent turn. The Agent is a consumer, never an
-         *     owner: context is rebuilt from Project truth, tool calls are validated
-         *     against the canonical ToolCatalog and executed only through LocalToolRuntime,
-         *     explicit actions become PendingActions, and the only Decision shape
-         *     producible is a DRAFT. No raw provider/model response object is exposed.
-         */
-        post: operations["create_agent_turn_api_projects__project_id__agent_turns_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -924,20 +973,6 @@ export interface components {
             actor_id: string;
         };
         /**
-         * AgentChatMessageCreate
-         * @description One bounded transient-history message. Only `user`/`assistant` are legal;
-         *     the browser may never supply system instructions or tool-result authority.
-         */
-        AgentChatMessageCreate: {
-            /** Content */
-            content: string;
-            /**
-             * Role
-             * @enum {string}
-             */
-            role: "user" | "assistant";
-        };
-        /**
          * AgentTerminationReason
          * @description Why one bounded Agent turn ended. A bound hit is a typed, user-visible
          *     terminal result, never a silent continuation.
@@ -1053,17 +1088,6 @@ export interface components {
              * @default 0
              */
             total_turn_duration_seconds: number;
-        };
-        /**
-         * AgentTurnCreate
-         * @description The canonical Project-scoped Agent-turn request (TODO.md section 12).
-         */
-        AgentTurnCreate: {
-            /** History */
-            history?: components["schemas"]["AgentChatMessageCreate"][] | null;
-            /** Message */
-            message: string;
-            selection?: components["schemas"]["ContextSelectionCreate"] | null;
         };
         /**
          * AgentTurnRead
@@ -1413,6 +1437,194 @@ export interface components {
             revision_ids?: string[] | null;
             /** Series Ids */
             series_ids?: string[] | null;
+        };
+        /**
+         * ConversationCreate
+         * @description Create an Actor x Project conversation. No sharing semantics: the
+         *     conversation is private to the creating Actor within one active Project.
+         */
+        ConversationCreate: {
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * ConversationDetailRead
+         * @description Conversation + one bounded page of its persisted messages (paginated
+         *     separately from model-context trimming — TODO.md sections 5/13).
+         */
+        ConversationDetailRead: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /** Archived At */
+            archived_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Messages */
+            messages?: components["schemas"]["ConversationMessageRead"][];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Total Messages
+             * @default 0
+             */
+            total_messages: number;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * ConversationMessageRead
+         * @description One persisted transcript entry. `content` is untrusted conversational
+         *     data (user or assistant) — never system authority, never Project truth.
+         */
+        ConversationMessageRead: {
+            /** Content */
+            content: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            role: components["schemas"]["ConversationRole"];
+            /** Seq */
+            seq: number;
+            termination_reason?: components["schemas"]["AgentTerminationReason"] | null;
+            /** Tool Trace */
+            tool_trace?: components["schemas"]["ConversationToolTraceSummaryRead"][];
+        };
+        /**
+         * ConversationPatch
+         * @description Rename and/or archive a conversation (TODO.md section 9). No destructive
+         *     lifecycle, no cross-user sharing, no cascade into scientific resources.
+         */
+        ConversationPatch: {
+            /** Archive */
+            archive?: boolean | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * ConversationRead
+         * @description An Actor x Project conversation identity (not a global resource).
+         */
+        ConversationRead: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /** Archived At */
+            archived_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * ConversationRole
+         * @description The only two durable roles of a persisted conversation message. A stored
+         *     transcript is conversational working memory: `user` text and `assistant`
+         *     text are BOTH untrusted conversational data, never system authority.
+         *     Tool results are not stored as their own role — they survive only inside a
+         *     bounded inert summary attached to the assistant message that produced them.
+         * @enum {string}
+         */
+        ConversationRole: "user" | "assistant";
+        /**
+         * ConversationToolTraceSummaryRead
+         * @description A bounded INERT summary of one tool-call outcome inside a persisted
+         *     assistant message. Never the raw ToolResult payload, never PendingAction
+         *     arguments, never a secret or model/provider response body.
+         */
+        ConversationToolTraceSummaryRead: {
+            /** Error */
+            error?: string | null;
+            /** Pending Reason */
+            pending_reason?: string | null;
+            /** Pending Summary */
+            pending_summary?: string | null;
+            /** Pending Tool Id */
+            pending_tool_id?: string | null;
+            status: components["schemas"]["AgentToolCallStatus"];
+            /** Tool Id */
+            tool_id: string;
+        };
+        /**
+         * ConversationTurnCreate
+         * @description The canonical durable-conversation turn request (TODO.md section 7).
+         *     The client names only `conversation_id`, the new user message, and an
+         *     optional current ContextSelection. The server resolves the conversation and
+         *     loads its own bounded persisted history — the browser may never supply
+         *     arbitrary historical assistant messages.
+         */
+        ConversationTurnCreate: {
+            /** Message */
+            message: string;
+            selection?: components["schemas"]["ContextSelectionCreate"] | null;
+        };
+        /**
+         * ConversationTurnRead
+         * @description Result of running one turn through the canonical AgentTurnRunner and
+         *     persisting the bounded transcript. `turn` is the live execution result for
+         *     this turn; `user_message`/`assistant_message` are the durable rows that
+         *     survive reload (with the assistant row carrying an inert tool-trace
+         *     summary, never raw ToolResult payloads).
+         */
+        ConversationTurnRead: {
+            assistant_message?: components["schemas"]["ConversationMessageRead"] | null;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            turn: components["schemas"]["AgentTurnRead"];
+            user_message: components["schemas"]["ConversationMessageRead"];
         };
         /**
          * CredentialBindingRead
@@ -2866,6 +3078,194 @@ export interface operations {
             };
         };
     };
+    list_project_conversations_api_projects__project_id__agent_conversations_get: {
+        parameters: {
+            query?: {
+                include_archived?: boolean;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_project_conversation_api_projects__project_id__agent_conversations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreate"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_project_conversation_api_projects__project_id__agent_conversations__conversation_id__get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                latest?: boolean;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationDetailRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_project_conversation_api_projects__project_id__agent_conversations__conversation_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationPatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_agent_conversation_turn_api_projects__project_id__agent_conversations__conversation_id__turns_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConversationTurnCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationTurnRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_agent_tools_api_projects__project_id__agent_tools_get: {
         parameters: {
             query?: never;
@@ -2886,43 +3286,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolCatalogRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_agent_turn_api_projects__project_id__agent_turns_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-Actor-Id"?: string | null;
-            };
-            path: {
-                project_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentTurnCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentTurnRead"];
                 };
             };
             /** @description Validation Error */

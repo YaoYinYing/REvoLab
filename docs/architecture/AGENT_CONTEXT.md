@@ -25,7 +25,7 @@ proposer*, never the owner. Chat is working memory; the DB is durable truth.
 | **ContextSelection** | the declarative query describing what to include (project + selected object subtree + relation/evidence/decision filters + artifact REFERENCE list) | implicit prompt-stuffing; enables an auditable /context fetch contract |
 | **ContextBuilder** | the read-only assembler that executes a ContextSelection against the domain read API and returns a ProjectContext; the only place truth becomes context | unbounded dumps; reference-not-embed; whole-project sends |
 | **AgentSession** | ephemeral conversation container (prompt + ProjectContext + catalogs). Explicitly not persistent, not truth | chat becoming durable truth |
-| **AgentTurnRunner (Phase 8)** | the real bounded loop with an ephemeral transcript that supersedes the deterministic proposal `AgentSession` | unbounded/recursive agent loops |
+| **AgentTurnRunner (Phase 8)** | the real bounded loop with a bounded transcript that supersedes the deterministic proposal `AgentSession` | unbounded/recursive agent loops |
 | **SkillCatalog** | thin mapper: task → which skills load (never a content DB) | raw agent writes; always-on skill encyclopedia |
 | **ToolCatalog (consumed, not owned)** | the Project Tool Harness's canonical catalog, fed to the Agent as its typed tool surface | a second Agent-only tool definition; dual tool truth |
 
@@ -39,6 +39,13 @@ proposer*, never the owner. Chat is working memory; the DB is durable truth.
 > Agent turn loop (`docs/architecture/PROJECT_AGENT_RUNTIME.md`). The Agent reads
 > bounded context, may call canonical tools, and its Decision output is always a
 > DRAFT until the human commits through the existing authorized surface.
+>
+> Phase 9 refinement: the turn loop's bounded transcript becomes **durable
+> working memory** (`docs/architecture/PROJECT_CONVERSATIONS.md`).
+> `ProjectContext` is still freshly assembled every turn from current canonical
+> state; persistence adds bounded conversational continuity, never authority and
+> never a stored context snapshot. "Chat is working memory" stays true — Phase 9
+> makes working memory durable without making it truth.
 
 **Explicitly rejected** (overengineering): no AgentMemory DB wrapper, no RAG/
 semantic-index pipeline, no generic AgentGateway, no always-on skill encyclopedia.
