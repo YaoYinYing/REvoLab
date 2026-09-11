@@ -324,4 +324,30 @@ describe('Agent view (Phase 9)', () => {
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
     expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
   })
+
+  it('disables sending while the initial conversation list is loading', async () => {
+    let resolveList!: (value: { data: ConversationRead[]; error: undefined; response: Response }) => void
+    const pendingList = new Promise<{ data: ConversationRead[]; error: undefined; response: Response }>(
+      (resolve) => {
+        resolveList = resolve
+      },
+    )
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockReturnValue(pendingList),
+    } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.type(
+      screen.getByPlaceholderText(/Describe this table and draft a conclusion/),
+      'hello',
+    )
+    // Sending is refused while the list is still resolving, so a user-chosen
+    // conversation cannot be created during load and then overwritten by the
+    // automatic first-conversation restore.
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
+
+    resolveList({ data: [], error: undefined, response: new Response() })
+  })
 })

@@ -1296,11 +1296,12 @@ every job.
   `ConversationTurnCreate` owns the turn request, and that the conversation
   create/patch/turn schemas all reject unknown fields (`additionalProperties:
   false`).
-- Frontend: `npm run typecheck`, `npm run test` (**22 tests** — the Phase-9
+- Frontend: `npm run typecheck`, `npm run test` (**23 tests** — the Phase-9
   Agent view: working-memory boundary, conversation list/restore, tool trace +
   pending action, failure state, project-switch clearing, deferred
   cross-project response discard, deferred cross-conversation response discard,
-  and deferred initial-restore discard), and `npm run build` pass.
+  send-disabled-while-loading, and deferred initial-restore discard), and
+  `npm run build` pass.
 - Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real
   SQLite + `REVOLAB_E2E_FAKE_MODEL=1` + `REVOLAB_E2E_FAKE_COMPUTE=1`): all
   **4 specs** pass; `agent.spec.ts` reloads after the first turn, verifies the
@@ -1369,6 +1370,12 @@ clamped the active-conversation ref while `send` was not gated on `loading`.
 Fixed by letting the ref follow only the programmatic auto-select (never a
 user's already-opened conversation) and disabling Send while the initial list
 loads; a dedicated initial-restore discard regression was added.
+
+The third delta round (fresh reviewers over the guard fix) returned **PASS on
+all three lenses** with no P0/P1. Its only operational note — the shipped
+initial-restore regression was non-differentiating on the pre-fix code — was
+closed by adding a `send`-disabled-while-loading regression that fails before
+the guard and passes after it; the final frontend count is **23 tests**.
 
 
 

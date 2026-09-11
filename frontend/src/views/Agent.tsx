@@ -61,6 +61,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
     setTotalMessages(0)
     setTurn(null)
     setActiveConversationId(null)
+    activeConversationRef.current = null
     setActionError(null)
     setInput('')
     setSelectedSeriesId('')
