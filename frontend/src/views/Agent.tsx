@@ -41,7 +41,11 @@ export function AgentView({
 }) {
   const { data: objects } = useObjects(actorId, projectId)
   const { data: artifacts } = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
-  const { data: notes, reload: reloadNotes } = useNotes(actorId, projectId)
+  // Include archived notes: archiving is non-destructive and an explicitly
+  // handed-off archived note must not be silently dropped by the selector.
+  const { data: notes, reload: reloadNotes } = useNotes(actorId, projectId, {
+    include_archived: true,
+  })
   const [selectedSeriesId, setSelectedSeriesId] = useState('')
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
   const [selectedNoteId, setSelectedNoteId] = useState(initialNoteIds[0] ?? '')

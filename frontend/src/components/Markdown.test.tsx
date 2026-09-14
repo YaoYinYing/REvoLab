@@ -38,6 +38,16 @@ describe('safe Markdown renderer', () => {
     expect(screen.getByText(/javascript:alert\(1\)/)).toBeInTheDocument()
   })
 
+  it('refuses hrefs containing attribute-injection or control characters', () => {
+    const { container } = render(
+      <Markdown source={'[y](https://a"onmouseover=) [z](HTTP://OK)'} />,
+    )
+    // The quote-bearing href is not a link; the plain http(s) one is.
+    const anchors = container.querySelectorAll('a')
+    expect(anchors).toHaveLength(1)
+    expect(anchors[0]).toHaveAttribute('href', 'HTTP://OK')
+  })
+
   it('renders fenced code blocks without executing their content', () => {
     const { container } = render(<Markdown source={'```\n<script>alert(2)</script>\n```'} />)
     expect(container.querySelector('script')).toBeNull()

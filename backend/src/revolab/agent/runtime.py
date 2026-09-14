@@ -40,7 +40,7 @@ from revolab.agent.model_backend import (
     ModelToolCall,
     ToolSpec,
 )
-from revolab.agent.prompt import build_model_request, serialize_context
+from revolab.agent.prompt import build_model_request, context_payload
 from revolab.agent.skills import load_skill_bodies
 from revolab.content_store import ContentStore
 from revolab.domain.errors import DomainError, ModelUnavailableError
@@ -253,7 +253,9 @@ class AgentTurnRunner:
 
         # Prompt-level context char truncation is separate from the builder's
         # category caps: report it so a bound hit is visible in the turn budget.
-        context_serialized = serialize_context(context)
+        # Measure the EXACT payload the prompt uses (serialized AND
+        # delimiter-neutralized), so escaping growth cannot hide a bound hit.
+        context_serialized = context_payload(context)
         context_truncated = context.budget.truncated or len(context_serialized) > self._bounds.max_context_chars
 
         history_messages = self._bounded_history(history)

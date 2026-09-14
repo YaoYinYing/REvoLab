@@ -484,6 +484,31 @@ describe('Agent view (Phase 9)', () => {
     expect(await screen.findByText(/Saved to Notes/)).toBeInTheDocument()
   })
 
+  it('surfaces the typed error when Save to Project Note fails and does not refresh', async () => {
+    const reloadNotes = vi.fn()
+    mockedUseNotes.mockReturnValue({ data: [note], loading: false, error: null, reload: reloadNotes })
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: [turnRead.user_message], total_messages: 1 },
+        error: undefined,
+        response: new Response(),
+      }),
+      createNote: vi.fn().mockResolvedValue({
+        data: undefined,
+        error: { detail: 'note body is empty or exceeds the maximum length' },
+        response: new Response(),
+      }),
+    } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.click(await screen.findByRole('button', { name: /Save message to project note/ }))
+    expect(await screen.findByText(/note body is empty or exceeds the maximum length/)).toBeInTheDocument()
+    expect(reloadNotes).not.toHaveBeenCalled()
+  })
+
   it('prefills the note selection from the Notebook hand-off', async () => {
     render(<AgentView actorId="actor-1" projectId="project-1" initialNoteIds={[note.id]} />)
     expect(await screen.findByLabelText('Select note for agent context')).toHaveValue(note.id)

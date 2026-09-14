@@ -294,9 +294,9 @@ collaboration/sharing and the agent.
 - **Goal:** add the missing rung between private persistent conversation and
   formal Evidence/Decision truth: Project-shared, versioned working documents
   that never become scientific truth.
-- **Owned domains:** new Project Notebook boundary (normative owner:
-  `docs/architecture/PROJECT_NOTEBOOK.md`); Agent Context (consumer),
-  Presentation (Notebook surface).
+- **Owned domains:** new Project Notebook sub-boundary of the Project Domain
+  (normative owner: `docs/architecture/PROJECT_NOTEBOOK.md`; `DOMAIN_BOUNDARIES.md`
+  §1a); Agent Context (consumer), Presentation (Notebook surface).
 - **Vertical slice:** Project-scoped `ProjectNote` + immutable
   `ProjectNoteRevision` (`(note_id, revision_seq)` unique, latest derived from the
   max sequence) + typed non-semantic `NoteMention`s validated through the current

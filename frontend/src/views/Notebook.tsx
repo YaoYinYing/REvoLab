@@ -91,13 +91,24 @@ export function NotebookView({
   // Never render or mutate stale detail: the loaded detail must belong to the
   // currently selected Note (useAsync keeps the previous value during a reload).
   const selected = detail.data && detail.data.id === selectedNoteId ? detail.data : null
+  // Revisions carry their note_id, so a stale page from the previous Note can be
+  // filtered out instead of rendering under the new Note.
+  const selectedRevisions = (revisions.data ?? []).filter(
+    (revision) => revision.note_id === selectedNoteId,
+  )
+
+  useEffect(() => {
+    // Clear the editor on selection change so the form can never briefly hold the
+    // previous Note's body.
+    setEditBody('')
+  }, [selectedNoteId])
 
   useEffect(() => {
     const latest = detail.data?.latest
-    if (latest) {
+    if (latest && detail.data?.id === selectedNoteId) {
       setEditBody(latest.body)
     }
-  }, [detail.data?.latest?.revision_id, detail.data?.latest?.body])
+  }, [detail.data?.id, detail.data?.latest?.revision_id, detail.data?.latest?.body, selectedNoteId])
 
   useEffect(() => {
     // Scope reset: a new Project must not keep a Note selected from another.
@@ -325,13 +336,8 @@ export function NotebookView({
         </div>
       </Section>
 
-      {selectedNoteId && !selected ? (
-        detail.error ? (
-          <ErrorBox message={detail.error} />
-        ) : (
-          <Loading label="Loading note…" />
-        )
-      ) : null}
+      {selectedNoteId ? <ErrorBox message={detail.error} /> : null}
+      {selectedNoteId && !selected && !detail.error ? <Loading label="Loading note…" /> : null}
 
       {selectedNoteId && selected ? (
         <Section
@@ -432,7 +438,7 @@ export function NotebookView({
           <Section title="Revision history">
             {revisions.loading ? <Loading label="Loading revisions…" /> : null}
             <ErrorBox message={revisions.error} />
-            {(revisions.data ?? []).map((revision) => (
+            {selectedRevisions.map((revision) => (
               <div className="list-row revision-row" key={revision.revision_id}>
                 <div className="list-row-head">
                   <History size={14} />

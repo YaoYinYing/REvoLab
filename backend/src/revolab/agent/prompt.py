@@ -111,6 +111,14 @@ def neutralize_delimiters(payload: str) -> str:
     )
 
 
+def context_payload(context: object) -> str:
+    """The EXACT untrusted payload the model receives: the serialized context with
+    the reserved delimiters neutralized. The turn budget must measure this string,
+    not the pre-neutralization text, so escaping growth stays visible as a bound
+    hit."""
+    return neutralize_delimiters(serialize_context(context))
+
+
 def _message_groups(messages: tuple[ChatMessage, ...]) -> list[tuple[ChatMessage, ...]]:
     """Split the bounded window into whole-message groups. An assistant message
     with tool_calls and its consecutive `tool` responses form ONE group; orphan
@@ -176,7 +184,7 @@ def build_model_request(
     max_history_chars, max_context_chars)."""
     data_block = (
         f"{_DATA_OPEN}\n"
-        f"{_trim(neutralize_delimiters(serialize_context(context)), bounds.max_context_chars)}\n"
+        f"{_trim(context_payload(context), bounds.max_context_chars)}\n"
         f"{_DATA_CLOSE}"
     )
 
@@ -205,6 +213,7 @@ def build_model_request(
 __all__ = [
     "SYSTEM_INSTRUCTIONS",
     "build_model_request",
+    "context_payload",
     "neutralize_delimiters",
     "serialize_context",
 ]

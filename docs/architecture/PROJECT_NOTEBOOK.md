@@ -78,12 +78,15 @@ non-member     no read, no existence oracle
 - An append carries the `base_revision_seq` the client edited. If it is no longer
   the server's latest the write fails closed with a typed **409**; another
   member's work is never silently overwritten.
-- PostgreSQL takes the `ProjectNote` row lock (`SELECT ... FOR UPDATE`) so
-  concurrent appends order across processes; the `(note_id, revision_seq)`
-  uniqueness constraint is the backend-independent backstop. SQLite ignores
-  `FOR UPDATE`, so it relies on the uniqueness constraint and does not claim
-  stronger concurrency semantics than it provides. PostgreSQL is the concurrency
-  truth and the required concurrency regression runs there.
+- Note mutation is ordered per note. PostgreSQL takes the `ProjectNote` row lock
+  (`SELECT ... FOR UPDATE`) in **both** `append_revision` and `patch_note`
+  (rename/archive), so appends and archiving serialize across processes. SQLite
+  silently ignores `FOR UPDATE`, so it additionally uses a bounded process-level
+  per-note lock (weak-value keyed, 30-second wait, then a typed retryable 409);
+  within that one process append/archive are genuinely ordered, and SQLite must
+  never be run multi-worker. The `(note_id, revision_seq)` uniqueness constraint
+  is the backend-independent backstop for the append sequence itself. PostgreSQL
+  is the concurrency truth and the required concurrency regression runs there.
 
 ## Content and safety
 

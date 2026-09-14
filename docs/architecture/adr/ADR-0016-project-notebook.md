@@ -39,12 +39,16 @@ same fact); per-note ACLs (membership is already the single authorization unit).
 
 ### Optimistic concurrency as a typed conflict
 
-Appending a revision carries the `base_revision_seq` the client edited. PostgreSQL
-takes the Note row lock so concurrent appends order across processes; the
+Appending a revision carries the `base_revision_seq` the client edited.
+PostgreSQL takes the `ProjectNote` row lock in **both** `append_revision` and
+`patch_note` (rename/archive), so concurrent appends and archiving order across
+processes. SQLite ignores `SELECT ... FOR UPDATE`, so it additionally uses a
+bounded process-level per-note lock (weak-value keyed, 30-second wait, then a
+typed retryable 409) that orders append/archive within one process; SQLite is a
+single-process dev/test substrate and must not run multi-worker. The
 `(note_id, revision_seq)` uniqueness constraint is the backend-independent
 backstop. A stale base fails closed with a typed 409 rather than overwriting
-another member's work. SQLite ignores `SELECT ... FOR UPDATE`, so it relies on the
-uniqueness constraint and claims no stronger semantics than it provides.
+another member's work.
 
 ### Mentions as typed, non-semantic references
 
