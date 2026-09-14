@@ -100,6 +100,14 @@ class AgentLoopBounds:
     max_tool_result_chars: int = 12_000
     total_turn_duration_seconds: float = 300.0
 
+    def __post_init__(self) -> None:
+        """Reject negative history ceilings at construction: both consumers fail
+        closed for <= 0, but an embedder should not be able to build a bounds
+        object whose ceiling silently means "no history" without opting into 0."""
+        for name in ("max_history_messages", "max_history_chars"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be >= 0")
+
 
 def _tool_descriptor_tools(catalog_tools: list[dict[str, Any]]) -> tuple[ToolSpec, ...]:
     """Project the Agent-facing tool surface. Only local tools and remote

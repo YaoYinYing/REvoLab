@@ -1065,3 +1065,16 @@ def test_prompt_history_helper_respects_zero_ceiling():
     history = tuple(ChatMessage(role="user", content=f"m{index}") for index in range(4))
     assert _bounded_history(history, max_messages=0, max_chars=10_000) == ()
     assert _bounded_history(history, max_messages=2, max_chars=10_000) == history[-2:]
+
+
+def test_negative_history_ceilings_are_rejected_at_construction():
+    import pytest as _pytest
+
+    from revolab.agent.runtime import AgentLoopBounds
+
+    with _pytest.raises(ValueError):
+        AgentLoopBounds(max_history_messages=-1)
+    with _pytest.raises(ValueError):
+        AgentLoopBounds(max_history_chars=-1)
+    # 0 stays a legal (diagnostic) value for both ceilings.
+    AgentLoopBounds(max_history_messages=0, max_history_chars=0)

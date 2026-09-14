@@ -1268,7 +1268,7 @@ every job.
 ## Verified evidence (Phase 9)
 
 - Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
-  `pytest` passes **338 passed, 9 skipped** (SQLite fast tests; the 9 skips are
+  `pytest` passes **339 passed, 9 skipped** (SQLite fast tests; the 9 skips are
   the opt-in PostgreSQL acceptance file). `test_conversations.py` regressions
   cover: persist+reload, server-owned second-turn history, structural rejection
   of client-supplied history, Actor isolation (incl. the OWNER cannot read a
@@ -1431,7 +1431,15 @@ helper (which previously treated 0 as unbounded); `agent_max_history_messages` /
 `agent_max_history_chars` are now `ge=0`-validated. Also from that round: the deferred-durability
 regression now pins the flush half (rows visible in the caller's session pre-commit), and a
 reloaded `pending` entry keeps its inert "NOT executed: <reason>" framing. Final counts:
-**338 backend tests**, **24 frontend tests**.
+**339 backend tests**, **24 frontend tests**.
+
+Delta round 6 (fresh reviewers over the correction) returned **PASS on all lenses with no
+P0/P1**: an exhaustive slice check (101 cases per helper, 0 mismatches), a real in-place mutation
+showing the boundary regression fails pre-fix (`assert 5 == 15`), cross-helper agreement, `ge=0`
+settings validation, and the unchanged row-lock/single-commit contract. Its residual P2s were
+closed by validating negative ceilings in `AgentLoopBounds.__post_init__` (a regression asserts
+rejection while 0 stays legal) and documenting that a 0 count ceiling also suppresses in-turn tool
+results — a diagnostic value, not a supported production setting.
 
 ## Known deferrals (explicit, not silently postponed)
 

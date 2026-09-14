@@ -125,7 +125,10 @@ def _bounded_history(history: tuple[ChatMessage, ...], *, max_messages: int, max
 
     A 0 count ceiling means "no history" — `history[-0:]` would be the whole
     list, so the ceiling is applied explicitly (the same rule as
-    `AgentTurnRunner._bounded_history`)."""
+    `AgentTurnRunner._bounded_history`). Note the caller passes the bounded
+    history PLUS the current turn's transcript, so a 0 ceiling also suppresses
+    in-turn tool results: 0 is a diagnostic/misconfiguration value, not a
+    supported production setting."""
     window = history[-max_messages:] if max_messages > 0 else ()
     groups = _message_groups(window)
     bounded: list[ChatMessage] = []
