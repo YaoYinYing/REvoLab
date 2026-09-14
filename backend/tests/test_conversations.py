@@ -27,7 +27,7 @@ from revolab.agent.conversations import (
 )
 from revolab.agent.model_backend import ModelRequest, ModelResponse, ModelToolCall
 from revolab.content_store import ContentStore
-from revolab.domain.errors import AuthorizationError, NotFoundError, ValidationError
+from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from revolab.drivers import DriverContext, DriverRegistry
 from revolab.enums import AgentTerminationReason, ConversationRole, Role
 from revolab.models import ConversationMessage, Decision
@@ -1249,3 +1249,35 @@ def test_sqlite_concurrent_turns_serialize(tmp_path):
             )
         )
     assert [row.seq for row in seqs] == [1, 2, 3, 4]
+
+
+def test_sqlite_turn_lock_times_out_with_typed_conflict(session, tmp_path, monkeypatch):
+    """Same-conversation contention yields a typed retryable 409 after a bounded
+    wait instead of pinning a request worker indefinitely."""
+    from revolab.agent import conversations as conv_module
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    conversation = create_conversation(session, actor, project.id)
+    monkeypatch.setattr(conv_module, "CONVERSATION_TURN_LOCK_TIMEOUT_SECONDS", 0.05)
+
+    with (
+        conv_module._turn_execution_lock(session, conversation.id),
+        pytest.raises(ConflictError),
+    ):
+        run_conversation_turn(
+                session,
+                actor,
+                project.id,
+                conversation.id,
+                _runner(
+                    session,
+                    actor,
+                    project,
+                    _registry(),
+                    InMemorySecretStore(),
+                    ContentStore(tmp_path),
+                    model=_CapturingModel([_stop("ok")]),
+                ),
+                message="second turn",
+            )

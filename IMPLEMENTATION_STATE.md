@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-09-10
+Last verified: 2026-09-14
 
 This file records actual, machine-verified repository state — not future plans.
 
@@ -1268,7 +1268,7 @@ every job.
 ## Verified evidence (Phase 9)
 
 - Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
-  `pytest` passes **342 passed, 9 skipped** (SQLite fast tests; the 9 skips are
+  `pytest` passes **343 passed, 9 skipped** (SQLite fast tests; the 9 skips are
   the opt-in PostgreSQL acceptance file). `test_conversations.py` regressions
   cover: persist+reload, server-owned second-turn history, structural rejection
   of client-supplied history, Actor isolation (incl. the OWNER cannot read a
@@ -1431,7 +1431,7 @@ helper (which previously treated 0 as unbounded); `agent_max_history_messages` /
 `agent_max_history_chars` are now `ge=0`-validated. Also from that round: the deferred-durability
 regression now pins the flush half (rows visible in the caller's session pre-commit), and a
 reloaded `pending` entry keeps its inert "NOT executed: <reason>" framing. Final counts:
-**342 backend tests**, **24 frontend tests**.
+**343 backend tests**, **24 frontend tests**.
 
 Delta round 6 (fresh reviewers over the correction) returned **PASS on all lenses with no
 P0/P1**: an exhaustive slice check (101 cases per helper, 0 mismatches), a real in-place mutation
@@ -1442,7 +1442,7 @@ rejection while 0 stays legal) and documenting that a 0 count ceiling also suppr
 results — a diagnostic value, not a supported production setting. The round's remaining test
 nits were also closed: `ge=0` settings validation has its own regression, and the
 deferred-durability assertion runs under `no_autoflush` so it pins the explicit flush rather than
-an incidental autoflush. Final counts: **342 backend tests**, **24 frontend tests**.
+an incidental autoflush. Final counts: **343 backend tests**, **24 frontend tests**.
 
 ## Known deferrals (explicit, not silently postponed)
 
@@ -1493,5 +1493,8 @@ mutation-verified regressions:
   lock as the concurrency truth). Regression `test_sqlite_concurrent_turns_serialize` fails if that
   lock is disabled.
 
-Full gates re-ran green: backend **342 passed / 9 skipped**, PostgreSQL acceptance **9 passed**
-(no drift), frontend **24 passed**, Playwright **4 specs**.
+The SQLite wait is also bounded (a still-contended caller gets a typed retryable 409 rather than
+occupying a request worker indefinitely), with its own regression. Full gates re-ran green:
+backend **343 passed / 9 skipped**, PostgreSQL acceptance **9 passed** (no drift), frontend
+**24 passed**, Playwright **4 specs**. SQLite remains a single-process dev/test substrate and must
+not be run with multiple worker processes.

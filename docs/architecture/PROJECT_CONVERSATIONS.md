@@ -185,7 +185,9 @@ point. The load→run→persist section is serialized per conversation:
 PostgreSQL  SELECT ... FOR UPDATE on the conversation row (cross-process truth)
 SQLite      explicit process-level execution lock per conversation, because
             SQLite silently ignores FOR UPDATE (single-process dev/test
-            substrate; PostgreSQL remains the concurrency truth)
+            substrate; PostgreSQL remains the concurrency truth). The wait is
+            bounded and a still-contended caller gets a typed retryable 409.
+            SQLite MUST NOT be run with multiple worker processes.
 ```
 
 Each Agent-executed Tool call runs inside its own SAVEPOINT. A tool that fails

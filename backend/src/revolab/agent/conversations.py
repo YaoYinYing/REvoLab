@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from revolab.agent.model_backend import ChatMessage
 from revolab.agent.runtime import AgentTurnRunner
-from revolab.domain.errors import NotFoundError, ValidationError
+from revolab.domain.errors import ConflictError, NotFoundError, ValidationError
 from revolab.domain.identity import readable_membership
 from revolab.enums import AgentTerminationReason, ConversationRole
 from revolab.models import ConversationMessage, ProjectConversation
@@ -62,6 +62,10 @@ _sqlite_turn_locks: weakref.WeakValueDictionary[UUID, threading.Lock] = (
 )
 _sqlite_turn_locks_guard = threading.Lock()
 
+# A same-conversation wait is bounded so a burst on one conversation cannot pin
+# the whole request threadpool; the caller gets a typed retryable 409 instead.
+CONVERSATION_TURN_LOCK_TIMEOUT_SECONDS = 30.0
+
 
 def _is_sqlite(session: Session) -> bool:
     return session.get_bind().dialect.name == "sqlite"
@@ -70,14 +74,19 @@ def _is_sqlite(session: Session) -> bool:
 @contextmanager
 def _turn_execution_lock(session: Session, conversation_id: UUID) -> Iterator[None]:
     """Serialize one conversation's turn on SQLite; on PostgreSQL the row lock
-    taken inside `_execute_turn` is the ordering primitive."""
+    taken inside `_execute_turn` is the ordering primitive. A bounded wait keeps
+    same-conversation contention from occupying the worker pool indefinitely."""
     if not _is_sqlite(session):
         yield
         return
     with _sqlite_turn_locks_guard:
         lock = _sqlite_turn_locks.setdefault(conversation_id, threading.Lock())
-    with lock:
+    if not lock.acquire(timeout=CONVERSATION_TURN_LOCK_TIMEOUT_SECONDS):
+        raise ConflictError("another turn is already running for this conversation; retry")
+    try:
         yield
+    finally:
+        lock.release()
 
 
 def _now() -> datetime:
