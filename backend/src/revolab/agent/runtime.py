@@ -385,11 +385,16 @@ class AgentTurnRunner:
         )
 
     def _bounded_history(self, history: list[Any] | None) -> tuple[ChatMessage, ...]:
+        """Select the bounded SUFFIX of the transcript: the most recent messages
+        that fit the count and char ceilings, in ascending order. Walking from the
+        newest backward (never a forward prefix) is what makes this a bounded
+        suffix — a durable conversation must never lose its latest context while
+        reciting its earliest messages."""
         if not history:
             return ()
-        messages: list[ChatMessage] = []
+        kept: list[ChatMessage] = []
         used = 0
-        for item in history[-self._bounds.max_history_messages :]:
+        for item in reversed(history[-self._bounds.max_history_messages :]):
             role = _item_attr(item, "role")
             content = _item_attr(item, "content")
             if role not in {"user", "assistant"} or not isinstance(content, str):
@@ -397,8 +402,9 @@ class AgentTurnRunner:
             if used + len(content) > self._bounds.max_history_chars:
                 break
             used += len(content)
-            messages.append(ChatMessage(role=role, content=content))
-        return tuple(messages)
+            kept.append(ChatMessage(role=role, content=content))
+        kept.reverse()
+        return tuple(kept)
 
     def _bound_hit_message(self, termination: AgentTerminationReason) -> str:
         return (

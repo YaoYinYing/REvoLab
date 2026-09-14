@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -215,9 +215,10 @@ describe('Agent view (Phase 9)', () => {
         resolveTurn = resolve
       },
     )
+    const turnMock = vi.fn().mockReturnValue(pending)
     mockedProjectApi.mockReturnValue({
       ...defaultApi(),
-      createConversationTurn: vi.fn().mockReturnValue(pending),
+      createConversationTurn: turnMock,
     } as never)
 
     const user = userEvent.setup()
@@ -230,9 +231,14 @@ describe('Agent view (Phase 9)', () => {
 
     mockedProjectApi.mockReturnValue(defaultApi() as never)
     rerender(<AgentView actorId="actor-1" projectId="project-b" />)
-    resolveTurn({ data: turnRead, error: undefined, response: new Response() })
-    await Promise.resolve()
+    // Resolve the project-A turn and let its continuation actually run to
+    // completion (a single microtask would assert before any state could land).
+    await act(async () => {
+      resolveTurn({ data: turnRead, error: undefined, response: new Response() })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
 
+    expect(turnMock).toHaveBeenCalledTimes(1) // positive control: the turn ran
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
     expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
   })
@@ -249,6 +255,7 @@ describe('Agent view (Phase 9)', () => {
         resolveTurn = resolve
       },
     )
+    const turnMock = vi.fn().mockReturnValue(pending)
     mockedProjectApi.mockReturnValue({
       ...defaultApi(),
       listConversations: vi.fn().mockResolvedValue({
@@ -256,7 +263,7 @@ describe('Agent view (Phase 9)', () => {
         error: undefined,
         response: new Response(),
       }),
-      createConversationTurn: vi.fn().mockReturnValue(pending),
+      createConversationTurn: turnMock,
     } as never)
 
     const user = userEvent.setup()
@@ -270,9 +277,12 @@ describe('Agent view (Phase 9)', () => {
     // Switch to conversation B while the A turn is still in flight.
     await user.click(await screen.findByRole('button', { name: /Conversation B/ }))
 
-    resolveTurn({ data: turnRead, error: undefined, response: new Response() })
-    await Promise.resolve()
+    await act(async () => {
+      resolveTurn({ data: turnRead, error: undefined, response: new Response() })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
 
+    expect(turnMock).toHaveBeenCalledTimes(1) // positive control: the turn ran
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
     expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
   })
@@ -294,6 +304,15 @@ describe('Agent view (Phase 9)', () => {
       messages: [turnRead.assistant_message!],
       total_messages: 1,
     }
+    const getConversationMock = vi.fn((projectId: string, conversationId: string) =>
+      conversationId === conversation.id
+        ? pendingRestore
+        : Promise.resolve({
+            data: { ...conversationB, messages: [], total_messages: 0 },
+            error: undefined,
+            response: new Response(),
+          }),
+    )
     mockedProjectApi.mockReturnValue({
       ...defaultApi(),
       listConversations: vi.fn().mockResolvedValue({
@@ -301,15 +320,7 @@ describe('Agent view (Phase 9)', () => {
         error: undefined,
         response: new Response(),
       }),
-      getConversation: vi.fn((projectId: string, conversationId: string) =>
-        conversationId === conversation.id
-          ? pendingRestore
-          : Promise.resolve({
-              data: { ...conversationB, messages: [], total_messages: 0 },
-              error: undefined,
-              response: new Response(),
-            }),
-      ),
+      getConversation: getConversationMock,
     } as never)
 
     const user = userEvent.setup()
@@ -318,9 +329,13 @@ describe('Agent view (Phase 9)', () => {
     // Switch to conversation B while A's initial restore fetch is still pending.
     await user.click(await screen.findByRole('button', { name: /Conversation B/ }))
 
-    resolveRestore({ data: restoredA, error: undefined, response: new Response() })
-    await Promise.resolve()
+    await act(async () => {
+      resolveRestore({ data: restoredA, error: undefined, response: new Response() })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
 
+    // Positive control: the A restore really was requested/awaited.
+    expect(getConversationMock.mock.calls.some(([, id]) => id === conversation.id)).toBe(true)
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
     expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
   })

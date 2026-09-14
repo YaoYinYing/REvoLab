@@ -14,6 +14,7 @@ import {
   AGENT_TERMINATION_REASON_FINAL_RESPONSE,
   AGENT_TOOL_CALL_STATUS_COMPLETED,
   AGENT_TOOL_CALL_STATUS_FAILED,
+  CONVERSATION_ROLE_ASSISTANT,
   AGENT_TOOL_CALL_STATUS_PENDING,
   RESOURCE_KIND_ARTIFACT,
 } from '../contracts/enums'
@@ -111,6 +112,9 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
   async function openConversation(conversationId: string) {
     if (!actorId || !projectId) return
     setActiveConversationId(conversationId)
+    // Keep the synchronous ref in lockstep with the state update so the guard
+    // below is not render-order dependent.
+    activeConversationRef.current = conversationId
     setActionError(null)
     const detail = await projectApi(actorId).getConversation(projectId, conversationId, {
       limit: MESSAGE_PAGE_LIMIT,
@@ -298,13 +302,13 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
         ) : null}
         {messages.map((message) => (
           <div
-            className={`list-row ${message.role === 'assistant' ? 'assistant-row' : ''}`}
+            className={`list-row ${message.role === CONVERSATION_ROLE_ASSISTANT ? 'assistant-row' : ''}`}
             key={message.id}
           >
             <div className="list-row-head">
-              {message.role === 'assistant' ? <Bot size={15} /> : null}
-              <strong>{message.role === 'assistant' ? 'Agent' : 'You'}</strong>
-              {message.role === 'assistant' && message.termination_reason && message.termination_reason !== AGENT_TERMINATION_REASON_FINAL_RESPONSE ? (
+              {message.role === CONVERSATION_ROLE_ASSISTANT ? <Bot size={15} /> : null}
+              <strong>{message.role === CONVERSATION_ROLE_ASSISTANT ? 'Agent' : 'You'}</strong>
+              {message.role === CONVERSATION_ROLE_ASSISTANT && message.termination_reason && message.termination_reason !== AGENT_TERMINATION_REASON_FINAL_RESPONSE ? (
                 <Badge tone="warn">{message.termination_reason}</Badge>
               ) : null}
             </div>
@@ -312,7 +316,14 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
             {(message.tool_trace ?? []).length > 0 ? (
               <small className="muted-note">
                 Tools:{' '}
-                {(message.tool_trace ?? []).map((entry) => entry.tool_id).join(', ')}
+                {(message.tool_trace ?? []).map((entry, index) => (
+                  <span
+                    key={`${entry.tool_id}-${index}`}
+                    className={entry.status === AGENT_TOOL_CALL_STATUS_COMPLETED ? 'mono' : 'inline-error'}
+                  >
+                    {entry.tool_id} ({entry.status}){' '}
+                  </span>
+                ))}
               </small>
             ) : null}
           </div>

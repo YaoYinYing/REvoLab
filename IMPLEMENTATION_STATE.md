@@ -1268,7 +1268,7 @@ every job.
 ## Verified evidence (Phase 9)
 
 - Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
-  `pytest` passes **332 passed, 9 skipped** (SQLite fast tests; the 9 skips are
+  `pytest` passes **334 passed, 9 skipped** (SQLite fast tests; the 9 skips are
   the opt-in PostgreSQL acceptance file). `test_conversations.py` regressions
   cover: persist+reload, server-owned second-turn history, structural rejection
   of client-supplied history, Actor isolation (incl. the OWNER cannot read a
@@ -1376,6 +1376,32 @@ all three lenses** with no P0/P1. Its only operational note — the shipped
 initial-restore regression was non-differentiating on the pre-fix code — was
 closed by adding a `send`-disabled-while-loading regression that fails before
 the guard and passes after it; the final frontend count is **23 tests**.
+
+A final integrated review round (two fresh reviewers over the COMPLETE diff, after all delta
+fixes) found two more valid P1s, both now fixed with regressions:
+
+- **Durable history kept the OLDEST messages and dropped the NEWEST.** `AgentTurnRunner._bounded_history`
+  walked the count-bounded window oldest-first and stopped at the first message exceeding
+  `max_history_chars`, so the retained set was a forward *prefix* rather than the documented
+  bounded *suffix* (with 8 000-char messages the ceiling binds after ~3 messages, so real
+  sessions lost their most recent context). Fixed by walking the window newest-first and
+  reversing; regression `test_char_bounded_history_keeps_the_newest_messages` binds the char
+  ceiling and fails on the pre-fix code (which kept `s1` and dropped `s4`).
+- **Three frontend discard-guard regressions were timing-vacuous.** Each asserted after a single
+  microtask, before the discarded continuation could run, so they passed even with the guards
+  removed. They now settle a real macrotask inside `act(...)` with positive controls
+  (turn/restore mock call assertions); mutation-verified — stripping the three guards makes
+  exactly those tests fail (3 failed / 7 passed) instead of the previous 10/10 pass.
+
+In-scope P2s from that round were also closed: `_persist_derived_artifact` now honours
+`InvocationContext.commit` (no latent mid-turn commit for a `persist=True` caller); reloaded
+transcripts render the persisted per-tool status (failed/pending no longer look successful);
+`DOMAIN_BOUNDARIES.md` no longer claims an "ephemeral transcript, never persisted" and
+`SYSTEM_ARCHITECTURE.md` indexes the new documents; `ConversationRole` is generated
+(`CONVERSATION_ROLES`) and the view uses the derived constant instead of a bare literal;
+`openConversation` keeps the active-conversation ref in lockstep synchronously; the SQLite
+CHECK is proven enforced (raw invalid insert rejected); and the conversation/message page-size
+bounds are pinned by 422 regressions.
 
 
 

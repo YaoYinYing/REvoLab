@@ -13,7 +13,8 @@ from types import MappingProxyType
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
+from sqlalchemy.exc import IntegrityError
 
 from revolab import services
 from revolab.agent import AgentLoopBounds, AgentTurnRunner
@@ -694,10 +695,10 @@ def test_conversation_role_is_check_constrained_at_the_database(session, tmp_pat
 
     actor = _actor(session)
     project = _project(session, actor)
-    create_conversation(session, actor, project.id)
+    conversation = create_conversation(session, actor, project.id)
     session.execute(
         insert(ConversationMessage.__table__).values(
-            conversation_id=create_conversation(session, actor, project.id).id,
+            conversation_id=conversation.id,
             seq=1,
             role=ConversationRole.USER.value,
             content="valid",
@@ -714,6 +715,23 @@ def test_conversation_role_is_check_constrained_at_the_database(session, tmp_pat
     assert {column.name for column in checks["conversation_role"].columns} == {"role"}
     assert "role IN" in str(checks["conversation_role"].sqltext)
     assert "termination_reason IN" in str(checks["agent_termination_reason"].sqltext)
+
+    # The constraint is enforced, not merely declared: a raw (ORM-bypassing)
+    # insert of an invalid role is rejected by the database itself.
+    with pytest.raises(IntegrityError):
+        session.execute(
+            text(
+                "INSERT INTO conversation_messages (id, conversation_id, seq, role, content) "
+                "VALUES (:id, :conversation_id, :seq, :role, :content)"
+            ),
+            {
+                "id": conversation.id.hex,
+                "conversation_id": conversation.id.hex,
+                "seq": 99,
+                "role": "bogus",
+                "content": "rejected",
+            },
+        )
 
 
 def test_owner_cannot_read_member_private_conversation(session, tmp_path):
@@ -800,3 +818,83 @@ def test_create_and_patch_reject_overlong_title(session, tmp_path):
     conversation = create_conversation(session, actor, project.id, title="ok")
     with pytest.raises(ValidationError):
         patch_conversation(session, actor, project.id, conversation.id, title="z" * 201)
+
+
+def test_char_bounded_history_keeps_the_newest_messages(session, tmp_path):
+    """A durable conversation must keep its LATEST context when the char ceiling
+    binds, not recite its earliest messages (bounded SUFFIX semantics)."""
+    actor = _actor(session)
+    project = _project(session, actor)
+    conversation = create_conversation(session, actor, project.id)
+    contents = [f"s{index}-" + "x" * 100 for index in range(1, 5)]
+    for index, content in enumerate(contents):
+        session.add(
+            ConversationMessage(
+                conversation_id=conversation.id,
+                seq=index + 1,
+                role=ConversationRole.ASSISTANT.value if index % 2 else ConversationRole.USER.value,
+                content=content,
+            )
+        )
+    session.commit()
+
+    model = _CapturingModel([_stop("ok")])
+    result = run_conversation_turn(
+        session,
+        actor,
+        project.id,
+        conversation.id,
+        _runner(
+            session,
+            actor,
+            project,
+            _registry(),
+            InMemorySecretStore(),
+            ContentStore(tmp_path),
+            model=model,
+            bounds=AgentLoopBounds(max_history_messages=10, max_history_chars=150),
+        ),
+        message="latest question",
+    )
+    request = model.requests[0]
+    # The newest persisted message survives the char bound ...
+    assert any(message.content == contents[-1] for message in request.messages)
+    # ... and the oldest is the one that is dropped.
+    assert not any(message.content == contents[0] for message in request.messages)
+    assert result.turn.budget.history_messages == 1
+
+
+def test_conversation_page_size_bounds_are_typed(client):
+    """TODO.md §13: conversation and message page sizes are typed, bounded query
+    parameters — an out-of-range page is rejected, never silently clamped."""
+    actor_id = client.post("/api/actors").json()["actor_id"]
+    headers = {"X-Actor-Id": actor_id}
+    project_id = client.post("/api/projects", json={"name": "Bounds"}, headers=headers).json()["id"]
+    conversation = client.post(
+        f"/api/projects/{project_id}/agent/conversations", json={}, headers=headers
+    ).json()
+
+    for limit in (0, 201):
+        assert (
+            client.get(
+                f"/api/projects/{project_id}/agent/conversations",
+                params={"limit": limit},
+                headers=headers,
+            ).status_code
+            == 422
+        )
+        assert (
+            client.get(
+                f"/api/projects/{project_id}/agent/conversations/{conversation['id']}",
+                params={"limit": limit},
+                headers=headers,
+            ).status_code
+            == 422
+        )
+
+    assert (
+        client.get(
+            f"/api/projects/{project_id}/agent/conversations", params={"limit": 200}, headers=headers
+        ).status_code
+        == 200
+    )

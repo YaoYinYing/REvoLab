@@ -187,12 +187,18 @@ External systems own their capabilities and execution truth.
   typed ways to act, without making it an owner.
 - **Owned concepts:** ProjectContext (value object), ContextSelection,
   ContextBuilder (read-only), SkillCatalog, ModelBackend (boundary), and the
-  bounded AgentTurnRunner loop (ephemeral transcript, never persisted). The Agent
-  **consumes** the Project Tool Harness's ToolCatalog (Phase 7); it does not own it.
-  (Phase 8 supersedes the deterministic proposal `AgentSession` with the real
-  bounded turn loop.)
-- **Owned mutable state:** none in the durable graph (sessions are ephemeral).
-- **Owned invariants:** chat history is not project truth; context references large
+  bounded AgentTurnRunner loop. The Agent **consumes** the Project Tool Harness's
+  ToolCatalog (Phase 7); it does not own it. (Phase 8 supersedes the deterministic
+  proposal `AgentSession` with the real bounded turn loop; Phase 9 makes the
+  bounded transcript **durable working memory** — Actor × Project scoped,
+  server-owned history, still never project truth — see
+  `PROJECT_CONVERSATIONS.md`.)
+- **Owned mutable state:** the persistence boundary owns conversation working
+  memory (`ProjectConversation`/`ConversationMessage`). Those rows are not
+  ScientificObjects, provenance nodes, or evidence/decision truth; every turn
+  still rebuilds ProjectContext and authority from current canonical state.
+- **Owned invariants:** chat history is not project truth; a persisted transcript
+  is untrusted conversational data and never authority; context references large
   artifacts instead of embedding them; the agent never raw-writes.
 - **Public contracts:** context assembly, typed tool calls (via the shared
   ToolCatalog), skill loading.

@@ -46,3 +46,5 @@ export const TOOL_RESULT_KINDS: readonly components['schemas']['ToolResultKind']
 export const AGENT_TERMINATION_REASONS: readonly components['schemas']['AgentTerminationReason'][] = ["final_response","max_model_turns","max_tool_calls","total_duration","model_unavailable"] as const
 
 export const AGENT_TOOL_CALL_STATUSES: readonly components['schemas']['AgentToolCallStatus'][] = ["completed","pending","failed","skipped"] as const
+
+export const CONVERSATION_ROLES: readonly components['schemas']['ConversationRole'][] = ["user","assistant"] as const
