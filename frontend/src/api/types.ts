@@ -141,20 +141,6 @@ export type NoteRevisionRead =
 
 export type NoteMentionRead = NonNullable<NoteRevisionRead['mentions']>[number]
 
-export type NoteCreate = NonNullable<
-  NonNullable<paths['/api/projects/{project_id}/notes']['post']['requestBody']>['content']['application/json']
->
-
-export type NotePatch = NonNullable<
-  NonNullable<
-    paths['/api/projects/{project_id}/notes/{note_id}']['patch']['requestBody']
-  >['content']['application/json']
->
-
-export type NoteRevisionCreate = NonNullable<
-  NonNullable<
-    paths['/api/projects/{project_id}/notes/{note_id}/revisions']['post']['requestBody']
-  >['content']['application/json']
->
-
-export type NoteMentionCreate = NonNullable<NoteCreate['mentions']>[number]
+// Request bodies live in `api/backend.ts` (indexed from `paths`). The one
+// request shape the view layer names directly is the mention target.
+export type NoteMentionCreate = components['schemas']['NoteMentionCreate']

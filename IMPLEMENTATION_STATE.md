@@ -1497,14 +1497,31 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
   "Save to Project Note" explicit capture, `playwright e2e/notebook.spec.ts`.
 - **Docs**: `docs/architecture/PROJECT_NOTEBOOK.md` (normative owner), ADR-0016;
   `PROJECT_CONVERSATIONS.md`, `AGENT_CONTEXT.md`,
-  `WORKSPACE_INFORMATION_ARCHITECTURE.md`, `IMPLEMENTATION_ROADMAP.md`, and
-  `SYSTEM_ARCHITECTURE.md` reconciled to point at it.
+  `WORKSPACE_INFORMATION_ARCHITECTURE.md`, `IMPLEMENTATION_ROADMAP.md`,
+  `DOMAIN_BOUNDARIES.md` (§1a Project Notebook sub-boundary),
+  `SYSTEM_ARCHITECTURE.md`, and `PROJECT_AGENT_RUNTIME.md` reconciled to point at
+  it.
+- **Post-review hardening** (from the mandatory independent review): the Agent
+  prompt's reserved untrusted-data delimiters are neutralized inside serialized
+  project content, so a Note body containing `</untrusted_project_data>` can no
+  longer close the wrapper early (`agent/prompt.py::neutralize_delimiters`); the
+  Note/revision audit-actor FKs no longer cascade (the author is not a lifecycle
+  owner) and mention target FKs no longer cascade (historical mentions are never
+  silently destroyed); note mutation takes the PostgreSQL row lock in
+  `append_revision` AND `patch_note` plus a bounded process-level lock on SQLite;
+  the revision-uniqueness `IntegrityError` translation is narrowed to
+  `uq_note_revision_seq`; `resolve_selected_notes` authorizes itself; `list_notes`
+  orders by `(updated_at, id)`; `NotePatch.archive` is a strict boolean; the Agent
+  selection only ever sends a Note present in the current Project list; the
+  Notebook detail panel never renders or mutates a stale/failed detail and shows
+  its error; `NoteCreate`/`NotePatch`/`NoteRevisionCreate` are no longer duplicated
+  in `api/types.ts`.
 
 ## Verified evidence (Phase 10)
 
 - Backend: `ruff check backend` and strict `mypy` pass on **51 source files**.
-  `pytest` passes **372 passed, 12 skipped** (SQLite fast tests; the 12 skips are
-  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (29
+  `pytest` passes **374 passed, 13 skipped** (SQLite fast tests; the 13 skips are
+  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (31
   tests) covers: Project-shared read for member/viewer; non-member no-oracle;
   cross-Project 404; viewer mutation 403; immediate membership revocation;
   Project tombstone; immutable sequence-ordered revisions; stale-edit 409;
@@ -1521,7 +1538,7 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
   unknown fields/401/404/403.
 - PostgreSQL (migrated schema): `alembic upgrade head` and `alembic check`
   report **no drift** on PostgreSQL 16; `test_postgres_integration.py` passes
-  **12 passed**, including the Phase-10 Note lifecycle on the migrated schema,
+  **13 passed**, including the Phase-10 Note lifecycle on the migrated schema,
   DB-level enforcement when the ORM is bypassed (duplicate `(note_id,
   revision_seq)`; zero-target and two-target `note_mentions`), and the required
   concurrent stale-write regression (two threads appending from base seq 1: one
@@ -1531,13 +1548,13 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
   idempotent; the contract regression asserts the three Note paths, the Note
   request schemas reject unknown fields, the context selection carries the Note
   fields, and `ProjectContextRead` carries `notes`.
-- Frontend: `npm run typecheck`, `npm run test` (**40 tests**, including safe
+- Frontend: `npm run typecheck`, `npm run test` (**42 tests**, including safe
   Markdown inertness, Notebook create/mention/append/conflict/archive/Agent
   hand-off/viewer read-only, and explicit "Save to Project Note"), and
   `npm run build` pass.
 - Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI +
   **PostgreSQL 16** + `REVOLAB_E2E_FAKE_MODEL=1` + `REVOLAB_E2E_FAKE_COMPUTE=1`):
-  all **5 specs** pass. `notebook.spec.ts` creates a Note with a typed mention,
+  all **6 specs** pass. `notebook.spec.ts` creates a Note with a typed mention,
   reloads it, confirms the selected Note reaches bounded Agent context (the fake
   model echoes only what the real prompt assembler placed in context), confirms
   an uncommitted Decision stays a draft, has a second member append a visible
@@ -1545,6 +1562,62 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
   read-only in the UI while a viewer API write is 403 and a non-member read is
   403.
 - `git diff --check` clean.
+
+## Independent review (Phase 10)
+
+Five fresh read-only reviewers audited `main...HEAD` (TODO §17 lenses), each under
+an explicit composition contract (role, question, allowed paths, write=NO,
+evidence required, output schema, stop condition). All five returned. Verdicts
+before reconciliation: **A REQUEST_CHANGES** (architecture/ownership),
+**B REQUEST_CHANGES** (authorization/security/prompt-trust), **C PASS**
+(persistence/concurrency), **D REQUEST_CHANGES** (API/frontend/contracts),
+**E PASS** (tests/CI/docs). No reviewer found a P0.
+
+Reconciled findings (all fixed and regression-covered):
+
+- **A-P1 / C-P2 — audit-actor FK made the author a second lifecycle owner.**
+  `ProjectNote.created_by_actor_id` / `ProjectNoteRevision.created_by_actor_id`
+  were `ON DELETE CASCADE`. Fixed: no delete action (the Project, not the author,
+  owns the Note); migration amended.
+- **A-P2 / C-P1 — mention target FKs cascaded.** `note_mentions.target_evidence_id`
+  / `target_decision_id` were `ON DELETE CASCADE`, which could silently destroy a
+  historical mention on an immutable revision. Fixed: no delete action, matching
+  `target_resource_id`.
+- **A-P1 / E-P2 — stale "Notebooks deferred" text and a missing ownership-map
+  entry.** `DOMAIN_BOUNDARIES.md` now declares §1a Project Notebook as a Project
+  Domain sub-boundary (nine-domain DAG unchanged); `SYSTEM_ARCHITECTURE.md` points
+  at it; `PROJECT_AGENT_RUNTIME.md` deferral re-scoped to Agent Note *mutation*.
+- **B-P2 — forgeable untrusted-data delimiter.** A Note body could contain
+  `</untrusted_project_data>` and close the Agent data block early. Fixed:
+  `prompt.neutralize_delimiters` escapes the reserved tokens inside serialized
+  project content; regression asserts exactly one delimiter pair survives and the
+  hostile text stays inside the block.
+- **C-P2 — the concurrency regression did not prove the row lock.** Added a
+  PostgreSQL test that records executed SQL and fails if `FOR UPDATE` is not
+  emitted; `patch_note` now also takes the row lock, and SQLite note mutations use
+  a bounded process-level lock so append/archive are genuinely ordered there.
+- **D-P1 — cross-Project Note hand-off leak.** `App` now clears the Note hand-off
+  on every Project change and `AgentView` only sends a Note present in the current
+  Project list.
+- **D-P1 — stale/swallowed Notebook detail.** The detail panel is gated on
+  `detail.data.id === selectedNoteId`, `detail.error` is rendered, and archive
+  targets `selectedNoteId`.
+- **C-P3 / E-P2 — non-mutation-sensitive two-target CHECK test.** The raw insert
+  now uses valid FK ids, so only the CHECK can fail; also added archived-target
+  `resolved=false`, revision pagination, viewer-archive, strict-boolean,
+  delimiter-forgery, and foreign-real-revision regressions.
+- **Deferred with rationale (P2/P3, not silently dropped):** the archived-resource
+  mention asymmetry is intentional (resource availability is lens-based;
+  Evidence/Decision availability is aggregate-active-based) and is now documented
+  in `PROJECT_NOTEBOOK.md`; `notes.py` stays outside `revolab/domain/` because it
+  is an application service mirroring `agent/conversations.py`; `created_by_actor_id`
+  follows the TODO-mandated name; per-Note list N+1 queries are bounded by the
+  page size; revision immutability is code-enforced (as for other immutable
+  tables); DB-level UPDATE/DELETE triggers are not added.
+
+Delta pass: _pending_ — corrections materially changed Agent prompt assembly,
+FK/lifecycle semantics, and frontend selection, so a fresh 3-reviewer pass over
+the corrected diff is required and is recorded below once complete.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

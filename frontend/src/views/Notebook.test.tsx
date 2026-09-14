@@ -240,4 +240,34 @@ describe('Notebook view (Phase 10)', () => {
     expect(screen.queryByRole('button', { name: /Save revision/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Archive/ })).not.toBeInTheDocument()
   })
+
+  it('never renders another note when the selected detail fails or lags', async () => {
+    // The hook returns a DIFFERENT note's detail (stale), then an error.
+    mockedUseNoteDetail.mockReturnValue({
+      data: { ...detail, id: 'stale-note-id' },
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    const user = userEvent.setup()
+    const { unmount } = render(
+      <NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />,
+    )
+    await user.click(await screen.findByText('Working notes'))
+    // A stale detail is never shown, and its mutation targets are never used.
+    expect(screen.queryByText('Current thinking')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Save revision/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Archive/ })).not.toBeInTheDocument()
+    unmount()
+
+    mockedUseNoteDetail.mockReturnValue({
+      data: null,
+      loading: false,
+      error: 'Not authorized for this project.',
+      reload: vi.fn(),
+    })
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await user.click(await screen.findByText('Working notes'))
+    expect(await screen.findByText('Not authorized for this project.')).toBeInTheDocument()
+  })
 })

@@ -27,6 +27,10 @@ actually provides.
 
 from __future__ import annotations
 
+import threading
+import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -60,6 +64,41 @@ from revolab.schemas import (
 
 DEFAULT_NOTES_PAGE_LIMIT = 50
 DEFAULT_REVISIONS_PAGE_LIMIT = 100
+
+# Process-level per-note mutation locks for the SQLite substrate. PostgreSQL uses
+# the note row lock (`SELECT ... FOR UPDATE`), which orders appends AND archive
+# against each other across processes. SQLite silently ignores `FOR UPDATE`, so
+# without this lock a concurrent append could read `archived_at == NULL`, have an
+# archive commit, and then insert a revision on an archived note. SQLite remains a
+# single-process dev/test substrate; this restores the same ordering for one
+# process and never claims cross-process semantics.
+_sqlite_note_locks: weakref.WeakValueDictionary[UUID, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
+_sqlite_note_locks_guard = threading.Lock()
+NOTE_MUTATION_LOCK_TIMEOUT_SECONDS = 30.0
+
+
+def _is_sqlite(session: Session) -> bool:
+    return session.get_bind().dialect.name == "sqlite"
+
+
+@contextmanager
+def _note_mutation_lock(session: Session, note_id: UUID) -> Iterator[None]:
+    """Serialize one note's append/archive on SQLite; on PostgreSQL the row lock
+    taken inside `_mutable_note(..., with_for_update=True)` is the ordering
+    primitive. A bounded wait yields a typed retryable 409."""
+    if not _is_sqlite(session):
+        yield
+        return
+    with _sqlite_note_locks_guard:
+        lock = _sqlite_note_locks.setdefault(note_id, threading.Lock())
+    if not lock.acquire(timeout=NOTE_MUTATION_LOCK_TIMEOUT_SECONDS):
+        raise ConflictError("another note edit is already in progress; retry")
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def _now() -> datetime:
@@ -183,40 +222,58 @@ def append_revision(
     mention_payload = list(mentions or [])
     _check_mention_count(mention_payload)
 
-    note = _mutable_note(session, actor_id, project_id, note_id, with_for_update=True)
-    if note.archived_at is not None:
-        raise ValidationError("archived note cannot accept new revisions")
+    with _note_mutation_lock(session, note_id):
+        note = _mutable_note(session, actor_id, project_id, note_id, with_for_update=True)
+        if note.archived_at is not None:
+            raise ValidationError("archived note cannot accept new revisions")
 
-    latest = _latest_revision_seq(session, note_id)
-    if latest is None:
-        raise NotFoundError("note has no revision")
-    if base_revision_seq != latest:
-        raise ConflictError(
-            "note revision conflict: the note changed since it was edited"
+        latest = _latest_revision_seq(session, note_id)
+        if latest is None:
+            raise NotFoundError("note has no revision")
+        if base_revision_seq != latest:
+            raise ConflictError(
+                "note revision conflict: the note changed since it was edited"
+            )
+
+        revision = ProjectNoteRevision(
+            note_id=note_id,
+            revision_seq=latest + 1,
+            body=body,
+            created_by_actor_id=actor_id,
         )
+        session.add(revision)
+        try:
+            session.flush()
+        except IntegrityError as exc:
+            # Backend-independent backstop: SQLite ignores SELECT ... FOR UPDATE, so
+            # the uniqueness constraint is what actually prevents a lost update there.
+            session.rollback()
+            if not _is_revision_uniqueness_conflict(exc):
+                raise
+            raise ConflictError(
+                "note revision conflict: the note changed since it was edited"
+            ) from exc
+        _write_mentions(session, project_id, revision, mention_payload)
+        note.updated_at = _now()
+        session.add(note)
+        session.commit()
+        session.refresh(revision)
+        return _revision_read(session, project_id, revision)
 
-    revision = ProjectNoteRevision(
-        note_id=note_id,
-        revision_seq=latest + 1,
-        body=body,
-        created_by_actor_id=actor_id,
+
+def _is_revision_uniqueness_conflict(exc: IntegrityError) -> bool:
+    """Narrow, backend-aware detection of the note-revision table's ONE unique
+    constraint. Unrelated integrity failures (FK, actor, mention) are re-raised
+    untouched instead of being mis-reported as a stale-edit 409."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(diagnostics.constraint_name == "uq_note_revision_seq")
+    message = str(orig)
+    return (
+        "UNIQUE constraint failed" in message
+        and "project_note_revisions" in message
     )
-    session.add(revision)
-    try:
-        session.flush()
-    except IntegrityError as exc:
-        # Backend-independent backstop: SQLite ignores SELECT ... FOR UPDATE, so
-        # the uniqueness constraint is what actually prevents a lost update there.
-        session.rollback()
-        raise ConflictError(
-            "note revision conflict: the note changed since it was edited"
-        ) from exc
-    _write_mentions(session, project_id, revision, mention_payload)
-    note.updated_at = _now()
-    session.add(note)
-    session.commit()
-    session.refresh(revision)
-    return _revision_read(session, project_id, revision)
 
 
 def patch_note(
@@ -234,18 +291,19 @@ def patch_note(
         raise ValidationError("no note fields to update")
     if title is not None:
         _check_title(title)
-    note = _mutable_note(session, actor_id, project_id, note_id)
-    if title is not None:
-        note.title = title
-    if archive is True and note.archived_at is None:
-        note.archived_at = _now()
-    elif archive is False and note.archived_at is not None:
-        note.archived_at = None
-    note.updated_at = _now()
-    session.add(note)
-    session.commit()
-    session.refresh(note)
-    return _note_read(session, note)
+    with _note_mutation_lock(session, note_id):
+        note = _mutable_note(session, actor_id, project_id, note_id, with_for_update=True)
+        if title is not None:
+            note.title = title
+        if archive is True and note.archived_at is None:
+            note.archived_at = _now()
+        elif archive is False and note.archived_at is not None:
+            note.archived_at = None
+        note.updated_at = _now()
+        session.add(note)
+        session.commit()
+        session.refresh(note)
+        return _note_read(session, note)
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +325,11 @@ def list_notes(
     statement = select(ProjectNote).where(ProjectNote.project_id == project_id)
     if not include_archived:
         statement = statement.where(ProjectNote.archived_at.is_(None))
-    statement = statement.order_by(ProjectNote.updated_at.desc()).offset(offset).limit(limit)
+    statement = (
+        statement.order_by(ProjectNote.updated_at.desc(), ProjectNote.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     notes = list(session.scalars(statement))
     return [_note_read(session, note) for note in notes]
 
@@ -438,6 +500,7 @@ def _resource_label(session: Session, resource_id: UUID, kind: ResourceKind) -> 
 
 def resolve_selected_notes(
     session: Session,
+    actor_id: UUID,
     project_id: UUID,
     note_ids: list[UUID] | None,
     note_revision_ids: list[UUID] | None,
@@ -453,8 +516,13 @@ def resolve_selected_notes(
     oracle). Notes are deliberately NOT resolved through the global-resource
     visibility lens: a Note is not a GlobalResourceRegistry entry.
 
+    The function authorizes itself against the active Project (readable
+    membership) so the Note read lens is self-contained rather than relying on
+    the caller's prior check.
+
     Returns the refs plus a `truncated` flag: exceeding `max_notes` or clipping a
     body to `max_note_chars` is reported explicitly, never silently."""
+    readable_membership(session, actor_id, project_id)
     refs: list[NoteRefRead] = []
     truncated = False
     seen: set[UUID] = set()
@@ -544,8 +612,11 @@ def _revision_count(session: Session, note_id: UUID) -> int:
     )
 
 
-def _note_read(session: Session, note: ProjectNote) -> NoteRead:
-    latest = _latest_revision(session, note.id)
+def _note_read(
+    session: Session, note: ProjectNote, latest: ProjectNoteRevision | None = None
+) -> NoteRead:
+    if latest is None:
+        latest = _latest_revision(session, note.id)
     return NoteRead(
         id=note.id,
         project_id=note.project_id,
@@ -565,7 +636,7 @@ def _note_detail(
     note: ProjectNote,
     latest: ProjectNoteRevision | None,
 ) -> NoteDetailRead:
-    base = _note_read(session, note)
+    base = _note_read(session, note, latest)
     return NoteDetailRead(
         **base.model_dump(),
         latest=_revision_read(session, project_id, latest) if latest is not None else None,

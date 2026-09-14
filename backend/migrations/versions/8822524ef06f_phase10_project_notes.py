@@ -24,7 +24,7 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.Column('archived_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
-    sa.ForeignKeyConstraint(['created_by_actor_id'], ['actors.actor_id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['created_by_actor_id'], ['actors.actor_id']),
     sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
@@ -37,7 +37,7 @@ def upgrade() -> None:
     sa.Column('body', sa.Text(), nullable=False),
     sa.Column('created_by_actor_id', sa.Uuid(), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
-    sa.ForeignKeyConstraint(['created_by_actor_id'], ['actors.actor_id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['created_by_actor_id'], ['actors.actor_id']),
     sa.ForeignKeyConstraint(['note_id'], ['project_notes.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('revision_id'),
     sa.UniqueConstraint('note_id', 'revision_seq', name='uq_note_revision_seq')
@@ -55,8 +55,8 @@ def upgrade() -> None:
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.CheckConstraint('(CASE WHEN target_resource_id IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN target_evidence_id IS NOT NULL THEN 1 ELSE 0 END + CASE WHEN target_decision_id IS NOT NULL THEN 1 ELSE 0 END) = 1', name='ck_note_mention_exactly_one_target'),
     sa.ForeignKeyConstraint(['revision_id'], ['project_note_revisions.revision_id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['target_decision_id'], ['decisions.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['target_evidence_id'], ['evidence.id'], ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['target_decision_id'], ['decisions.id']),
+    sa.ForeignKeyConstraint(['target_evidence_id'], ['evidence.id']),
     sa.ForeignKeyConstraint(['target_resource_id'], ['global_resource_registry.resource_id']),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('revision_id', 'ordinal', name='uq_note_mention_ordinal')

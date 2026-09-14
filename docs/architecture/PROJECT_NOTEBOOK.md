@@ -115,6 +115,14 @@ A `NoteMention` means only:
 - Mentions belong to an immutable revision. If a target is later unlinked,
   archived, or revoked, the revision text and mention row are preserved and the
   read projection reports `resolved=false`; history is never rewritten.
+- Availability is deliberately lens-based per target class. A global resource is
+  mentionable iff it is in the Project read lens (`ProjectResourceLink`); a
+  resource's own `archived_at`/`revoked_at` flag does not remove it from that lens
+  (the same rule the ContextBuilder uses for the visible series skeleton). A
+  Project-scoped Evidence/Decision is mentionable iff the aggregate is currently
+  active in this Project (`archived_at IS NULL`), because archiving is how those
+  aggregates leave the Project-visible set. This asymmetry is intentional, not a
+  second visibility model.
 
 ## Working knowledge vs scientific truth
 

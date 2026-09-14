@@ -58,6 +58,34 @@ External systems own their capabilities and execution truth.
 - **Non-responsibilities:** owning object lifecycle; owning execution; owning
   provider credentials; being the provenance authority.
 
+### 1a. Project Notebook (Project Domain sub-boundary)
+
+The Project Notebook is an explicit **sub-boundary of the Project Domain**, not a
+tenth domain: a Note is Project-scoped, the Project is its namespace/lifecycle
+owner, and it depends only on the Project read lens plus the Identity membership
+contract. The nine-domain DAG is unchanged — Agent Context and Presentation reach
+Notes through their existing Project edge.
+
+- **Normative owner:** `PROJECT_NOTEBOOK.md` (ADR-0016).
+- **Owned concepts:** `ProjectNote`, immutable `ProjectNoteRevision`, and typed,
+  non-semantic `NoteMention`.
+- **Owned mutable state:** the Note title and `archived_at` (non-destructive);
+  revision bodies are INSERT-only.
+- **Owned invariants:** a Note is NOT a ScientificObject, `GlobalResourceRegistry`
+  entry, Evidence, Decision, provenance node, or Agent memory; the latest revision
+  is derived from `max(revision_seq)` (no mutable current pointer); a stale
+  `base_revision_seq` append fails closed (typed 409); a mention is a reference,
+  never a `RelationType` or provenance edge, and is validated through the current
+  Project read lens at write time.
+- **Public contracts:** the `/api/projects/{project_id}/notes` surface, the
+  `revolab.notes` domain service, and bounded Note selection in
+  `ContextSelection`.
+- **Dependencies:** Project (read lens/lifecycle), Identity/Collaboration
+  (membership authority), and the shared read projections.
+- **Non-responsibilities:** becoming Evidence/Decision truth; entering the
+  scientific graph; per-note ACLs or sharing outside the Project; rich
+  collaborative editing.
+
 ### 2. Scientific Object Domain
 
 - **Purpose:** represent typed scientific entities (Protein, Sequence, Structure,

@@ -2205,7 +2205,8 @@ export interface components {
         /**
          * NotePatch
          * @description Rename and/or archive a Note (non-destructive). Body edits are a new
-         *     revision, never a patch of existing content.
+         *     revision, never a patch of existing content. `archive` is a strict boolean so
+         *     a coerced string can never silently archive a Note.
          */
         NotePatch: {
             /** Archive */

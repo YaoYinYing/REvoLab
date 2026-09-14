@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, model_validator
 
 from revolab.capabilities import LEGAL_COMPUTE_INPUT_KINDS
 from revolab.enums import (
@@ -1159,12 +1159,13 @@ class NoteCreate(BaseModel):
 
 class NotePatch(BaseModel):
     """Rename and/or archive a Note (non-destructive). Body edits are a new
-    revision, never a patch of existing content."""
+    revision, never a patch of existing content. `archive` is a strict boolean so
+    a coerced string can never silently archive a Note."""
 
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, min_length=1, max_length=MAX_NOTE_TITLE_CHARS)
-    archive: bool | None = None
+    archive: StrictBool | None = None
 
 
 class NoteRevisionCreate(BaseModel):

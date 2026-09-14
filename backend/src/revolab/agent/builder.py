@@ -124,6 +124,7 @@ def build_context(
     # unknown id (no existence oracle). Selected Note text stays untrusted data.
     note_refs, notes_truncated = resolve_selected_notes(
         session,
+        actor_id,
         project_id,
         selection.note_ids,
         selection.note_revision_ids,

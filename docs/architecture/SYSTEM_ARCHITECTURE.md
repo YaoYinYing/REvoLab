@@ -143,7 +143,7 @@ The nine domains and their one-line purpose (detailed in
 
 | Domain | Owns |
 |---|---|
-| Project | the workspace boundary: project record, project visibility/annotation, **owns `ProjectResourceLink`** (binds global resources into a Project context), scoping |
+| Project | the workspace boundary: project record, project visibility/annotation, **owns `ProjectResourceLink`** (binds global resources into a Project context), scoping; **Project Notebook sub-boundary** (`ProjectNote`/`ProjectNoteRevision`/`NoteMention` — versioned working documents, never scientific truth, see `PROJECT_NOTEBOOK.md`) |
 | Scientific Object | typed scientific entities and their per-type metadata (a global resource) |
 | Evidence / Provenance | references, evidence claims, and lineage edges |
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
@@ -152,6 +152,11 @@ The nine domains and their one-line purpose (detailed in
 | Agent Context | project-scoped context, skill resolution, and the agent loop (the Agent **consumes** the Project Tool Harness's canonical ToolCatalog) |
 | Identity / Collaboration | actors, authentication identities, membership, roles, credential **bindings** (`ExternalProviderCredentialBinding`: actor + provider + kind + `secret_ref`; the secret **material** lives in the Secret store) |
 | Presentation / Workspace | API surface and the user workspace information architecture |
+
+The **Project Notebook** is an explicit sub-boundary of the Project Domain (not a
+tenth domain), so the nine-domain DAG is unchanged: Agent Context and Presentation
+reach Notes through their existing Project edge (`DOMAIN_BOUNDARIES.md` §1a,
+`PROJECT_NOTEBOOK.md`, ADR-0016).
 
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
 Knowledge) never depend on the Agent Context domain or the Project Tool Harness

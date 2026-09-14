@@ -685,7 +685,7 @@ class ProjectNote(Base, TimestampMixin):
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
     created_by_actor_id: Mapped[UUID] = mapped_column(
-        ForeignKey("actors.actor_id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("actors.actor_id"), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -712,7 +712,7 @@ class ProjectNoteRevision(Base, TimestampMixin):
     revision_seq: Mapped[int] = mapped_column(Integer, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     created_by_actor_id: Mapped[UUID] = mapped_column(
-        ForeignKey("actors.actor_id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("actors.actor_id"), nullable=False, index=True
     )
 
 
@@ -752,8 +752,8 @@ class NoteMention(Base, TimestampMixin):
     )
     target_kind: Mapped[str | None] = mapped_column(_resource_kind)
     target_evidence_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("evidence.id", ondelete="CASCADE"), nullable=True, index=True
+        ForeignKey("evidence.id"), nullable=True, index=True
     )
     target_decision_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("decisions.id", ondelete="CASCADE"), nullable=True, index=True
+        ForeignKey("decisions.id"), nullable=True, index=True
     )

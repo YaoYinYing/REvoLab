@@ -488,4 +488,27 @@ describe('Agent view (Phase 9)', () => {
     render(<AgentView actorId="actor-1" projectId="project-1" initialNoteIds={[note.id]} />)
     expect(await screen.findByLabelText('Select note for agent context')).toHaveValue(note.id)
   })
+
+  it('never sends a stale note id that is not in the current project list', async () => {
+    const turnMock = vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), createConversationTurn: turnMock } as never)
+
+    const user = userEvent.setup()
+    render(
+      <AgentView
+        actorId="actor-1"
+        projectId="project-1"
+        initialNoteIds={['99999999-9999-4999-8999-999999999999']}
+      />,
+    )
+    expect(await screen.findByLabelText('Select note for agent context')).toHaveValue('')
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'hello',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    const body = turnMock.mock.calls[0][2] as { selection: Record<string, unknown> }
+    expect(body.selection.note_ids).toBeUndefined()
+  })
 })

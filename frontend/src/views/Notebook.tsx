@@ -88,6 +88,10 @@ export function NotebookView({
   const canMutate =
     membership.data?.role === ROLE_OWNER || membership.data?.role === ROLE_MEMBER
 
+  // Never render or mutate stale detail: the loaded detail must belong to the
+  // currently selected Note (useAsync keeps the previous value during a reload).
+  const selected = detail.data && detail.data.id === selectedNoteId ? detail.data : null
+
   useEffect(() => {
     const latest = detail.data?.latest
     if (latest) {
@@ -163,7 +167,7 @@ export function NotebookView({
 
   async function appendRevision(event: React.FormEvent) {
     event.preventDefault()
-    const latest = detail.data?.latest
+    const latest = selected?.latest
     if (!latest || !editBody.trim() || busy) return
     setBusy(true)
     setActionError(null)
@@ -184,10 +188,10 @@ export function NotebookView({
   }
 
   async function toggleArchive(archive: boolean) {
-    if (!detail.data || busy) return
+    if (!selectedNoteId || busy) return
     setBusy(true)
     setActionError(null)
-    const res = await projectApi(actorId).patchNote(projectId, detail.data.id, { archive })
+    const res = await projectApi(actorId).patchNote(projectId, selectedNoteId, { archive })
     setBusy(false)
     if (res.error || !res.data) {
       setActionError(apiErrorMessage(res.error, res.response))
@@ -196,8 +200,6 @@ export function NotebookView({
     detail.reload()
     notes.reload()
   }
-
-  const selected = detail.data
 
   return (
     <div className="view">
@@ -322,6 +324,14 @@ export function NotebookView({
           ))}
         </div>
       </Section>
+
+      {selectedNoteId && !selected ? (
+        detail.error ? (
+          <ErrorBox message={detail.error} />
+        ) : (
+          <Loading label="Loading note…" />
+        )
+      ) : null}
 
       {selectedNoteId && selected ? (
         <Section

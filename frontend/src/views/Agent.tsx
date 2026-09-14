@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Bot, BookmarkPlus, GitCommitHorizontal, MessageSquarePlus, Send } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
+import { apiErrorMessage } from '../api/client'
 import { useNotes, useObjects, useResources } from '../api/hooks'
 import type {
   AgentTurnRead,
@@ -40,7 +41,7 @@ export function AgentView({
 }) {
   const { data: objects } = useObjects(actorId, projectId)
   const { data: artifacts } = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
-  const { data: notes } = useNotes(actorId, projectId)
+  const { data: notes, reload: reloadNotes } = useNotes(actorId, projectId)
   const [selectedSeriesId, setSelectedSeriesId] = useState('')
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
   const [selectedNoteId, setSelectedNoteId] = useState(initialNoteIds[0] ?? '')
@@ -54,6 +55,10 @@ export function AgentView({
   const [totalMessages, setTotalMessages] = useState(0)
   const [turn, setTurn] = useState<AgentTurnRead | null>(null)
   const [savedMessageId, setSavedMessageId] = useState<string | null>(null)
+
+  // Only a Note that actually belongs to the current Project may be selected: a
+  // Project switch clears the hand-off and a stale id is never sent.
+  const effectiveNoteId = notes?.some((note) => note.id === selectedNoteId) ? selectedNoteId : ''
 
   // Synchronous view scope: updated on every render so an in-flight turn from a
   // previous Actor x Project can be discarded even before the reset effect runs.
@@ -195,7 +200,7 @@ export function AgentView({
       selection: {
         ...(selectedSeriesId ? { series_ids: [selectedSeriesId] } : {}),
         ...(selectedArtifactId ? { artifact_ids: [selectedArtifactId] } : {}),
-        ...(selectedNoteId ? { note_ids: [selectedNoteId] } : {}),
+        ...(effectiveNoteId ? { note_ids: [effectiveNoteId] } : {}),
         include_relations: true,
         include_evidence: true,
         include_decisions: true,
@@ -260,10 +265,11 @@ export function AgentView({
     })
     setBusy(false)
     if (res.error || !res.data) {
-      setActionError('Could not save the message to a Project Note.')
+      setActionError(apiErrorMessage(res.error, res.response))
       return
     }
     setSavedMessageId(message.id)
+    reloadNotes()
   }
 
   return (
@@ -310,7 +316,7 @@ export function AgentView({
           </Field>
           <Field label="Project note (optional, read as untrusted data)">
             <select
-              value={selectedNoteId}
+              value={effectiveNoteId}
               onChange={(event) => setSelectedNoteId(event.target.value)}
               aria-label="Select note for agent context"
             >

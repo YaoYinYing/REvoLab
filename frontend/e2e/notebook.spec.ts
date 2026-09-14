@@ -199,3 +199,39 @@ test('project notes are shared, revision-safe working knowledge, not truth', asy
   await pageB.close()
   await pageViewer.close()
 })
+
+test('note bodies are rendered as inert text in the browser boundary', async ({ browser, request }) => {
+  test.setTimeout(90_000)
+  const actor = await createActor(request)
+  const project = await createProject(request, actor, `Notebook XSS ${Date.now()}`)
+  const title = `Raw HTML note ${Date.now()}`
+  const body = '<script>window.__revolabXss = true</script>\n\n<img src=x onerror="window.__revolabXss=true">'
+
+  const page = await pageForActor(browser, actor)
+  await page.goto('/')
+  await page.getByLabel('Active project').selectOption(project)
+  const nav = page.getByRole('navigation', { name: 'Project navigation' })
+  await nav.getByRole('button', { name: 'Notes' }).click()
+
+  await page.getByRole('button', { name: /New note/ }).click()
+  await page.getByLabel('New note title').fill(title)
+  await page.getByLabel('New note body').fill(body)
+  await page.getByRole('button', { name: /Create note/ }).click()
+  await expect(page.getByRole('heading', { name: title })).toBeVisible()
+
+  // The Markdown renderer emits the source as inert text; nothing executes.
+  const rendered = page.locator('.markdown-body').first()
+  await expect(rendered).toContainText('<script>window.__revolabXss = true</script>')
+  await expect(page.locator('.markdown-body script')).toHaveCount(0)
+  await expect(page.locator('.markdown-body img')).toHaveCount(0)
+  expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__revolabXss)).toBeUndefined()
+
+  // The revision history renders the same inert body after reload.
+  await page.reload()
+  await nav.getByRole('button', { name: 'Notes' }).click()
+  await page.getByRole('button', { name: new RegExp(title) }).click()
+  await expect(page.locator('.markdown-body').first()).toContainText('<script>window.__revolabXss = true</script>')
+  expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__revolabXss)).toBeUndefined()
+
+  await page.close()
+})

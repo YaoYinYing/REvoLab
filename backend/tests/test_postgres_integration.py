@@ -884,6 +884,13 @@ def test_phase10_note_constraints_enforced_by_postgres(pg_session: Session) -> N
     revision_id = pg_session.scalar(
         select(ProjectNoteRevision.revision_id).where(ProjectNoteRevision.note_id == note.id).limit(1)
     )
+    # Valid FK targets, so the two-target case below can ONLY fail on the CHECK.
+    valid_resource_id = services.create_object(
+        pg_session, actor, project.id, "protein", "PG-Check-Target", payload={}
+    )
+    valid_decision = services.create_decision(
+        pg_session, actor, project.id, title="PG check decision", statement="d"
+    )
 
     # (note_id, revision_seq) is unique at the DB level.
     with pytest.raises(IntegrityError):
@@ -908,7 +915,8 @@ def test_phase10_note_constraints_enforced_by_postgres(pg_session: Session) -> N
         )
     pg_session.rollback()
 
-    # A mention with two targets violates it too.
+    # A mention with two VALID targets violates it too — and would otherwise
+    # satisfy both foreign keys, so this assertion is mutation-sensitive.
     with pytest.raises(IntegrityError):
         pg_session.execute(
             text(
@@ -916,7 +924,12 @@ def test_phase10_note_constraints_enforced_by_postgres(pg_session: Session) -> N
                 "(id, revision_id, ordinal, target_resource_id, target_decision_id) "
                 "VALUES (CAST(:id AS UUID), CAST(:rid AS UUID), 1, CAST(:x AS UUID), CAST(:y AS UUID))"
             ),
-            {"id": str(uuid4()), "rid": str(revision_id), "x": str(uuid4()), "y": str(uuid4())},
+            {
+                "id": str(uuid4()),
+                "rid": str(revision_id),
+                "x": str(valid_resource_id),
+                "y": str(valid_decision.id),
+            },
         )
     pg_session.rollback()
 
@@ -978,3 +991,29 @@ def test_phase10_concurrent_append_conflicts_on_postgres(pg_session: Session) ->
             )
         )
         assert seqs == [1, 2]
+
+
+def test_phase10_append_takes_note_row_lock_on_postgres(pg_session: Session) -> None:
+    """The append path really requests the PostgreSQL row lock. Removing
+    `with_for_update` from `notes._mutable_note` makes this fail, so the ordering
+    claim in notes.py/ADR-0016 is executable, not just asserted."""
+    from sqlalchemy import event
+
+    from revolab.notes import append_revision, create_note
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Note Lock")
+    note = create_note(pg_session, actor, project.id, title="Lock", body="v1")
+    engine = pg_session.get_bind()
+    statements: list[str] = []
+
+    def recorder(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", recorder)
+    try:
+        append_revision(pg_session, actor, project.id, note.id, base_revision_seq=1, body="v2")
+    finally:
+        event.remove(engine, "before_cursor_execute", recorder)
+
+    assert any("FOR UPDATE" in statement.upper() for statement in statements), statements

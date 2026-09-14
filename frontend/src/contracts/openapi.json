@@ -2604,7 +2604,7 @@
       },
       "NotePatch": {
         "additionalProperties": false,
-        "description": "Rename and/or archive a Note (non-destructive). Body edits are a new\nrevision, never a patch of existing content.",
+        "description": "Rename and/or archive a Note (non-destructive). Body edits are a new\nrevision, never a patch of existing content. `archive` is a strict boolean so\na coerced string can never silently archive a Note.",
         "properties": {
           "archive": {
             "anyOf": [

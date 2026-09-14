@@ -100,6 +100,11 @@ export function App() {
     if (first) setActiveProjectId(first.id)
   }, [projects.data, activeProjectId])
 
+  useEffect(() => {
+    // Any Project change invalidates the Project-scoped Note hand-off.
+    setAgentNoteIds([])
+  }, [activeProjectId])
+
   async function createProject(name: string, description: string | null) {
     if (!actorId) return
     const res = await projectApi(actorId).createProject({ name, description, visibility: PROJECT_VISIBILITY_PRIVATE })
@@ -127,6 +132,9 @@ export function App() {
   function selectProject(projectId: string) {
     setActiveProjectId(projectId)
     setSelectedSeriesId(null)
+    // The Note hand-off is Project-scoped: never carry a note id across a
+    // Project switch into another Project's Agent turn.
+    setAgentNoteIds([])
     setView('overview')
   }
 
@@ -286,6 +294,7 @@ export function App() {
           ) : null}
           {view === 'notes' ? (
             <NotebookView
+              key={`${actorId}:${projectId}`}
               actorId={actorId}
               projectId={projectId}
               onAddToAgentContext={(noteId) => {

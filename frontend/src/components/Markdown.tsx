@@ -15,11 +15,21 @@ import type { ReactNode } from 'react'
  * and safe-scheme links. Unsupported syntax stays visible as literal text.
  */
 
-const SAFE_SCHEMES = ['http://', 'https://', 'mailto:']
+const SAFE_PROTOCOLS = ['http:', 'https:', 'mailto:']
 
 function isSafeHref(href: string): boolean {
-  const value = href.trim().toLowerCase()
-  return SAFE_SCHEMES.some((scheme) => value.startsWith(scheme))
+  const value = href.trim()
+  // Reject any control/whitespace/quote/angle character outright: a URL is only
+  // ever placed in `href`, but a stricter parser removes attribute-injection
+  // ambiguity (React still escapes every attribute).
+  if (!value || /[\s<>"'`\\\u0000-\u001f\u007f]/.test(value)) return false
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return false
+  }
+  return SAFE_PROTOCOLS.includes(parsed.protocol)
 }
 
 /** Inline parse: returns React nodes; all literal text is escaped by React. */
