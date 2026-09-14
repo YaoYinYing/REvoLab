@@ -982,9 +982,12 @@ def test_derived_result_persist_defers_to_the_callers_transaction(tmp_path):
         assert result.persisted is True
         assert result.resource_id is not None
 
-        # The caller's own session sees the flushed rows before its commit ...
-        assert session.get(ArtifactReference, result.resource_id) is not None
-        assert len(session.scalars(select(ToolInvocation)).all()) == 1
+        # The caller's own session sees the FLUSHED rows before its commit. This
+        # runs with autoflush disabled so it pins the explicit flush, not an
+        # incidental autoflush triggered by the SELECT.
+        with session.no_autoflush:
+            assert session.get(ArtifactReference, result.resource_id) is not None
+            assert len(session.scalars(select(ToolInvocation)).all()) == 1
 
         # ... while a different session sees neither row yet.
         with ORMSession(engine) as other:
@@ -1078,3 +1081,15 @@ def test_negative_history_ceilings_are_rejected_at_construction():
         AgentLoopBounds(max_history_chars=-1)
     # 0 stays a legal (diagnostic) value for both ceilings.
     AgentLoopBounds(max_history_messages=0, max_history_chars=0)
+
+
+def test_settings_reject_negative_history_ceilings():
+    from pydantic import ValidationError as PydanticValidationError
+
+    from revolab.config import Settings
+
+    for field in ("agent_max_history_messages", "agent_max_history_chars"):
+        with pytest.raises(PydanticValidationError):
+            Settings(**{field: -1})
+    # 0 stays a legal diagnostic value.
+    Settings(agent_max_history_messages=0, agent_max_history_chars=0)
