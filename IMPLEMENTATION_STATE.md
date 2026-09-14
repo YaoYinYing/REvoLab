@@ -1268,7 +1268,7 @@ every job.
 ## Verified evidence (Phase 9)
 
 - Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
-  `pytest` passes **336 passed, 9 skipped** (SQLite fast tests; the 9 skips are
+  `pytest` passes **338 passed, 9 skipped** (SQLite fast tests; the 9 skips are
   the opt-in PostgreSQL acceptance file). `test_conversations.py` regressions
   cover: persist+reload, server-owned second-turn history, structural rejection
   of client-supplied history, Actor isolation (incl. the OWNER cannot read a
@@ -1445,8 +1445,21 @@ coverage gaps, now closed: the persisted transcript reuses the canonical
 failure); the `openConversation` discard guard has a slow-open regression
 (mutation-verified: removing only that guard fails exactly that test); the successful-restore
 regression pins the persisted per-tool status text; `ConversationRole` joined the contract
-enum-lockstep list; `_bounded_history` treats a 0 count ceiling as "no history" (never the
-unbounded `[-0:]` slice) with a regression; and the `commit=False` + `persist=True`
+enum-lockstep list; both `_bounded_history` helpers (runner and prompt assembly) treat a 0 count ceiling as
+"no history" (never the unbounded `[-0:]` slice), with regressions; and the `commit=False` + `persist=True`
 derived-result branch has a deferred-durability regression (flushed, invisible to a second
 session until the caller commits; a rollback leaves no derived rows). Final counts:
 **336 backend tests**, **24 frontend tests**.
+
+### Delta round 5 (P1 correction)
+
+Delta round 5 found a P1 **introduced by round 4**: the 0-ceiling guard used
+`history[len(history) - n:]`, which is a negative index when the ceiling exceeds the number of
+messages and therefore silently dropped the oldest messages (e.g. 15 messages with the default
+ceiling of 20 kept only 5). Fixed to `history[-n:]` (whole list when `n > len`), with a boundary
+regression at ceiling > message count, and the same 0-ceiling rule applied to the prompt-layer
+helper (which previously treated 0 as unbounded); `agent_max_history_messages` /
+`agent_max_history_chars` are now `ge=0`-validated. Also from that round: the deferred-durability
+regression now pins the flush half (rows visible in the caller's session pre-commit), and a
+reloaded `pending` entry keeps its inert "NOT executed: <reason>" framing. Final counts:
+**338 backend tests**, **24 frontend tests**.

@@ -394,8 +394,10 @@ class AgentTurnRunner:
             return ()
         # `history[-0:]` would return the whole list, so the count ceiling is
         # applied explicitly: 0 means "no history", never "unbounded history".
+        # (`history[-n:]` — not `history[len-n:]` — is the correct slice: a
+        # negative index clamps to the whole list when n > len(history).)
         count_limit = self._bounds.max_history_messages
-        window = history[len(history) - count_limit :] if count_limit > 0 else []
+        window = history[-count_limit:] if count_limit > 0 else []
         kept: list[ChatMessage] = []
         used = 0
         for item in reversed(window):

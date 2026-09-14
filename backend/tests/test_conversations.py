@@ -982,7 +982,11 @@ def test_derived_result_persist_defers_to_the_callers_transaction(tmp_path):
         assert result.persisted is True
         assert result.resource_id is not None
 
-        # Flushed, not durable: another session sees neither row yet.
+        # The caller's own session sees the flushed rows before its commit ...
+        assert session.get(ArtifactReference, result.resource_id) is not None
+        assert len(session.scalars(select(ToolInvocation)).all()) == 1
+
+        # ... while a different session sees neither row yet.
         with ORMSession(engine) as other:
             assert other.get(ArtifactReference, result.resource_id) is None
             assert other.scalars(select(ToolInvocation)).all() == []
@@ -1010,3 +1014,54 @@ def test_derived_result_persist_defers_to_the_callers_transaction(tmp_path):
         with ORMSession(engine) as other:
             assert other.get(ArtifactReference, rolled_back.resource_id) is None
             assert len(other.scalars(select(ToolInvocation)).all()) == 1
+
+
+def test_positive_history_ceiling_above_message_count_keeps_everything(session, tmp_path):
+    """Boundary: when the count ceiling EXCEEDS the number of persisted messages,
+    the whole transcript must be kept (`history[-n:]`), not a negative-index slice
+    that silently drops the oldest messages."""
+    actor = _actor(session)
+    project = _project(session, actor)
+    conversation = create_conversation(session, actor, project.id)
+    contents = [f"m{index}" for index in range(15)]
+    for index, content in enumerate(contents):
+        session.add(
+            ConversationMessage(
+                conversation_id=conversation.id,
+                seq=index + 1,
+                role=ConversationRole.USER.value,
+                content=content,
+            )
+        )
+    session.commit()
+
+    model = _CapturingModel([_stop("ok")])
+    result = run_conversation_turn(
+        session,
+        actor,
+        project.id,
+        conversation.id,
+        _runner(
+            session,
+            actor,
+            project,
+            _registry(),
+            InMemorySecretStore(),
+            ContentStore(tmp_path),
+            model=model,
+            bounds=AgentLoopBounds(max_history_messages=20),
+        ),
+        message="hello",
+    )
+    assert result.turn.budget.history_messages == 15
+    assert any(message.content == "m0" for message in model.requests[0].messages)
+    assert any(message.content == "m14" for message in model.requests[0].messages)
+
+
+def test_prompt_history_helper_respects_zero_ceiling():
+    from revolab.agent.model_backend import ChatMessage
+    from revolab.agent.prompt import _bounded_history
+
+    history = tuple(ChatMessage(role="user", content=f"m{index}") for index in range(4))
+    assert _bounded_history(history, max_messages=0, max_chars=10_000) == ()
+    assert _bounded_history(history, max_messages=2, max_chars=10_000) == history[-2:]

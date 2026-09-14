@@ -192,7 +192,9 @@ describe('Agent view (Phase 9)', () => {
     // persisted per-tool STATUS stays visible/distinguishable after reload.
     expect(screen.getByText(/Tools:/)).toBeInTheDocument()
     expect(screen.getByText(/table\.describe \(completed\)/)).toBeInTheDocument()
+    // A reloaded pending proposal keeps its NOT-executed framing (truth boundary).
     expect(screen.getByText(/decision\.commit \(pending\)/)).toBeInTheDocument()
+    expect(screen.getByText(/NOT executed: explicit actions require an authorized human action/)).toBeInTheDocument()
   })
 
   it('clears conversation content when the project changes', async () => {

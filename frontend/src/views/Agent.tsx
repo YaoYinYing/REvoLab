@@ -326,9 +326,15 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
                 {(message.tool_trace ?? []).map((entry, index) => (
                   // Reuse the canonical status→tone mapping so a persisted
                   // `pending` (proposed, not executed) reads as a warning, never
-                  // as a failure.
+                  // as a failure, and keep the inert NOT-executed framing visible
+                  // after reload.
                   <Badge key={`${entry.tool_id}-${index}`} tone={traceTone(entry.status)}>
                     {entry.tool_id} ({entry.status})
+                    {entry.status === AGENT_TOOL_CALL_STATUS_PENDING && entry.pending_reason
+                      ? ` — NOT executed: ${entry.pending_reason}`
+                      : entry.error
+                        ? ` — ${entry.error}`
+                        : ''}
                   </Badge>
                 ))}
               </small>

@@ -121,8 +121,13 @@ def _message_groups(messages: tuple[ChatMessage, ...]) -> list[tuple[ChatMessage
 
 def _bounded_history(history: tuple[ChatMessage, ...], *, max_messages: int, max_chars: int) -> tuple[ChatMessage, ...]:
     """Bound transient history by count AND chars while preserving complete
-    assistant/tool-call groups. Walks groups from the most recent backward."""
-    groups = _message_groups(history[-max_messages:])
+    assistant/tool-call groups. Walks groups from the most recent backward.
+
+    A 0 count ceiling means "no history" — `history[-0:]` would be the whole
+    list, so the ceiling is applied explicitly (the same rule as
+    `AgentTurnRunner._bounded_history`)."""
+    window = history[-max_messages:] if max_messages > 0 else ()
+    groups = _message_groups(window)
     bounded: list[ChatMessage] = []
     used = 0
     for group in reversed(groups):
