@@ -1268,7 +1268,7 @@ every job.
 ## Verified evidence (Phase 9)
 
 - Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
-  `pytest` passes **334 passed, 9 skipped** (SQLite fast tests; the 9 skips are
+  `pytest` passes **336 passed, 9 skipped** (SQLite fast tests; the 9 skips are
   the opt-in PostgreSQL acceptance file). `test_conversations.py` regressions
   cover: persist+reload, server-owned second-turn history, structural rejection
   of client-supplied history, Actor isolation (incl. the OWNER cannot read a
@@ -1296,11 +1296,12 @@ every job.
   `ConversationTurnCreate` owns the turn request, and that the conversation
   create/patch/turn schemas all reject unknown fields (`additionalProperties:
   false`).
-- Frontend: `npm run typecheck`, `npm run test` (**23 tests** — the Phase-9
+- Frontend: `npm run typecheck`, `npm run test` (**24 tests** — the Phase-9
   Agent view: working-memory boundary, conversation list/restore, tool trace +
   pending action, failure state, project-switch clearing, deferred
   cross-project response discard, deferred cross-conversation response discard,
-  send-disabled-while-loading, and deferred initial-restore discard), and
+  send-disabled-while-loading, deferred initial-restore discard, and slow-open
+discard), and
   `npm run build` pass.
 - Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real
   SQLite + `REVOLAB_E2E_FAKE_MODEL=1` + `REVOLAB_E2E_FAKE_COMPUTE=1`): all
@@ -1435,3 +1436,17 @@ bounds are pinned by 422 regressions.
   earlier phases).
 - Frontend: `openapi-fetch` (typed client), `openapi-typescript` (contract
   generation, dev), `@playwright/test` (browser smoke, dev), `@types/node` (dev).
+
+### Delta round 4 (P2 closure)
+
+The fourth delta round returned **PASS on all three lenses with no P0/P1** and flagged
+coverage gaps, now closed: the persisted transcript reuses the canonical
+`traceTone` status→tone mapping (a reloaded `pending` proposal no longer renders as a
+failure); the `openConversation` discard guard has a slow-open regression
+(mutation-verified: removing only that guard fails exactly that test); the successful-restore
+regression pins the persisted per-tool status text; `ConversationRole` joined the contract
+enum-lockstep list; `_bounded_history` treats a 0 count ceiling as "no history" (never the
+unbounded `[-0:]` slice) with a regression; and the `commit=False` + `persist=True`
+derived-result branch has a deferred-durability regression (flushed, invisible to a second
+session until the caller commits; a rollback leaves no derived rows). Final counts:
+**336 backend tests**, **24 frontend tests**.

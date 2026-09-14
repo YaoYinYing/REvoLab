@@ -732,6 +732,7 @@ def test_conversation_role_is_check_constrained_at_the_database(session, tmp_pat
                 "content": "rejected",
             },
         )
+    session.rollback()
 
 
 def test_owner_cannot_read_member_private_conversation(session, tmp_path):
@@ -898,3 +899,114 @@ def test_conversation_page_size_bounds_are_typed(client):
         ).status_code
         == 200
     )
+
+
+def test_zero_history_ceiling_means_no_history(session, tmp_path):
+    """A 0 count ceiling must mean "no history", not the unbounded `[-0:]` slice."""
+    actor = _actor(session)
+    project = _project(session, actor)
+    conversation = create_conversation(session, actor, project.id)
+    for index in range(3):
+        session.add(
+            ConversationMessage(
+                conversation_id=conversation.id,
+                seq=index + 1,
+                role=ConversationRole.USER.value,
+                content=f"m{index}",
+            )
+        )
+    session.commit()
+
+    model = _CapturingModel([_stop("ok")])
+    result = run_conversation_turn(
+        session,
+        actor,
+        project.id,
+        conversation.id,
+        _runner(
+            session,
+            actor,
+            project,
+            _registry(),
+            InMemorySecretStore(),
+            ContentStore(tmp_path),
+            model=model,
+            bounds=AgentLoopBounds(max_history_messages=0),
+        ),
+        message="hello",
+    )
+    assert result.turn.budget.history_messages == 0
+    assert not any(message.content == "m2" for message in model.requests[0].messages)
+
+
+def test_derived_result_persist_defers_to_the_callers_transaction(tmp_path):
+    """`persist=True` inside a `commit=False` context is flushed, not durable: the
+    caller's commit is the linearization point, and a rollback leaves no derived
+    artifact or ToolInvocation row behind."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as ORMSession
+
+    from revolab.db import Base
+    from revolab.models import ArtifactReference, ToolInvocation
+    from revolab.schemas import ToolInvocationCreate
+    from revolab.tools.registry import build_default_registry
+    from revolab.tools.runtime import LocalToolRuntime
+    from revolab.tools.types import InvocationContext
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'deferred.db'}")
+    Base.metadata.create_all(engine)
+    content_store = ContentStore(tmp_path / "content")
+    runtime = LocalToolRuntime(build_default_registry())
+
+    with ORMSession(engine) as session:
+        actor = services.create_actor(session)
+        project = services.create_project(session, actor, "Deferred")
+        artifact = services.create_internal_artifact(
+            session, actor, project.id, content_store, b"x,y\n1,2\n2,4\n", content_type="text/csv"
+        )
+        ctx = InvocationContext(
+            session=session,
+            registry=_registry(),
+            secret_store=InMemorySecretStore(),
+            content_store=content_store,
+            actor_id=actor,
+            project_id=project.id,
+            commit=False,
+        )
+        request = ToolInvocationCreate(
+            tool_id="table.select",
+            input={"artifact_id": str(artifact.artifact_id), "columns": ["x", "y"], "limit": 10},
+            persist=True,
+        )
+        result = runtime.invoke(ctx, request)
+        assert result.persisted is True
+        assert result.resource_id is not None
+
+        # Flushed, not durable: another session sees neither row yet.
+        with ORMSession(engine) as other:
+            assert other.get(ArtifactReference, result.resource_id) is None
+            assert other.scalars(select(ToolInvocation)).all() == []
+
+        session.commit()
+        with ORMSession(engine) as other:
+            assert other.get(ArtifactReference, result.resource_id) is not None
+            assert len(other.scalars(select(ToolInvocation)).all()) == 1
+
+        # A rollback before the caller commits leaves no derived rows behind.
+        # (Different input -> different derived bytes, so this is a NEW
+        # content-addressed ArtifactReference rather than a get-or-create reuse
+        # of the already-committed one.)
+        rolled_back = runtime.invoke(
+            ctx,
+            ToolInvocationCreate(
+                tool_id="table.select",
+                input={"artifact_id": str(artifact.artifact_id), "columns": ["x", "y"], "limit": 1},
+                persist=True,
+            ),
+        )
+        assert rolled_back.resource_id is not None
+        assert rolled_back.resource_id != result.resource_id
+        session.rollback()
+        with ORMSession(engine) as other:
+            assert other.get(ArtifactReference, rolled_back.resource_id) is None
+            assert len(other.scalars(select(ToolInvocation)).all()) == 1

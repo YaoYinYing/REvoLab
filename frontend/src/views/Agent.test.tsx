@@ -188,8 +188,11 @@ describe('Agent view (Phase 9)', () => {
     render(<AgentView actorId="actor-1" projectId="project-1" />)
     expect(await screen.findByText('Describe this table')).toBeInTheDocument()
     expect(screen.getAllByText(/The table is described/).length).toBeGreaterThanOrEqual(1)
-    // Durable transcript keeps an inert tool summary, not a lost turn.
+    // Durable transcript keeps an inert tool summary, not a lost turn, and the
+    // persisted per-tool STATUS stays visible/distinguishable after reload.
     expect(screen.getByText(/Tools:/)).toBeInTheDocument()
+    expect(screen.getByText(/table\.describe \(completed\)/)).toBeInTheDocument()
+    expect(screen.getByText(/decision\.commit \(pending\)/)).toBeInTheDocument()
   })
 
   it('clears conversation content when the project changes', async () => {
@@ -338,6 +341,48 @@ describe('Agent view (Phase 9)', () => {
     expect(getConversationMock.mock.calls.some(([, id]) => id === conversation.id)).toBe(true)
     expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
     expect(screen.queryByText('decision.commit')).not.toBeInTheDocument()
+  })
+
+  it('discards a slow conversation open after the user switched away', async () => {
+    const conversationA = { ...conversation, id: '88888888-8888-4888-8888-888888888888', title: 'Conversation A' }
+    const conversationB = { ...conversation, id: '99999999-9999-4999-8999-999999999999', title: 'Conversation B' }
+    let resolveA!: (value: { data: unknown; error: undefined; response: Response }) => void
+    const pendingA = new Promise<{ data: unknown; error: undefined; response: Response }>((resolve) => {
+      resolveA = resolve
+    })
+    const getConversationMock = vi.fn((projectId: string, conversationId: string) =>
+      conversationId === conversationA.id
+        ? pendingA
+        : Promise.resolve({
+            data: { ...conversationB, messages: [], total_messages: 0 },
+            error: undefined,
+            response: new Response(),
+          }),
+    )
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      // Auto-select lands on B; the user then opens A (slow) and switches back.
+      listConversations: vi.fn().mockResolvedValue({
+        data: [conversationB, conversationA],
+        error: undefined,
+        response: new Response(),
+      }),
+      getConversation: getConversationMock,
+    } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+
+    await user.click(await screen.findByRole('button', { name: /Conversation A/ }))
+    await user.click(await screen.findByRole('button', { name: /Conversation B/ }))
+
+    await act(async () => {
+      resolveA({ data: { ...conversationA, messages: [turnRead.assistant_message!], total_messages: 1 }, error: undefined, response: new Response() })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(getConversationMock.mock.calls.some(([, id]) => id === conversationA.id)).toBe(true)
+    expect(screen.queryByText(/The table is described/)).not.toBeInTheDocument()
   })
 
   it('disables sending while the initial conversation list is loading', async () => {

@@ -392,9 +392,13 @@ class AgentTurnRunner:
         reciting its earliest messages."""
         if not history:
             return ()
+        # `history[-0:]` would return the whole list, so the count ceiling is
+        # applied explicitly: 0 means "no history", never "unbounded history".
+        count_limit = self._bounds.max_history_messages
+        window = history[len(history) - count_limit :] if count_limit > 0 else []
         kept: list[ChatMessage] = []
         used = 0
-        for item in reversed(history[-self._bounds.max_history_messages :]):
+        for item in reversed(window):
             role = _item_attr(item, "role")
             content = _item_attr(item, "content")
             if role not in {"user", "assistant"} or not isinstance(content, str):

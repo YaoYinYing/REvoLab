@@ -15,6 +15,7 @@ import {
   AGENT_TOOL_CALL_STATUS_COMPLETED,
   AGENT_TOOL_CALL_STATUS_FAILED,
   CONVERSATION_ROLE_ASSISTANT,
+  CONVERSATION_ROLE_USER,
   AGENT_TOOL_CALL_STATUS_PENDING,
   RESOURCE_KIND_ARTIFACT,
 } from '../contracts/enums'
@@ -307,7 +308,13 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
           >
             <div className="list-row-head">
               {message.role === CONVERSATION_ROLE_ASSISTANT ? <Bot size={15} /> : null}
-              <strong>{message.role === CONVERSATION_ROLE_ASSISTANT ? 'Agent' : 'You'}</strong>
+              <strong>
+                {message.role === CONVERSATION_ROLE_ASSISTANT
+                  ? 'Agent'
+                  : message.role === CONVERSATION_ROLE_USER
+                    ? 'You'
+                    : message.role}
+              </strong>
               {message.role === CONVERSATION_ROLE_ASSISTANT && message.termination_reason && message.termination_reason !== AGENT_TERMINATION_REASON_FINAL_RESPONSE ? (
                 <Badge tone="warn">{message.termination_reason}</Badge>
               ) : null}
@@ -317,12 +324,12 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
               <small className="muted-note">
                 Tools:{' '}
                 {(message.tool_trace ?? []).map((entry, index) => (
-                  <span
-                    key={`${entry.tool_id}-${index}`}
-                    className={entry.status === AGENT_TOOL_CALL_STATUS_COMPLETED ? 'mono' : 'inline-error'}
-                  >
-                    {entry.tool_id} ({entry.status}){' '}
-                  </span>
+                  // Reuse the canonical status→tone mapping so a persisted
+                  // `pending` (proposed, not executed) reads as a warning, never
+                  // as a failure.
+                  <Badge key={`${entry.tool_id}-${index}`} tone={traceTone(entry.status)}>
+                    {entry.tool_id} ({entry.status})
+                  </Badge>
                 ))}
               </small>
             ) : null}

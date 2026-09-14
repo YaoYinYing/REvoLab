@@ -41,6 +41,7 @@ const ENUM_NAMES = [
   'ToolResultKind',
   'AgentTerminationReason',
   'AgentToolCallStatus',
+  'ConversationRole',
 ]
 
 describe('generated API contract boundary', () => {
