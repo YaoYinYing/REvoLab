@@ -1301,7 +1301,7 @@ every job.
   pending action, failure state, project-switch clearing, deferred
   cross-project response discard, deferred cross-conversation response discard,
   send-disabled-while-loading, deferred initial-restore discard, and slow-open
-discard), and
+  discard), and
   `npm run build` pass.
 - Browser (`npm run test:e2e`, Playwright Chromium over real FastAPI + real
   SQLite + `REVOLAB_E2E_FAKE_MODEL=1` + `REVOLAB_E2E_FAKE_COMPUTE=1`): all
@@ -1406,6 +1406,33 @@ bounds are pinned by 422 regressions.
 
 
 
+### Delta round 4 (P2 closure)
+
+The fourth delta round returned **PASS on all three lenses with no P0/P1** and flagged
+coverage gaps, now closed: the persisted transcript reuses the canonical
+`traceTone` status→tone mapping (a reloaded `pending` proposal no longer renders as a
+failure); the `openConversation` discard guard has a slow-open regression
+(mutation-verified: removing only that guard fails exactly that test); the successful-restore
+regression pins the persisted per-tool status text; `ConversationRole` joined the contract
+enum-lockstep list; both `_bounded_history` helpers (runner and prompt assembly) treat a 0 count ceiling as
+"no history" (never the unbounded `[-0:]` slice), with regressions; and the `commit=False` + `persist=True`
+derived-result branch has a deferred-durability regression (flushed, invisible to a second
+session until the caller commits; a rollback leaves no derived rows). Final counts:
+**336 backend tests**, **24 frontend tests**.
+
+### Delta round 5 (P1 correction)
+
+Delta round 5 found a P1 **introduced by round 4**: the 0-ceiling guard used
+`history[len(history) - n:]`, which is a negative index when the ceiling exceeds the number of
+messages and therefore silently dropped the oldest messages (e.g. 15 messages with the default
+ceiling of 20 kept only 5). Fixed to `history[-n:]` (whole list when `n > len`), with a boundary
+regression at ceiling > message count, and the same 0-ceiling rule applied to the prompt-layer
+helper (which previously treated 0 as unbounded); `agent_max_history_messages` /
+`agent_max_history_chars` are now `ge=0`-validated. Also from that round: the deferred-durability
+regression now pins the flush half (rows visible in the caller's session pre-commit), and a
+reloaded `pending` entry keeps its inert "NOT executed: <reason>" framing. Final counts:
+**338 backend tests**, **24 frontend tests**.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
@@ -1436,30 +1463,3 @@ bounds are pinned by 422 regressions.
   earlier phases).
 - Frontend: `openapi-fetch` (typed client), `openapi-typescript` (contract
   generation, dev), `@playwright/test` (browser smoke, dev), `@types/node` (dev).
-
-### Delta round 4 (P2 closure)
-
-The fourth delta round returned **PASS on all three lenses with no P0/P1** and flagged
-coverage gaps, now closed: the persisted transcript reuses the canonical
-`traceTone` status→tone mapping (a reloaded `pending` proposal no longer renders as a
-failure); the `openConversation` discard guard has a slow-open regression
-(mutation-verified: removing only that guard fails exactly that test); the successful-restore
-regression pins the persisted per-tool status text; `ConversationRole` joined the contract
-enum-lockstep list; both `_bounded_history` helpers (runner and prompt assembly) treat a 0 count ceiling as
-"no history" (never the unbounded `[-0:]` slice), with regressions; and the `commit=False` + `persist=True`
-derived-result branch has a deferred-durability regression (flushed, invisible to a second
-session until the caller commits; a rollback leaves no derived rows). Final counts:
-**336 backend tests**, **24 frontend tests**.
-
-### Delta round 5 (P1 correction)
-
-Delta round 5 found a P1 **introduced by round 4**: the 0-ceiling guard used
-`history[len(history) - n:]`, which is a negative index when the ceiling exceeds the number of
-messages and therefore silently dropped the oldest messages (e.g. 15 messages with the default
-ceiling of 20 kept only 5). Fixed to `history[-n:]` (whole list when `n > len`), with a boundary
-regression at ceiling > message count, and the same 0-ceiling rule applied to the prompt-layer
-helper (which previously treated 0 as unbounded); `agent_max_history_messages` /
-`agent_max_history_chars` are now `ge=0`-validated. Also from that round: the deferred-durability
-regression now pins the flush half (rows visible in the caller's session pre-commit), and a
-reloaded `pending` entry keeps its inert "NOT executed: <reason>" framing. Final counts:
-**338 backend tests**, **24 frontend tests**.

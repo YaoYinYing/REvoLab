@@ -191,9 +191,12 @@ describe('Agent view (Phase 9)', () => {
     // Durable transcript keeps an inert tool summary, not a lost turn, and the
     // persisted per-tool STATUS stays visible/distinguishable after reload.
     expect(screen.getByText(/Tools:/)).toBeInTheDocument()
-    expect(screen.getByText(/table\.describe \(completed\)/)).toBeInTheDocument()
+    // The persisted status is not merely text: it carries the canonical tone, so
+    // a completed call is "good" and a pending (proposed, not executed) call is a
+    // warning rather than a failure.
+    expect(screen.getByText(/table\.describe \(completed\)/)).toHaveClass('badge-good')
+    expect(screen.getByText(/decision\.commit \(pending\)/)).toHaveClass('badge-warn')
     // A reloaded pending proposal keeps its NOT-executed framing (truth boundary).
-    expect(screen.getByText(/decision\.commit \(pending\)/)).toBeInTheDocument()
     expect(screen.getByText(/NOT executed: explicit actions require an authorized human action/)).toBeInTheDocument()
   })
 
