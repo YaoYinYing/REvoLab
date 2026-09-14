@@ -162,9 +162,17 @@ def _persist_derived_artifact(
         status="completed",
         commit=False,
     )
-    # The single linearization point for the whole derived-result saga.
-    ctx.session.commit()
-    ctx.session.refresh(artifact)
+    # The single linearization point for the whole derived-result saga — unless
+    # the caller owns the transaction (`InvocationContext.commit=False`). Today no
+    # production caller combines `commit=False` with `persist=True` (the bounded
+    # Agent loop always invokes with `persist=False`); the branch exists so that a
+    # future transaction-owning caller cannot silently commit mid-turn and release
+    # a lock it promised to hold.
+    if ctx.commit:
+        ctx.session.commit()
+        ctx.session.refresh(artifact)
+    else:
+        ctx.session.flush()
     return artifact_id
 
 

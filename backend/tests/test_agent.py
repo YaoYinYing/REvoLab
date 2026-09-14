@@ -928,21 +928,39 @@ def test_agent_turn_api_vertical_slice(client):
         assert uploaded.status_code == 201
         artifact_id = uploaded.json()["resource_id"]
 
+        conversation = client.post(
+            f"/api/projects/{pid}/agent/conversations",
+            json={"title": "Vertical slice"},
+            headers=headers,
+        )
+        assert conversation.status_code == 201
+        conversation_id = conversation.json()["id"]
+
         turn = client.post(
-            f"/api/projects/{pid}/agent/turns",
+            f"/api/projects/{pid}/agent/conversations/{conversation_id}/turns",
             json={
                 "message": "Describe this table and draft a conclusion based on it.",
                 "selection": {"series_ids": [series_id], "artifact_ids": [artifact_id]},
             },
             headers=headers,
         )
-        assert turn.status_code == 200, turn.text
-        body = turn.json()
+        assert turn.status_code == 201, turn.text
+        body = turn.json()["turn"]
         assert body["termination_reason"] == "final_response"
         tool_ids = [entry["tool_id"] for entry in body["tool_trace"]]
         assert tool_ids == ["table.describe", "decision.record_draft"]
         assert all(entry["status"] == "completed" for entry in body["tool_trace"])
         assert body["pending_actions"] == []
+        # The transcript is durable: user + assistant rows, re-readable from the
+        # server (not merely an ephemeral client-side transcript).
+        assert turn.json()["user_message"]["role"] == "user"
+        assert turn.json()["assistant_message"]["role"] == "assistant"
+        detail = client.get(f"/api/projects/{pid}/agent/conversations/{conversation_id}", headers=headers)
+        assert detail.status_code == 200
+        assert [message["role"] for message in detail.json()["messages"]] == ["user", "assistant"]
+        # The assistant row carries an inert tool summary, never raw ToolResult.
+        assert detail.json()["messages"][1]["tool_trace"][0]["tool_id"] == "table.describe"
+        assert "result" not in detail.json()["messages"][1]["tool_trace"][0]
 
         decisions = client.get(f"/api/projects/{pid}/decisions", headers=headers).json()
         assert len(decisions) == 1
@@ -1044,13 +1062,18 @@ def test_agent_http_viewer_is_read_only(client):
                 {"finish": "stop", "content": "stopped"},
             ]
         )
+        conversation = client.post(
+            f"/api/projects/{pid}/agent/conversations", json={"title": "Viewer"}, headers=_headers(viewer_id)
+        )
+        assert conversation.status_code == 201
+        conversation_id = conversation.json()["id"]
         turn = client.post(
-            f"/api/projects/{pid}/agent/turns",
+            f"/api/projects/{pid}/agent/conversations/{conversation_id}/turns",
             json={"message": "record a draft"},
             headers=_headers(viewer_id),
         )
-        assert turn.status_code == 200
-        body = turn.json()
+        assert turn.status_code == 201
+        body = turn.json()["turn"]
         assert body["termination_reason"] == "final_response"
         assert body["tool_trace"][0]["tool_id"] == "decision.record_draft"
         assert body["tool_trace"][0]["status"] == "failed"
@@ -1075,8 +1098,15 @@ def test_agent_http_viewer_is_read_only(client):
 def test_agent_turn_without_model_config_fails_closed_http(client):
     actor_id = _http_actor(client)
     pid = _http_project(client, actor_id, "No Model")["id"]
+    conversation = client.post(
+        f"/api/projects/{pid}/agent/conversations", json={"title": "No model"}, headers=_headers(actor_id)
+    )
+    assert conversation.status_code == 201
+    conversation_id = conversation.json()["id"]
     response = client.post(
-        f"/api/projects/{pid}/agent/turns", json={"message": "hi"}, headers=_headers(actor_id)
+        f"/api/projects/{pid}/agent/conversations/{conversation_id}/turns",
+        json={"message": "hi"},
+        headers=_headers(actor_id),
     )
     assert response.status_code == 503
     assert "no model runtime configured" in response.json()["detail"]

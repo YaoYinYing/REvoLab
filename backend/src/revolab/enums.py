@@ -284,3 +284,14 @@ class AgentToolCallStatus(StrEnum):
     PENDING = "pending"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class ConversationRole(StrEnum):
+    """The only two durable roles of a persisted conversation message. A stored
+    transcript is conversational working memory: `user` text and `assistant`
+    text are BOTH untrusted conversational data, never system authority.
+    Tool results are not stored as their own role — they survive only inside a
+    bounded inert summary attached to the assistant message that produced them."""
+
+    USER = "user"
+    ASSISTANT = "assistant"

@@ -100,6 +100,14 @@ class AgentLoopBounds:
     max_tool_result_chars: int = 12_000
     total_turn_duration_seconds: float = 300.0
 
+    def __post_init__(self) -> None:
+        """Reject negative history ceilings at construction: both consumers fail
+        closed for <= 0, but an embedder should not be able to build a bounds
+        object whose ceiling silently means "no history" without opting into 0."""
+        for name in ("max_history_messages", "max_history_chars"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be >= 0")
+
 
 def _tool_descriptor_tools(catalog_tools: list[dict[str, Any]]) -> tuple[ToolSpec, ...]:
     """Project the Agent-facing tool surface. Only local tools and remote
@@ -186,7 +194,14 @@ def _bounded_pending_arguments(validated: dict[str, Any], limit: int) -> dict[st
 
 class AgentTurnRunner:
     """Run one bounded Agent turn. Stateless across turns (context + catalog are
-    rebuilt fresh on every call), process-local only."""
+    rebuilt fresh on every call), process-local only.
+
+    Transaction contract: `run` is a sub-runtime, not a durable committer. Typed
+    domain writes it performs (policy truth tools) are FLUSHED but left
+    uncommitted (`commit=False`) so a wrapping persistence orchestration can make
+    the whole turn one transaction; the caller is responsible for the final
+    `session.commit()`. The production caller is
+    `revolab.agent.conversations.run_conversation_turn`."""
 
     def __init__(
         self,
@@ -257,6 +272,7 @@ class AgentTurnRunner:
             content_store=self._content_store,
             actor_id=actor_id,
             project_id=project_id,
+            commit=False,
         )
 
         while True:
@@ -377,11 +393,22 @@ class AgentTurnRunner:
         )
 
     def _bounded_history(self, history: list[Any] | None) -> tuple[ChatMessage, ...]:
+        """Select the bounded SUFFIX of the transcript: the most recent messages
+        that fit the count and char ceilings, in ascending order. Walking from the
+        newest backward (never a forward prefix) is what makes this a bounded
+        suffix — a durable conversation must never lose its latest context while
+        reciting its earliest messages."""
         if not history:
             return ()
-        messages: list[ChatMessage] = []
+        # `history[-0:]` would return the whole list, so the count ceiling is
+        # applied explicitly: 0 means "no history", never "unbounded history".
+        # (`history[-n:]` — not `history[len-n:]` — is the correct slice: a
+        # negative index clamps to the whole list when n > len(history).)
+        count_limit = self._bounds.max_history_messages
+        window = history[-count_limit:] if count_limit > 0 else []
+        kept: list[ChatMessage] = []
         used = 0
-        for item in history[-self._bounds.max_history_messages :]:
+        for item in reversed(window):
             role = _item_attr(item, "role")
             content = _item_attr(item, "content")
             if role not in {"user", "assistant"} or not isinstance(content, str):
@@ -389,8 +416,9 @@ class AgentTurnRunner:
             if used + len(content) > self._bounds.max_history_chars:
                 break
             used += len(content)
-            messages.append(ChatMessage(role=role, content=content))
-        return tuple(messages)
+            kept.append(ChatMessage(role=role, content=content))
+        kept.reverse()
+        return tuple(kept)
 
     def _bound_hit_message(self, termination: AgentTerminationReason) -> str:
         return (
@@ -488,13 +516,18 @@ class AgentTurnRunner:
                 None,
             )
 
+        # Each tool call runs in its own SAVEPOINT: the turn is one outer
+        # transaction (so truth-tool writes commit only at the turn's single
+        # commit point), but a tool that fails after partially flushing its own
+        # rows must not leave those rows behind for the outer commit to pick up.
         try:
-            result = self._local_runtime.invoke(
-                ctx,
-                ToolInvocationCreate(
-                    tool_id=call.name, input=call.arguments, persist=False
-                ),
-            )
+            with ctx.session.begin_nested():
+                result = self._local_runtime.invoke(
+                    ctx,
+                    ToolInvocationCreate(
+                        tool_id=call.name, input=call.arguments, persist=False
+                    ),
+                )
         except DomainError as exc:
             return (
                 ToolCallTraceRead(

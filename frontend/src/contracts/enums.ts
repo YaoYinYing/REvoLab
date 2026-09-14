@@ -11,6 +11,7 @@ import {
   CAPABILITY_AVAILABILITIES,
   CAPABILITY_KINDS,
   CITED_AS,
+  CONVERSATION_ROLES,
   DECISION_STATUSES,
   EVIDENCE_KINDS,
   EVIDENCE_ROLES,
@@ -93,3 +94,8 @@ export const AGENT_TERMINATION_REASON_FINAL_RESPONSE = pick(
 export const AGENT_TOOL_CALL_STATUS_COMPLETED = pick(AGENT_TOOL_CALL_STATUSES, 'completed')
 export const AGENT_TOOL_CALL_STATUS_PENDING = pick(AGENT_TOOL_CALL_STATUSES, 'pending')
 export const AGENT_TOOL_CALL_STATUS_FAILED = pick(AGENT_TOOL_CALL_STATUSES, 'failed')
+
+// Persistent-conversation aliases (Phase 9): durable message roles come from the
+// generated contract, never a bare literal in the view layer.
+export const CONVERSATION_ROLE_USER = pick(CONVERSATION_ROLES, 'user')
+export const CONVERSATION_ROLE_ASSISTANT = pick(CONVERSATION_ROLES, 'assistant')

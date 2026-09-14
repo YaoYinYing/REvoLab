@@ -1056,7 +1056,8 @@ def import_revision(
 
 def create_evidence(session: Session, actor_id: UUID, project_id: UUID, **kwargs: Any) -> Evidence:
     mutation_capable_membership(session, actor_id, project_id)
-    return provenance.create_evidence_row(session, project_id, actor_id, **kwargs)
+    commit = kwargs.pop("commit", True)
+    return provenance.create_evidence_row(session, project_id, actor_id, commit=commit, **kwargs)
 
 
 def update_evidence(
@@ -1081,6 +1082,7 @@ def create_decision(
     next_actions: list[str] | None = None,
     cites: list[dict[str, Any]] | None = None,
     selects: list[dict[str, Any]] | None = None,
+    commit: bool = True,
 ) -> Decision:
     mutation_capable_membership(session, actor_id, project_id)
     return knowledge.create_decision_row(
@@ -1092,6 +1094,7 @@ def create_decision(
         next_actions=next_actions or [],
         cites=cites or [],
         selects=selects or [],
+        commit=commit,
     )
 
 

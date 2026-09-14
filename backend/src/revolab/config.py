@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     agent_max_tool_calls: int = 16
     agent_max_tool_calls_per_turn: int = 4
     agent_max_context_chars: int = 60_000
-    agent_max_history_messages: int = 20
-    agent_max_history_chars: int = 20_000
+    agent_max_history_messages: int = Field(default=20, ge=0)
+    agent_max_history_chars: int = Field(default=20_000, ge=0)
     agent_max_skill_count: int = 4
     agent_max_skill_bytes: int = 20_000
     agent_max_tool_result_chars: int = 12_000

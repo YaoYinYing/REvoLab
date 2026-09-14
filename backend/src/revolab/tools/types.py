@@ -32,6 +32,11 @@ class InvocationContext:
     content_store: ContentStore
     actor_id: UUID
     project_id: UUID
+    # Whether typed domain mutations performed inside this invocation may commit
+    # their own rows. The bounded Agent loop sets False so the whole turn is one
+    # transaction and `run_conversation_turn` is the sole commit point (keeping a
+    # per-conversation row lock held across the model run).
+    commit: bool = True
 
 
 @dataclass(frozen=True)

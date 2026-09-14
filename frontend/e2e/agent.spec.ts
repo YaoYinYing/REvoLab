@@ -62,6 +62,22 @@ test('agent describes a table and only explicit commit promotes its draft', asyn
   await expect(page.getByText('decision.record_draft', { exact: true })).toBeVisible()
   await expect(page.getByText('I described the table and recorded a Decision DRAFT.')).toBeVisible()
 
+  // Phase 9: the conversation is durable working memory. Reload restores the
+  // server-owned transcript; a second turn executes with server-supplied history.
+  await page.reload()
+  await expect(navigation).toBeVisible()
+  await navigation.getByRole('button', { name: 'Agent' }).click()
+  await expect(page.getByRole('heading', { name: 'Agent', level: 1 })).toBeVisible()
+  await expect(page.getByText('Describe this table and draft a conclusion based on it.')).toBeVisible()
+  await expect(page.getByText('I described the table and recorded a Decision DRAFT.')).toBeVisible()
+
+  await page
+    .getByPlaceholder('e.g. "Describe this table and draft a conclusion based on it."')
+    .fill('Continue with a second look.')
+  await page.getByRole('button', { name: 'Send' }).click()
+  await expect(page.getByText('Continue with a second look.', { exact: true })).toBeVisible()
+  await expect(page.locator('.assistant-row')).toHaveCount(2)
+
   // A draft exists, and only the explicit human commit promotes it.
   await navigation.getByRole('button', { name: 'Decisions' }).click()
   const draftTitle = 'Draft conclusion from table analysis'

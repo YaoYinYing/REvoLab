@@ -380,6 +380,8 @@ direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 | `PROVIDER_CAPABILITIES.md` | Provider/Driver/Capability/Tool/Credential; the REvoCompute contract |
 | `PROJECT_TOOL_HARNESS.md` | The first-class Tool abstraction, ToolCatalog, local vs remote execution, authority, result semantics, Agent/frontend projection |
 | `AGENT_CONTEXT.md` | Context selection, tools, skills, safety/authority |
+| `PROJECT_AGENT_RUNTIME.md` | The bounded Project Agent turn loop, model boundary, prompt/trust separation, authority |
+| `PROJECT_CONVERSATIONS.md` | Persistent Actor × Project conversation working memory: ownership, server-owned history, trust model, API, lifecycle, bounds |
 | `COLLABORATION_IDENTITY.md` | Identity, sharing, persistence, lifecycle/deletion, event/audit |
 | `WORKSPACE_INFORMATION_ARCHITECTURE.md` | The product surface and API/frontend contract |
 | `IMPLEMENTATION_ROADMAP.md` | Staged vertical slices and bootstrap classification |

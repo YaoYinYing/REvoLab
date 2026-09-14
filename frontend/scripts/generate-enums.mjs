@@ -35,6 +35,7 @@ const enumNames = [
   'ToolResultKind',
   'AgentTerminationReason',
   'AgentToolCallStatus',
+  'ConversationRole',
 ]
 
 const constName = (name) =>
@@ -61,6 +62,7 @@ const constName = (name) =>
     ToolResultKind: 'TOOL_RESULT_KINDS',
     AgentTerminationReason: 'AGENT_TERMINATION_REASONS',
     AgentToolCallStatus: 'AGENT_TOOL_CALL_STATUSES',
+    ConversationRole: 'CONVERSATION_ROLES',
   })[name]
 
 const lines = [
