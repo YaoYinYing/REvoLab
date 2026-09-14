@@ -33,6 +33,17 @@ type ConversationTurnCreate = NonNullable<
 >
 type ToolInvocationCreate =
   paths['/api/projects/{project_id}/tools/invocations']['post']['requestBody']['content']['application/json']
+type NoteCreate = NonNullable<
+  NonNullable<paths['/api/projects/{project_id}/notes']['post']['requestBody']>['content']['application/json']
+>
+type NotePatch = NonNullable<
+  NonNullable<paths['/api/projects/{project_id}/notes/{note_id}']['patch']['requestBody']>['content']['application/json']
+>
+type NoteRevisionCreate = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/notes/{note_id}/revisions']['post']['requestBody']
+  >['content']['application/json']
+>
 
 export type {
   ComputeSubmissionCreate,
@@ -45,6 +56,9 @@ export type {
   EvidenceCreate,
   MembershipCreate,
   MembershipUpdate,
+  NoteCreate,
+  NotePatch,
+  NoteRevisionCreate,
   ObjectCreate,
   PreferredRevisionPut,
   ProjectCreate,
@@ -297,6 +311,48 @@ export function projectApi(actorId: string) {
       api.GET('/api/projects/{project_id}/artifacts/{artifact_id}/inspect', {
         headers,
         params: { path: { project_id: projectId, artifact_id: artifactId }, query },
+      }),
+
+    listNotes: (
+      projectId: string,
+      query: { include_archived?: boolean; limit?: number; offset?: number } = {},
+    ) =>
+      api.GET('/api/projects/{project_id}/notes', {
+        headers,
+        params: { path: { project_id: projectId }, query },
+      }),
+
+    createNote: (projectId: string, body: NoteCreate) =>
+      api.POST('/api/projects/{project_id}/notes', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    getNote: (projectId: string, noteId: string) =>
+      api.GET('/api/projects/{project_id}/notes/{note_id}', {
+        headers,
+        params: { path: { project_id: projectId, note_id: noteId } },
+      }),
+
+    patchNote: (projectId: string, noteId: string, body: NotePatch) =>
+      api.PATCH('/api/projects/{project_id}/notes/{note_id}', {
+        headers,
+        params: { path: { project_id: projectId, note_id: noteId } },
+        body,
+      }),
+
+    appendNoteRevision: (projectId: string, noteId: string, body: NoteRevisionCreate) =>
+      api.POST('/api/projects/{project_id}/notes/{note_id}/revisions', {
+        headers,
+        params: { path: { project_id: projectId, note_id: noteId } },
+        body,
+      }),
+
+    listNoteRevisions: (projectId: string, noteId: string, query: { limit?: number; offset?: number } = {}) =>
+      api.GET('/api/projects/{project_id}/notes/{note_id}/revisions', {
+        headers,
+        params: { path: { project_id: projectId, note_id: noteId }, query },
       }),
   }
 }

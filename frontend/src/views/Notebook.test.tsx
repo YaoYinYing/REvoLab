@@ -1,0 +1,243 @@
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { projectApi } from '../api/backend'
+import {
+  useDecisions,
+  useEvidence,
+  useMyMembership,
+  useNoteDetail,
+  useNoteRevisions,
+  useNotes,
+  useObjects,
+  useResources,
+} from '../api/hooks'
+import type { NoteDetailRead, NoteRead, NoteRevisionRead } from '../api/types'
+import { NotebookView } from './Notebook'
+
+vi.mock('../api/hooks', () => ({
+  useNotes: vi.fn(),
+  useNoteDetail: vi.fn(),
+  useNoteRevisions: vi.fn(),
+  useMyMembership: vi.fn(),
+  useObjects: vi.fn(),
+  useEvidence: vi.fn(),
+  useDecisions: vi.fn(),
+  useResources: vi.fn(),
+}))
+
+vi.mock('../api/backend', () => ({
+  projectApi: vi.fn(),
+}))
+
+const mockedUseNotes = vi.mocked(useNotes)
+const mockedUseNoteDetail = vi.mocked(useNoteDetail)
+const mockedUseNoteRevisions = vi.mocked(useNoteRevisions)
+const mockedUseMyMembership = vi.mocked(useMyMembership)
+const mockedUseObjects = vi.mocked(useObjects)
+const mockedUseEvidence = vi.mocked(useEvidence)
+const mockedUseDecisions = vi.mocked(useDecisions)
+const mockedUseResources = vi.mocked(useResources)
+const mockedProjectApi = vi.mocked(projectApi)
+
+const note: NoteRead = {
+  id: '88888888-8888-4888-8888-888888888888',
+  project_id: 'project-1',
+  created_by_actor_id: 'actor-1',
+  title: 'Working notes',
+  created_at: '2026-09-14T00:00:00Z',
+  updated_at: '2026-09-14T00:00:00Z',
+  archived_at: null,
+  latest_revision_seq: 2,
+  revision_count: 2,
+}
+
+const revision: NoteRevisionRead = {
+  revision_id: '99999999-9999-4999-8999-999999999999',
+  note_id: note.id,
+  revision_seq: 2,
+  body: '## Current thinking\n\n- step one',
+  created_by_actor_id: 'actor-1',
+  created_at: '2026-09-14T00:00:00Z',
+  mentions: [
+    {
+      mention_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      ordinal: 0,
+      resource_kind: 'scientific_object_series',
+      resource_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      evidence_id: null,
+      decision_id: null,
+      label: 'Target protein',
+      resolved: true,
+    },
+    {
+      mention_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      ordinal: 1,
+      resource_kind: null,
+      resource_id: null,
+      evidence_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      decision_id: null,
+      label: null,
+      resolved: false,
+    },
+  ],
+}
+
+const detail: NoteDetailRead = { ...note, latest: revision }
+
+const defaultApi = () => ({
+  createNote: vi.fn().mockResolvedValue({ data: detail, error: undefined, response: new Response() }),
+  appendNoteRevision: vi.fn().mockResolvedValue({ data: revision, error: undefined, response: new Response() }),
+  patchNote: vi.fn().mockResolvedValue({ data: note, error: undefined, response: new Response() }),
+})
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockedUseNotes.mockReturnValue({ data: [note], loading: false, error: null, reload: vi.fn() })
+  mockedUseNoteDetail.mockReturnValue({ data: detail, loading: false, error: null, reload: vi.fn() })
+  mockedUseNoteRevisions.mockReturnValue({ data: [revision], loading: false, error: null, reload: vi.fn() })
+  mockedUseMyMembership.mockReturnValue({
+    data: { project_id: 'project-1', actor_id: 'actor-1', role: 'owner' },
+    loading: false,
+    error: null,
+    reload: vi.fn(),
+  })
+  mockedUseObjects.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
+  mockedUseEvidence.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
+  mockedUseDecisions.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
+  mockedUseResources.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
+  mockedProjectApi.mockReturnValue(defaultApi() as never)
+})
+
+describe('Notebook view (Phase 10)', () => {
+  it('lists notes and shows the boundary that a note is not project truth', async () => {
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    expect(await screen.findByText('Working notes')).toBeInTheDocument()
+    expect(screen.getByText(/not Evidence, not a Decision/)).toBeInTheDocument()
+  })
+
+  it('opens a note, renders its body safely and shows revision history + mentions', async () => {
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await user.click(await screen.findByText('Working notes'))
+
+    expect((await screen.findAllByText('Current thinking')).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('Revision #2')).toBeInTheDocument()
+    expect(screen.getByText('Target protein')).toBeInTheDocument()
+    expect(screen.getByText(/unresolved/)).toBeInTheDocument()
+  })
+
+  it('never executes raw HTML from a note body', async () => {
+    mockedUseNoteDetail.mockReturnValue({
+      data: { ...note, latest: { ...revision, body: '<script>alert(1)</script>' } },
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    const user = userEvent.setup()
+    const { container } = render(
+      <NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />,
+    )
+    await user.click(await screen.findByText('Working notes'))
+    expect(container.querySelector('script')).toBeNull()
+    expect((await screen.findAllByText('<script>alert(1)</script>')).length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('creates a note with an explicitly linked Project-visible context mention', async () => {
+    mockedUseObjects.mockReturnValue({
+      data: [
+        {
+          series_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          object_type: 'protein',
+          name: 'Target protein',
+          description: null,
+          archived_at: null,
+          preferred_revision_id: null,
+          revision_count: 1,
+          created_at: '2026-09-14T00:00:00Z',
+        },
+      ],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    } as never)
+    const createNote = vi.fn().mockResolvedValue({ data: detail, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), createNote } as never)
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await user.click(await screen.findByRole('button', { name: /New note/ }))
+    await user.type(screen.getByLabelText('New note title'), 'Plan')
+    await user.type(screen.getByLabelText('New note body'), 'thinking')
+    await user.selectOptions(screen.getByLabelText('Mention target'), 'series:bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+    await user.click(screen.getByRole('button', { name: /Add mention/ }))
+    await user.click(screen.getByRole('button', { name: /Create note/ }))
+
+    expect(createNote).toHaveBeenCalledTimes(1)
+    expect(createNote.mock.calls[0][1]).toMatchObject({
+      title: 'Plan',
+      body: 'thinking',
+      mentions: [{ resource_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }],
+    })
+  })
+
+  it('appends a revision against the current base revision and surfaces a conflict', async () => {
+    const appendNoteRevision = vi
+      .fn()
+      .mockResolvedValueOnce({ data: revision, error: undefined, response: new Response() })
+      .mockResolvedValueOnce({ data: undefined, error: { detail: 'note revision conflict' }, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), appendNoteRevision } as never)
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await user.click(await screen.findByText('Working notes'))
+
+    const editor = await screen.findByLabelText('Edit note body')
+    await user.clear(editor)
+    await user.type(editor, 'revised body')
+    await user.click(screen.getByRole('button', { name: /Save revision/ }))
+    expect(appendNoteRevision.mock.calls[0][2]).toMatchObject({ base_revision_seq: 2, body: 'revised body' })
+
+    await user.click(screen.getByRole('button', { name: /Save revision/ }))
+    expect(await screen.findByText(/note revision conflict/)).toBeInTheDocument()
+  })
+
+  it('archives non-destructively and hands a note to the Agent context', async () => {
+    const patchNote = vi.fn().mockResolvedValue({ data: note, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), patchNote } as never)
+    const onAddToAgentContext = vi.fn()
+
+    const user = userEvent.setup()
+    render(
+      <NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={onAddToAgentContext} />,
+    )
+    await user.click(await screen.findByText('Working notes'))
+    await user.click(screen.getByRole('button', { name: /Archive/ }))
+    expect(patchNote.mock.calls[0][2]).toEqual({ archive: true })
+
+    await user.click(screen.getByRole('button', { name: /Add note to agent context/ }))
+    expect(onAddToAgentContext).toHaveBeenCalledWith(note.id)
+  })
+
+  it('offers no mutation affordance to a viewer (backend still re-enforces)', async () => {
+    mockedUseMyMembership.mockReturnValue({
+      data: { project_id: 'project-1', actor_id: 'actor-viewer', role: 'viewer' },
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-viewer" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    // A viewer can still read shared working knowledge...
+    await user.click(await screen.findByText('Working notes'))
+    expect((await screen.findAllByText(/Current thinking/)).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(/read-only \(viewer\)/)).toBeInTheDocument()
+
+    // ...but no create/edit/archive affordance is offered.
+    expect(screen.queryByRole('button', { name: /New note/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Save revision/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Archive/ })).not.toBeInTheDocument()
+  })
+})

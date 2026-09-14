@@ -199,8 +199,19 @@ transaction and becomes durable only at the turn's single commit.
 
 ## Explicit non-goals
 
-No RAG, embeddings, vector database, semantic memory, `AgentMemory`, notebooks,
-shared conversations, conversation search, background Agents, recursive Agents,
-Agent subagents, workflow engines, generic approval workflow, or remote provider
-Agent execution. Notebook/structured notes and remote-provider Agent execution
-remain separately-phased concerns.
+No RAG, embeddings, vector database, semantic memory, `AgentMemory`, shared
+conversations, conversation search, background Agents, recursive Agents, Agent
+subagents, workflow engines, generic approval workflow, or remote provider Agent
+execution. Remote-provider Agent execution remains a separately-phased concern.
+
+## Conversation → Note boundary
+
+Phase 10 adds **Project Notes** (`PROJECT_NOTEBOOK.md`): Project-shared working
+documents, not private working memory. Moving content from a Conversation to a Note
+is therefore an authority/context transition and is always an **explicit human
+action** in the workspace ("Save to Project Note"). The capture copies visible
+message content into an ordinary Note body: there is no automatic background
+promotion, no live synchronization, no hidden reasoning/system prompt/raw
+ToolResult/credential/PendingAction persisted, and no second copy of conversation
+authority or history. Note semantics are owned by `PROJECT_NOTEBOOK.md`, never
+re-described here.

@@ -663,3 +663,97 @@ class ConversationMessage(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     termination_reason: Mapped[str | None] = mapped_column(_agent_termination, nullable=True)
     tool_trace_summary: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONType)
+
+
+class ProjectNote(Base, TimestampMixin):
+    """Project-scoped shared working document (Phase 10).
+
+    A Note is Project-shared working knowledge for the readable members of ONE
+    Project. It is NOT a ScientificObject, a GlobalResourceRegistry entry, an
+    Evidence claim, a Decision, a provenance node, or Agent memory, and it never
+    enters the scientific graph. The Project is its namespace and lifecycle
+    owner; archiving is non-destructive. The creating Actor is audit metadata,
+    never exclusive ownership — there are no per-note ACLs.
+
+    The latest revision is derived from `ProjectNoteRevision.revision_seq` (the
+    max sequence); there is deliberately no mutable `current_revision_id`."""
+
+    __tablename__ = "project_notes"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    created_by_actor_id: Mapped[UUID] = mapped_column(
+        ForeignKey("actors.actor_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProjectNoteRevision(Base, TimestampMixin):
+    """One immutable Note body version. INSERT-only: editing a Note appends a new
+    revision, it never rewrites an existing one. `body` is bounded Markdown/plain
+    structured text and is ALWAYS untrusted Project data (never a block-editor
+    ontology, never active content)."""
+
+    __tablename__ = "project_note_revisions"
+    __table_args__ = (
+        UniqueConstraint("note_id", "revision_seq", name="uq_note_revision_seq"),
+    )
+
+    revision_id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    note_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project_notes.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    revision_seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by_actor_id: Mapped[UUID] = mapped_column(
+        ForeignKey("actors.actor_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+
+class NoteMention(Base, TimestampMixin):
+    """A typed contextual reference from ONE Note revision to an existing
+    Project-visible entity. It means only "this working document refers to this
+    entity": it is NOT a RelationType, carries no scientific semantics
+    (supports/derived_from/selects), and creates no provenance edge.
+
+    Mirrors the frozen Evidence endpoint pattern: a global-registry resource is
+    named by `target_resource_id` (+ its registry `target_kind`), while the
+    Project-scoped Evidence/Decision targets use their own FKs. Exactly one
+    target is set. Mentions belong to an immutable revision, so a target that
+    later becomes unlinked/archived leaves an unresolved historical mention
+    rather than rewriting the note."""
+
+    __tablename__ = "note_mentions"
+    __table_args__ = (
+        UniqueConstraint("revision_id", "ordinal", name="uq_note_mention_ordinal"),
+        CheckConstraint(
+            "(CASE WHEN target_resource_id IS NOT NULL THEN 1 ELSE 0 END"
+            " + CASE WHEN target_evidence_id IS NOT NULL THEN 1 ELSE 0 END"
+            " + CASE WHEN target_decision_id IS NOT NULL THEN 1 ELSE 0 END) = 1",
+            name="ck_note_mention_exactly_one_target",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("project_note_revisions.revision_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_resource_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("global_resource_registry.resource_id"), nullable=True, index=True
+    )
+    target_kind: Mapped[str | None] = mapped_column(_resource_kind)
+    target_evidence_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("evidence.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    target_decision_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("decisions.id", ondelete="CASCADE"), nullable=True, index=True
+    )

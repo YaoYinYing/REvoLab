@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, GitCommitHorizontal, MessageSquarePlus, Send } from 'lucide-react'
+import { Bot, BookmarkPlus, GitCommitHorizontal, MessageSquarePlus, Send } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
-import { useObjects, useResources } from '../api/hooks'
+import { useNotes, useObjects, useResources } from '../api/hooks'
 import type {
   AgentTurnRead,
   ConversationMessageRead,
@@ -29,11 +29,21 @@ function traceTone(status: string): 'neutral' | 'good' | 'warn' {
 
 const MESSAGE_PAGE_LIMIT = 200
 
-export function AgentView({ actorId, projectId }: { actorId: string; projectId: string }) {
+export function AgentView({
+  actorId,
+  projectId,
+  initialNoteIds = [],
+}: {
+  actorId: string
+  projectId: string
+  initialNoteIds?: string[]
+}) {
   const { data: objects } = useObjects(actorId, projectId)
   const { data: artifacts } = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
+  const { data: notes } = useNotes(actorId, projectId)
   const [selectedSeriesId, setSelectedSeriesId] = useState('')
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
+  const [selectedNoteId, setSelectedNoteId] = useState(initialNoteIds[0] ?? '')
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -43,6 +53,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
   const [messages, setMessages] = useState<ConversationMessageRead[]>([])
   const [totalMessages, setTotalMessages] = useState(0)
   const [turn, setTurn] = useState<AgentTurnRead | null>(null)
+  const [savedMessageId, setSavedMessageId] = useState<string | null>(null)
 
   // Synchronous view scope: updated on every render so an in-flight turn from a
   // previous Actor x Project can be discarded even before the reset effect runs.
@@ -68,6 +79,8 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
     setInput('')
     setSelectedSeriesId('')
     setSelectedArtifactId('')
+    setSelectedNoteId(initialNoteIds[0] ?? '')
+    setSavedMessageId(null)
     projectApi(actorId)
       .listConversations(projectId)
       .then((res) => {
@@ -182,6 +195,7 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
       selection: {
         ...(selectedSeriesId ? { series_ids: [selectedSeriesId] } : {}),
         ...(selectedArtifactId ? { artifact_ids: [selectedArtifactId] } : {}),
+        ...(selectedNoteId ? { note_ids: [selectedNoteId] } : {}),
         include_relations: true,
         include_evidence: true,
         include_decisions: true,
@@ -194,6 +208,8 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
         max_evidence: 100,
         max_decisions: 100,
         max_references: 100,
+        max_notes: 10,
+        max_note_chars: 4000,
       },
     })
     setBusy(false)
@@ -224,6 +240,31 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
 
   const pendingActions = turn?.pending_actions ?? []
   const trace = turn?.tool_trace ?? []
+
+  /**
+   * Explicit human capture: Conversation -> Project Note. The user clicks this
+   * button for one visible message; nothing is promoted in the background. The
+   * captured content is an ordinary Note body, so it enters `Note` (shared working
+   * knowledge) — never Evidence/Decision truth.
+   */
+  async function saveMessageToNote(message: ConversationMessageRead) {
+    if (busy) return
+    setBusy(true)
+    setActionError(null)
+    const firstLine = message.content.split('\n')[0].trim()
+    const title = firstLine.length > 0 ? firstLine.slice(0, 80) : 'From conversation'
+    const res = await projectApi(actorId).createNote(projectId, {
+      title,
+      body: message.content,
+      mentions: [],
+    })
+    setBusy(false)
+    if (res.error || !res.data) {
+      setActionError('Could not save the message to a Project Note.')
+      return
+    }
+    setSavedMessageId(message.id)
+  }
 
   return (
     <div className="view">
@@ -263,6 +304,20 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
                 <option key={artifact.resource_id} value={artifact.resource_id}>
                   {artifact.native_id ?? artifact.resource_id.slice(0, 8)}
                   {artifact.content_type ? ` · ${artifact.content_type}` : ''}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Project note (optional, read as untrusted data)">
+            <select
+              value={selectedNoteId}
+              onChange={(event) => setSelectedNoteId(event.target.value)}
+              aria-label="Select note for agent context"
+            >
+              <option value="">— none —</option>
+              {notes?.map((note) => (
+                <option key={note.id} value={note.id}>
+                  {note.title} (rev {note.latest_revision_seq})
                 </option>
               ))}
             </select>
@@ -320,6 +375,20 @@ export function AgentView({ actorId, projectId }: { actorId: string; projectId: 
               ) : null}
             </div>
             <p className="pre-line">{message.content}</p>
+            <div className="list-row-head">
+              <Button
+                type="button"
+                kind="quiet"
+                onClick={() => saveMessageToNote(message)}
+                disabled={busy}
+                aria-label={`Save message to project note ${message.id}`}
+              >
+                <BookmarkPlus size={13} /> Save to Project Note
+              </Button>
+              {savedMessageId === message.id ? (
+                <small className="muted-note">Saved to Notes (working knowledge, not truth).</small>
+              ) : null}
+            </div>
             {(message.tool_trace ?? []).length > 0 ? (
               <small className="muted-note">
                 Tools:{' '}

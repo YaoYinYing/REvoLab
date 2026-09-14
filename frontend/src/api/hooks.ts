@@ -8,6 +8,10 @@ import type {
   ComputeTaskKindSchemaRead,
   DecisionRead,
   EvidenceRead,
+  MembershipRead,
+  NoteDetailRead,
+  NoteRead,
+  NoteRevisionRead,
   ObjectDetailRead,
   ObjectSummaryRead,
   ProjectContextRead,
@@ -212,5 +216,78 @@ export function useProjectContext(
     // `selectionKey` is a stable structural dependency so an inline object
     // literal does not retrigger the effect on every render.
     [actorId, projectId, selectionKey],
+  )
+}
+
+// Phase-10 Project Notebook. `useNoteDetail` also returns the latest immutable
+// revision (body + resolved mentions) for the selected Note.
+export function useNotes(
+  actorId: string | null,
+  projectId: string | null,
+  query: ListQuery & { include_archived?: boolean } = {},
+): AsyncState<NoteRead[]> {
+  return useAsync(
+    () =>
+      actorId && projectId
+        ? projectApi(actorId)
+            .listNotes(projectId, query)
+            .then((res) => value<NoteRead[]>(res as ApiResult<NoteRead[]>))
+        : Promise.resolve([]),
+    [actorId, projectId, query.include_archived, query.limit, query.offset],
+  )
+}
+
+export function useNoteDetail(
+  actorId: string | null,
+  projectId: string | null,
+  noteId: string | null,
+): AsyncState<NoteDetailRead | null> {
+  return useAsync(
+    () =>
+      actorId && projectId && noteId
+        ? projectApi(actorId)
+            .getNote(projectId, noteId)
+            .then((res) => value<NoteDetailRead>(res as ApiResult<NoteDetailRead>))
+        : Promise.resolve(null),
+    [actorId, projectId, noteId],
+  )
+}
+
+export function useNoteRevisions(
+  actorId: string | null,
+  projectId: string | null,
+  noteId: string | null,
+): AsyncState<NoteRevisionRead[]> {
+  return useAsync(
+    () =>
+      actorId && projectId && noteId
+        ? projectApi(actorId)
+            .listNoteRevisions(projectId, noteId)
+            .then((res) => value<NoteRevisionRead[]>(res as ApiResult<NoteRevisionRead[]>))
+        : Promise.resolve([]),
+    [actorId, projectId, noteId],
+  )
+}
+
+/**
+ * The current Actor's own membership row for the active Project, used to gate
+ * mutation affordances (viewers are read-only). Authority itself is always
+ * re-enforced by the backend; this only avoids offering an action that will fail.
+ */
+export function useMyMembership(
+  actorId: string | null,
+  projectId: string | null,
+): AsyncState<MembershipRead | null> {
+  return useAsync(
+    () =>
+      actorId && projectId
+        ? projectApi(actorId)
+            .listMembers(projectId)
+            .then((res) => {
+              const memberships = value<MembershipRead[]>(res as ApiResult<MembershipRead[]>)
+              return memberships.find((membership) => membership.actor_id === actorId) ?? null
+            })
+        : Promise.resolve(null),
+    [actorId, projectId],
   )
 }

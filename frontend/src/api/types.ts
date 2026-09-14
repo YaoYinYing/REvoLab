@@ -126,3 +126,35 @@ export type ConversationTurnRead =
   paths['/api/projects/{project_id}/agent/conversations/{conversation_id}/turns']['post']['responses']['201']['content']['application/json']
 
 export type ConversationRole = components['schemas']['ConversationRole']
+
+// Phase-10 Project Notebook: Project-shared, versioned working documents. A Note
+// is not a ScientificObject/Evidence/Decision, so these aliases point only at the
+// generated Note contract.
+export type NoteRead =
+  paths['/api/projects/{project_id}/notes']['get']['responses']['200']['content']['application/json'][number]
+
+export type NoteDetailRead =
+  paths['/api/projects/{project_id}/notes/{note_id}']['get']['responses']['200']['content']['application/json']
+
+export type NoteRevisionRead =
+  paths['/api/projects/{project_id}/notes/{note_id}/revisions']['get']['responses']['200']['content']['application/json'][number]
+
+export type NoteMentionRead = NonNullable<NoteRevisionRead['mentions']>[number]
+
+export type NoteCreate = NonNullable<
+  NonNullable<paths['/api/projects/{project_id}/notes']['post']['requestBody']>['content']['application/json']
+>
+
+export type NotePatch = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/notes/{note_id}']['patch']['requestBody']
+  >['content']['application/json']
+>
+
+export type NoteRevisionCreate = NonNullable<
+  NonNullable<
+    paths['/api/projects/{project_id}/notes/{note_id}/revisions']['post']['requestBody']
+  >['content']['application/json']
+>
+
+export type NoteMentionCreate = NonNullable<NoteCreate['mentions']>[number]

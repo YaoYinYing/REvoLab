@@ -382,6 +382,7 @@ direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 | `AGENT_CONTEXT.md` | Context selection, tools, skills, safety/authority |
 | `PROJECT_AGENT_RUNTIME.md` | The bounded Project Agent turn loop, model boundary, prompt/trust separation, authority |
 | `PROJECT_CONVERSATIONS.md` | Persistent Actor × Project conversation working memory: ownership, server-owned history, trust model, API, lifecycle, bounds |
+| `PROJECT_NOTEBOOK.md` | Project Note working documents: revision ownership, mention semantics, concurrency, trust and Agent-context boundary |
 | `COLLABORATION_IDENTITY.md` | Identity, sharing, persistence, lifecycle/deletion, event/audit |
 | `WORKSPACE_INFORMATION_ARCHITECTURE.md` | The product surface and API/frontend contract |
 | `IMPLEMENTATION_ROADMAP.md` | Staged vertical slices and bootstrap classification |

@@ -1,0 +1,197 @@
+# Project Notebook (Structured Working Notes)
+
+> **Status: Accepted** (Phase 10). This is the normative owner of the Project
+> Note / working-knowledge boundary. `PROJECT_CONVERSATIONS.md` (private working
+> memory), `AGENT_CONTEXT.md` (the consumer/authority lens), and
+> `EVIDENCE_PROVENANCE.md` (the scientific-claim boundary) consume this document;
+> they never re-describe Note semantics.
+
+## Canonical principle
+
+> **Conversation is private working memory; Note is Project-shared working
+> knowledge; Evidence is a typed scientific claim; Decision is committed Project
+> truth.**
+
+Equivalently, the authority ladder is explicit and each rung is a deliberate
+human action:
+
+```text
+Conversation                      private Actor × Project working memory
+    ↓ explicit human capture ("Save to Project Note")
+Project Note                      Project-shared working document, editable/versioned
+    ↓ explicit scientific interpretation (canonical Evidence command)
+Evidence                          typed scientific claim
+    ↓ explicit Decision commit
+Decision                          committed Project knowledge
+```
+
+A Note is useful working knowledge. It is **not** an alternate Evidence/Decision
+system, and it never becomes Project truth by being written.
+
+```text
+Conversation != Project truth
+Note         != Evidence
+Evidence     != Decision
+Decision DRAFT != committed truth
+```
+
+## Ownership and scope
+
+```text
+ProjectNote
+    id                  (opaque UUID)
+    project_id          (namespace + lifecycle owner; NOT the object owner model)
+    created_by_actor_id (audit metadata, never exclusive ownership)
+    title
+    created_at / updated_at
+    archived_at?        (non-destructive)
+        ↓
+ProjectNoteRevision     (immutable, INSERT-only)
+    revision_id         (opaque UUID)
+    note_id             (FK, cascade)
+    revision_seq        (per-note ordering; latest = max)
+    body                (bounded Markdown/plain structured text)
+    created_by_actor_id
+    created_at
+        ↓
+NoteMention             (one typed contextual reference per immutable revision)
+    revision_id, ordinal
+    target_resource_id? / target_evidence_id? / target_decision_id?
+```
+
+- A Note is **Project-scoped**. It is NOT a `GlobalResourceRegistry` entry, a
+  ScientificObject, Evidence, a Decision, a provenance node, or Agent memory.
+- The latest revision is **derived** from `max(revision_seq)`. There is no mutable
+  `current_revision_id`.
+- There are no per-note ACLs and no sharing outside the Project.
+
+```text
+owner/member   create · append revision · rename · archive
+viewer         read only
+non-member     no read, no existence oracle
+```
+
+## Revision and concurrency semantics
+
+- Revisions are immutable. Editing a Note **appends** a revision; existing bodies
+  are never rewritten.
+- An append carries the `base_revision_seq` the client edited. If it is no longer
+  the server's latest the write fails closed with a typed **409**; another
+  member's work is never silently overwritten.
+- PostgreSQL takes the `ProjectNote` row lock (`SELECT ... FOR UPDATE`) so
+  concurrent appends order across processes; the `(note_id, revision_seq)`
+  uniqueness constraint is the backend-independent backstop. SQLite ignores
+  `FOR UPDATE`, so it relies on the uniqueness constraint and does not claim
+  stronger concurrency semantics than it provides. PostgreSQL is the concurrency
+  truth and the required concurrency regression runs there.
+
+## Content and safety
+
+- The content format is **bounded Markdown/plain structured text**. There is no
+  block-editor ontology, no ProseMirror/Tiptap, and no CRDT in this phase.
+- Server bounds exist for title length, body length, mentions per revision, note
+  page size, and revision page size.
+- Note content is **always untrusted Project data**. The workspace renders it
+  through a minimal, closed Markdown renderer that never uses
+  `dangerouslySetInnerHTML`, so raw HTML/script can never execute; unsupported
+  syntax stays visible as literal text.
+
+## Mentions: typed, non-semantic, Project-visible
+
+A `NoteMention` means only:
+
+> this Project working document refers to this existing Project-visible entity.
+
+- It is **not** a `RelationType`. It carries no scientific semantics
+  (`supports`, `derived_from`, `selects`, …) and creates **no provenance edge**.
+- The smallest physical form mirrors the frozen Evidence endpoint pattern: a
+  global-registry target is named by `target_resource_id` (+ its stored registry
+  kind); Project-scoped Evidence/Decision targets use their own FKs; a database
+  CHECK enforces exactly one target.
+- Every mention is validated through the **current Project read lens at write
+  time**. Knowing a UUID is not authority to mention a hidden resource; an
+  invisible or foreign target fails closed with the same typed 403 as an unknown
+  id (no existence oracle).
+- Mentions belong to an immutable revision. If a target is later unlinked,
+  archived, or revoked, the revision text and mention row are preserved and the
+  read projection reports `resolved=false`; history is never rewritten.
+
+## Working knowledge vs scientific truth
+
+- A Note never becomes Evidence or a Decision automatically, and never creates a
+  provenance edge.
+- Any "Create Evidence from Note" convenience MUST invoke the canonical Evidence
+  domain command with explicit interpretation/target fields. No automatic
+  promotion.
+- A note-like scientific claim is still represented as canonical
+  `Evidence(kind=note)`; the `note` Evidence kind is unchanged. Note is **not** a
+  source kind in the scientific-graph matrix.
+
+## Conversation → Note boundary
+
+Moving content from a Conversation to a Note is an authority/context transition
+and therefore always an **explicit human action** in the workspace (for example
+"Save to Project Note" on a visible message). Requirements:
+
+```text
+explicit human action           normal ProjectNote authorization
+no automatic background promotion
+no hidden reasoning / system prompt / raw ToolResult / credentials /
+    PendingAction arguments
+```
+
+The capture is a plain copy into the new Note body. There is no live
+synchronization between Conversation and Note, and no second copy of conversation
+authority or history is persisted as Note metadata.
+
+## Agent context integration
+
+- Notes are **not** automatically injected. The ContextBuilder includes only
+  explicitly selected Notes via `ContextSelection.note_ids` /
+  `note_revision_ids`, under deterministic `max_notes` / `max_note_chars` bounds.
+- `note_ids` resolves each note's latest revision; `note_revision_ids` pins an
+  exact immutable revision. Selection is authorized through the active Project
+  (a Note is not resolved through the global-resource visibility lens).
+- Selected Note text is serialized inside the single
+  `<untrusted_project_data>` block, alongside all other Project data. It can
+  reduce the model's willingness to comply but **cannot** change authority: the
+  ToolCatalog, autonomy classes, `explicit_action` gating, and `never_agent`
+  exclusion are rebuilt from canonical code and the current Project state.
+- Phase 10 gives the Agent **no** Note mutation tool. Agent Note editing remains
+  deferred; any future Note tool must be policy-gated and typed, and must never
+  bypass the ordinary ProjectNote domain command.
+
+## API surface
+
+```text
+GET   /api/projects/{project_id}/notes
+POST  /api/projects/{project_id}/notes
+GET   /api/projects/{project_id}/notes/{note_id}
+PATCH /api/projects/{project_id}/notes/{note_id}                  rename / archive only
+POST  /api/projects/{project_id}/notes/{note_id}/revisions        append (base_revision_seq)
+GET   /api/projects/{project_id}/notes/{note_id}/revisions
+```
+
+The wire contract is the generated OpenAPI document; the frontend consumes only
+generated TypeScript (`ADR-0014`). No raw ORM object is exposed, and Note request
+models reject unknown fields.
+
+## Workspace surface
+
+A first-class **Notes** Project surface answers: what are we currently
+thinking/writing, who changed it, what Project entities does it refer to, and how
+did it change over time? The minimum flow is create → edit/append revision →
+link Project-visible context → reload → open revision history → add a selected
+Note to Agent context. It is not a generic SaaS document editor.
+
+## Explicit non-goals
+
+No RAG, embeddings, vector database, semantic Agent memory, `AgentMemory`,
+conversation search, shared conversations, background/recursive Agents, workflow
+engine, generic approval workflow, remote-provider Agent execution, automatic
+REvoCompute submission, authentication/OIDC, RBAC engine, public sharing,
+CRDT/realtime collaborative editing, full ELN, experiment inventory,
+equipment/calendar/freezer management, rich block-editor framework, or global
+full-text search.
+
+Recorded in **ADR-0016**.

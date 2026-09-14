@@ -22,7 +22,7 @@ proposer*, never the owner. Chat is working memory; the DB is durable truth.
 | Concept | Role | Protects against |
 |---|---|---|
 | **ProjectContext** | immutable, per-turn assembly of SELECTED project material handed to the Agent (a value object, freshly built per turn — NOT a DB connection) | the "agent sees the whole project / sees chat as truth" failure |
-| **ContextSelection** | the declarative query describing what to include (project + selected object subtree + relation/evidence/decision filters + artifact REFERENCE list) | implicit prompt-stuffing; enables an auditable /context fetch contract |
+| **ContextSelection** | the declarative query describing what to include (project + selected object subtree + relation/evidence/decision filters + artifact REFERENCE list + explicitly selected Note revisions with their own bounds) | implicit prompt-stuffing; enables an auditable /context fetch contract |
 | **ContextBuilder** | the read-only assembler that executes a ContextSelection against the domain read API and returns a ProjectContext; the only place truth becomes context | unbounded dumps; reference-not-embed; whole-project sends |
 | **AgentSession** | ephemeral conversation container (prompt + ProjectContext + catalogs). Explicitly not persistent, not truth | chat becoming durable truth |
 | **AgentTurnRunner (Phase 8)** | the real bounded loop with a bounded transcript that supersedes the deterministic proposal `AgentSession` | unbounded/recursive agent loops |
@@ -46,6 +46,13 @@ proposer*, never the owner. Chat is working memory; the DB is durable truth.
 > state; persistence adds bounded conversational continuity, never authority and
 > never a stored context snapshot. "Chat is working memory" stays true — Phase 9
 > makes working memory durable without making it truth.
+>
+> Phase 10 refinement: **Project Notes** (`docs/architecture/PROJECT_NOTEBOOK.md`)
+> are Project-shared working documents, still not truth. A Note enters context
+> only through an explicit `note_ids` / `note_revision_ids` selection under
+> `max_notes` / `max_note_chars`; there is no automatic notebook injection. Note
+> text is serialized inside the existing untrusted data block and cannot change
+> authority or the tool surface.
 
 **Explicitly rejected** (overengineering): no AgentMemory DB wrapper, no RAG/
 semantic-index pipeline, no generic AgentGateway, no always-on skill encyclopedia.
@@ -62,7 +69,8 @@ semantic-index pipeline, no generic AgentGateway, no always-on skill encyclopedi
   specific object; the *content* of a large artifact via an `inspect_artifact`
   tool call through the owning provider driver (returns a bounded preview, not a
   copy into Core); evidence/decision graphs beyond the active subtree; provider
-  capability discovery; any other project's material.
+  capability discovery; **explicitly selected Project Note revisions** (bounded,
+  untrusted working text); any other project's material.
 
 **Avoiding whole-project dumps:** ProjectContext is a ContextSelection, not "the
 project." Send the skeleton, not leaves; reference headers, not content; cap the
@@ -81,6 +89,8 @@ ReferenceRef   {resource_id, kind}          # run/session/lit/external ref throu
 EvidenceRef    {evidence_id, kind, source_ref?, target_ref, role/polarity}
 DecisionRef    {decision_id, status, superseded_by? (derived reverse of `supersedes`),
                 selects_refs[], evidence_ids[]}
+NoteRef        {note_id, revision_id, revision_seq, title, body (bounded),
+                truncated, archived_at?}       # untrusted working text, never truth
 ```
 
 > Wire shape (Phase 6): `source_ref`/`target_ref` are the typed pairs

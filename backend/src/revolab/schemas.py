@@ -45,6 +45,12 @@ from revolab.enums import (
 # one call (keeps the tool input itself bounded and closed).
 MAX_SELECT_COLUMNS = 100
 
+# Phase-10 Project Note bounds. These are the single source of truth for the wire
+# contract; the Note domain service imports them rather than restating literals.
+MAX_NOTE_TITLE_CHARS = 200
+MAX_NOTE_BODY_CHARS = 20_000
+MAX_NOTE_MENTIONS_PER_REVISION = 100
+
 # ---------------------------------------------------------------------------
 # Identity / Project
 # ---------------------------------------------------------------------------
@@ -571,6 +577,11 @@ class ContextSelectionCreate(BaseModel):
     # slice: "select the Artifact as Agent context"). Validated against the
     # Project's read lens like every other selection; never payload bytes.
     artifact_ids: list[UUID] | None = Field(default=None, max_length=50)
+    # Phase 10: explicitly selected Project Notes. `note_ids` selects each note's
+    # latest revision; `note_revision_ids` pins an exact historical revision.
+    # Selected Note text is bounded untrusted Project data, never instructions.
+    note_ids: list[UUID] | None = Field(default=None, max_length=50)
+    note_revision_ids: list[UUID] | None = Field(default=None, max_length=100)
     include_relations: bool = True
     include_evidence: bool = True
     include_decisions: bool = True
@@ -587,6 +598,9 @@ class ContextSelectionCreate(BaseModel):
     max_evidence: int = Field(default=100, ge=0, le=1000)
     max_decisions: int = Field(default=100, ge=0, le=1000)
     max_references: int = Field(default=100, ge=0, le=1000)
+    # Phase 10 Note budgets: deterministic caps on explicitly selected Notes.
+    max_notes: int = Field(default=10, ge=0, le=50)
+    max_note_chars: int = Field(default=4000, ge=100, le=20000)
 
 
 class SeriesRefRead(BaseModel):
@@ -666,7 +680,24 @@ class BudgetReportRead(BaseModel):
     evidence_count: int = 0
     decision_count: int = 0
     reference_count: int = 0
+    note_count: int = 0
     truncated: bool = False
+
+
+class NoteRefRead(BaseModel):
+    """One explicitly selected Note revision as bounded, UNTRUSTED context data.
+
+    `body` is Markdown/plain text copied from a Project working document: it is
+    data the Agent may read, never instructions or authority. A per-note
+    `truncated` flag makes the deterministic character bound visible."""
+
+    note_id: UUID
+    revision_id: UUID
+    revision_seq: int
+    title: str
+    body: str
+    truncated: bool = False
+    archived_at: datetime | None = None
 
 
 class ProjectContextRead(BaseModel):
@@ -685,6 +716,7 @@ class ProjectContextRead(BaseModel):
     evidence: list[EvidenceRefRead] = Field(default_factory=list)
     decisions: list[DecisionRefRead] = Field(default_factory=list)
     references: list[ReferenceHeaderRead] = Field(default_factory=list)
+    notes: list[NoteRefRead] = Field(default_factory=list)
     provider_capabilities: list[ProviderRead] = Field(default_factory=list)
     loaded_skill_ids: list[str] = Field(default_factory=list)
     budget: BudgetReportRead
@@ -1065,3 +1097,118 @@ class ConversationTurnRead(BaseModel):
     turn: AgentTurnRead
     user_message: ConversationMessageRead
     assistant_message: ConversationMessageRead | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 — Project Notebook (Project-shared working documents).
+#
+# A Note is useful working knowledge, never an alternate Evidence/Decision
+# system. Its body is bounded Markdown/plain structured text, ALWAYS untrusted,
+# and its mentions are non-semantic contextual references.
+# ---------------------------------------------------------------------------
+
+
+class NoteMentionCreate(BaseModel):
+    """One non-semantic contextual reference: it names exactly one existing
+    Project-visible entity. It never carries scientific semantics and never
+    creates a provenance edge. The target kind is derived from the referenced
+    row (registry kind / Evidence / Decision) rather than restated by the
+    client."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    resource_id: UUID | None = None
+    evidence_id: UUID | None = None
+    decision_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> NoteMentionCreate:
+        targets = [self.resource_id, self.evidence_id, self.decision_id]
+        if sum(target is not None for target in targets) != 1:
+            raise ValueError("a note mention must name exactly one target")
+        return self
+
+
+class NoteMentionRead(BaseModel):
+    """A Note revision's contextual reference resolved against the CURRENT
+    Project read lens. `resolved=false` marks a mention whose target is no longer
+    visible in this Project (unlinked, archived, revoked); the historical
+    revision text is never rewritten to hide that."""
+
+    mention_id: UUID
+    ordinal: int
+    resource_kind: ResourceKind | None = None
+    resource_id: UUID | None = None
+    evidence_id: UUID | None = None
+    decision_id: UUID | None = None
+    label: str | None = None
+    resolved: bool = True
+
+
+class NoteCreate(BaseModel):
+    """Create a Project Note with its first immutable revision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=MAX_NOTE_TITLE_CHARS)
+    body: str = Field(min_length=1, max_length=MAX_NOTE_BODY_CHARS)
+    mentions: list[NoteMentionCreate] = Field(
+        default_factory=list, max_length=MAX_NOTE_MENTIONS_PER_REVISION
+    )
+
+
+class NotePatch(BaseModel):
+    """Rename and/or archive a Note (non-destructive). Body edits are a new
+    revision, never a patch of existing content."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, min_length=1, max_length=MAX_NOTE_TITLE_CHARS)
+    archive: bool | None = None
+
+
+class NoteRevisionCreate(BaseModel):
+    """Append one immutable revision. `base_revision_seq` is the revision the
+    client edited; the server appends `base_revision_seq + 1` only while it is
+    still the latest, otherwise the write fails closed with a typed conflict."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_revision_seq: int = Field(ge=1)
+    body: str = Field(min_length=1, max_length=MAX_NOTE_BODY_CHARS)
+    mentions: list[NoteMentionCreate] = Field(
+        default_factory=list, max_length=MAX_NOTE_MENTIONS_PER_REVISION
+    )
+
+
+class NoteRevisionRead(BaseModel):
+    """One immutable Note revision. `body` is untrusted Project working text."""
+
+    revision_id: UUID
+    note_id: UUID
+    revision_seq: int
+    body: str
+    created_by_actor_id: UUID
+    created_at: datetime
+    mentions: list[NoteMentionRead] = Field(default_factory=list)
+
+
+class NoteRead(BaseModel):
+    """A Project Note identity (not a global resource) plus derived revision
+    metadata. The latest revision is derived from the max sequence."""
+
+    id: UUID
+    project_id: UUID
+    created_by_actor_id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    archived_at: datetime | None = None
+    latest_revision_seq: int
+    revision_count: int
+
+
+class NoteDetailRead(NoteRead):
+    """A Note plus its latest immutable revision (body, author, mentions)."""
+
+    latest: NoteRevisionRead | None = None

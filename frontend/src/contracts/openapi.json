@@ -293,6 +293,11 @@
             "title": "Evidence Count",
             "type": "integer"
           },
+          "note_count": {
+            "default": 0,
+            "title": "Note Count",
+            "type": "integer"
+          },
           "reference_count": {
             "default": 0,
             "title": "Reference Count",
@@ -806,6 +811,20 @@
             "title": "Max Evidence",
             "type": "integer"
           },
+          "max_note_chars": {
+            "default": 4000,
+            "maximum": 20000.0,
+            "minimum": 100.0,
+            "title": "Max Note Chars",
+            "type": "integer"
+          },
+          "max_notes": {
+            "default": 10,
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Max Notes",
+            "type": "integer"
+          },
           "max_references": {
             "default": 100,
             "maximum": 1000.0,
@@ -833,6 +852,38 @@
             "minimum": 1.0,
             "title": "Max Series",
             "type": "integer"
+          },
+          "note_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Ids"
+          },
+          "note_revision_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note Revision Ids"
           },
           "revision_ids": {
             "anyOf": [
@@ -2317,6 +2368,472 @@
         "title": "MembershipUpdate",
         "type": "object"
       },
+      "NoteCreate": {
+        "additionalProperties": false,
+        "description": "Create a Project Note with its first immutable revision.",
+        "properties": {
+          "body": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "mentions": {
+            "items": {
+              "$ref": "#/components/schemas/NoteMentionCreate"
+            },
+            "maxItems": 100,
+            "title": "Mentions",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "body"
+        ],
+        "title": "NoteCreate",
+        "type": "object"
+      },
+      "NoteDetailRead": {
+        "description": "A Note plus its latest immutable revision (body, author, mentions).",
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_actor_id": {
+            "format": "uuid",
+            "title": "Created By Actor Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "latest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NoteRevisionRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "latest_revision_seq": {
+            "title": "Latest Revision Seq",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "revision_count": {
+            "title": "Revision Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "created_by_actor_id",
+          "title",
+          "created_at",
+          "updated_at",
+          "latest_revision_seq",
+          "revision_count"
+        ],
+        "title": "NoteDetailRead",
+        "type": "object"
+      },
+      "NoteMentionCreate": {
+        "additionalProperties": false,
+        "description": "One non-semantic contextual reference: it names exactly one existing\nProject-visible entity. It never carries scientific semantics and never\ncreates a provenance edge. The target kind is derived from the referenced\nrow (registry kind / Evidence / Decision) rather than restated by the\nclient.",
+        "properties": {
+          "decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "evidence_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Id"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          }
+        },
+        "title": "NoteMentionCreate",
+        "type": "object"
+      },
+      "NoteMentionRead": {
+        "description": "A Note revision's contextual reference resolved against the CURRENT\nProject read lens. `resolved=false` marks a mention whose target is no longer\nvisible in this Project (unlinked, archived, revoked); the historical\nrevision text is never rewritten to hide that.",
+        "properties": {
+          "decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Id"
+          },
+          "evidence_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "mention_id": {
+            "format": "uuid",
+            "title": "Mention Id",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "resolved": {
+            "default": true,
+            "title": "Resolved",
+            "type": "boolean"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResourceKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "mention_id",
+          "ordinal"
+        ],
+        "title": "NoteMentionRead",
+        "type": "object"
+      },
+      "NotePatch": {
+        "additionalProperties": false,
+        "description": "Rename and/or archive a Note (non-destructive). Body edits are a new\nrevision, never a patch of existing content.",
+        "properties": {
+          "archive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "NotePatch",
+        "type": "object"
+      },
+      "NoteRead": {
+        "description": "A Project Note identity (not a global resource) plus derived revision\nmetadata. The latest revision is derived from the max sequence.",
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_actor_id": {
+            "format": "uuid",
+            "title": "Created By Actor Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "latest_revision_seq": {
+            "title": "Latest Revision Seq",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "revision_count": {
+            "title": "Revision Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "created_by_actor_id",
+          "title",
+          "created_at",
+          "updated_at",
+          "latest_revision_seq",
+          "revision_count"
+        ],
+        "title": "NoteRead",
+        "type": "object"
+      },
+      "NoteRefRead": {
+        "description": "One explicitly selected Note revision as bounded, UNTRUSTED context data.\n\n`body` is Markdown/plain text copied from a Project working document: it is\ndata the Agent may read, never instructions or authority. A per-note\n`truncated` flag makes the deterministic character bound visible.",
+        "properties": {
+          "archived_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "note_id": {
+            "format": "uuid",
+            "title": "Note Id",
+            "type": "string"
+          },
+          "revision_id": {
+            "format": "uuid",
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "revision_seq": {
+            "title": "Revision Seq",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "note_id",
+          "revision_id",
+          "revision_seq",
+          "title",
+          "body"
+        ],
+        "title": "NoteRefRead",
+        "type": "object"
+      },
+      "NoteRevisionCreate": {
+        "additionalProperties": false,
+        "description": "Append one immutable revision. `base_revision_seq` is the revision the\nclient edited; the server appends `base_revision_seq + 1` only while it is\nstill the latest, otherwise the write fails closed with a typed conflict.",
+        "properties": {
+          "base_revision_seq": {
+            "minimum": 1.0,
+            "title": "Base Revision Seq",
+            "type": "integer"
+          },
+          "body": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "mentions": {
+            "items": {
+              "$ref": "#/components/schemas/NoteMentionCreate"
+            },
+            "maxItems": 100,
+            "title": "Mentions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "base_revision_seq",
+          "body"
+        ],
+        "title": "NoteRevisionCreate",
+        "type": "object"
+      },
+      "NoteRevisionRead": {
+        "description": "One immutable Note revision. `body` is untrusted Project working text.",
+        "properties": {
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_actor_id": {
+            "format": "uuid",
+            "title": "Created By Actor Id",
+            "type": "string"
+          },
+          "mentions": {
+            "items": {
+              "$ref": "#/components/schemas/NoteMentionRead"
+            },
+            "title": "Mentions",
+            "type": "array"
+          },
+          "note_id": {
+            "format": "uuid",
+            "title": "Note Id",
+            "type": "string"
+          },
+          "revision_id": {
+            "format": "uuid",
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "revision_seq": {
+            "title": "Revision Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision_id",
+          "note_id",
+          "revision_seq",
+          "body",
+          "created_by_actor_id",
+          "created_at"
+        ],
+        "title": "NoteRevisionRead",
+        "type": "object"
+      },
       "ObjectCreate": {
         "properties": {
           "description": {
@@ -2667,6 +3184,13 @@
           },
           "membership_role": {
             "$ref": "#/components/schemas/Role"
+          },
+          "notes": {
+            "items": {
+              "$ref": "#/components/schemas/NoteRefRead"
+            },
+            "title": "Notes",
+            "type": "array"
           },
           "project_id": {
             "format": "uuid",
@@ -6728,6 +7252,476 @@
           }
         },
         "summary": "Update Membership"
+      }
+    },
+    "/api/projects/{project_id}/notes": {
+      "get": {
+        "description": "List the Notes shared with the readable members of this Project.",
+        "operationId": "list_project_notes_api_projects__project_id__notes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NoteRead"
+                  },
+                  "title": "Response List Project Notes Api Projects  Project Id  Notes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Project Notes"
+      },
+      "post": {
+        "description": "Create a Project-shared working Note with its first immutable revision.\nA Note is working knowledge, never Evidence/Decision truth and never a\nscientific-graph node.",
+        "operationId": "create_project_note_api_projects__project_id__notes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteDetailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Project Note"
+      }
+    },
+    "/api/projects/{project_id}/notes/{note_id}": {
+      "get": {
+        "description": "The Note plus its latest immutable revision and resolved mentions.",
+        "operationId": "get_project_note_api_projects__project_id__notes__note_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteDetailRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Note"
+      },
+      "patch": {
+        "description": "Rename and/or archive a Note. Non-destructive; body edits are a new\nrevision, never a rewrite.",
+        "operationId": "patch_project_note_api_projects__project_id__notes__note_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Patch Project Note"
+      }
+    },
+    "/api/projects/{project_id}/notes/{note_id}/revisions": {
+      "get": {
+        "description": "The immutable revision history (oldest first).",
+        "operationId": "list_project_note_revisions_api_projects__project_id__notes__note_id__revisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NoteRevisionRead"
+                  },
+                  "title": "Response List Project Note Revisions Api Projects  Project Id  Notes  Note Id  Revisions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Project Note Revisions"
+      },
+      "post": {
+        "description": "Append one immutable Note revision. `base_revision_seq` must still be the\nserver's latest revision or the write fails closed with a 409 conflict.",
+        "operationId": "append_project_note_revision_api_projects__project_id__notes__note_id__revisions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "note_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Note Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NoteRevisionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteRevisionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Append Project Note Revision"
       }
     },
     "/api/projects/{project_id}/objects": {
