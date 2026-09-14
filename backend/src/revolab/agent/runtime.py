@@ -516,13 +516,18 @@ class AgentTurnRunner:
                 None,
             )
 
+        # Each tool call runs in its own SAVEPOINT: the turn is one outer
+        # transaction (so truth-tool writes commit only at the turn's single
+        # commit point), but a tool that fails after partially flushing its own
+        # rows must not leave those rows behind for the outer commit to pick up.
         try:
-            result = self._local_runtime.invoke(
-                ctx,
-                ToolInvocationCreate(
-                    tool_id=call.name, input=call.arguments, persist=False
-                ),
-            )
+            with ctx.session.begin_nested():
+                result = self._local_runtime.invoke(
+                    ctx,
+                    ToolInvocationCreate(
+                        tool_id=call.name, input=call.arguments, persist=False
+                    ),
+                )
         except DomainError as exc:
             return (
                 ToolCallTraceRead(

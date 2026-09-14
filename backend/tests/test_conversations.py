@@ -1093,3 +1093,159 @@ def test_settings_reject_negative_history_ceilings():
             Settings(**{field: -1})
     # 0 stays a legal diagnostic value.
     Settings(agent_max_history_messages=0, agent_max_history_chars=0)
+
+
+def test_failed_policy_tool_leaves_no_partial_write(session, tmp_path):
+    """A policy tool that fails AFTER it has flushed its own row must not leak that
+    row into the turn's single outer commit (per-tool SAVEPOINT atomicity)."""
+    from uuid import uuid4 as _uuid4
+
+    from revolab.models import Decision, DecisionEvidence, DecisionTarget
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    conversation = create_conversation(session, actor, project.id)
+    # A citation to a non-existent Evidence row fails inside `_apply_draft_cites`,
+    # i.e. AFTER `create_decision_row` has added + flushed the Decision.
+    missing_evidence = str(_uuid4())
+    draft = {
+        "title": "Ghost draft",
+        "statement": "must not persist",
+        "next_actions": [],
+        "cites": [{"evidence_id": missing_evidence, "cited_as": "supports"}],
+        "selects": [],
+    }
+    model = ScriptedModelBackend(
+        steps=[
+            {
+                "finish": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": "call_draft",
+                        "name": "decision.record_draft",
+                        "arguments": draft,
+                    }
+                ],
+            },
+            {"finish": "stop", "content": "stopped"},
+        ]
+    )
+    result = run_conversation_turn(
+        session,
+        actor,
+        project.id,
+        conversation.id,
+        _runner(
+            session,
+            actor,
+            project,
+            _registry(),
+            InMemorySecretStore(),
+            ContentStore(tmp_path),
+            model=model,
+        ),
+        message="draft it",
+    )
+    assert [entry.tool_id for entry in result.turn.tool_trace] == ["decision.record_draft"]
+    assert result.turn.tool_trace[0].status.value == "failed"
+    # No ghost/partial write survived the turn's own commit.
+    assert session.scalars(select(Decision)).all() == []
+    assert session.scalars(select(DecisionEvidence)).all() == []
+    assert session.scalars(select(DecisionTarget)).all() == []
+    # The transcript itself is still durable.
+    detail = get_conversation(session, actor, project.id, conversation.id)
+    assert detail.total_messages == 2
+
+
+def test_sqlite_concurrent_turns_serialize(tmp_path):
+    """SQLite ignores `FOR UPDATE`, so same-conversation turns are serialized by an
+    explicit process-level execution lock: the second turn waits, then sees the
+    first turn's persisted messages and allocates the next seq."""
+    import threading
+    import time
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session as ORMSession
+
+    from revolab.db import Base
+    from revolab.models import Project
+
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'concurrent.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    Base.metadata.create_all(engine)
+    with ORMSession(engine) as setup:
+        actor = services.create_actor(setup)
+        project = services.create_project(setup, actor, "SQLite concurrency")
+        project_id = project.id
+        conversation_id = create_conversation(setup, actor, project_id).id
+
+    class BlockingModel:
+        def __init__(self) -> None:
+            self.requests = []
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def complete(self, request):
+            self.requests.append(request)
+            self.started.set()
+            self.release.wait(timeout=15)
+            return ModelResponse(finish="stop", content="A-final")
+
+    model_a = BlockingModel()
+    model_b = _CapturingModel([_stop("B-final")])
+    errors: list[Exception] = []
+
+    def worker(model, message: str) -> None:
+        try:
+            with ORMSession(engine) as session:
+                project = session.get(Project, project_id)
+                assert project is not None
+                run_conversation_turn(
+                    session,
+                    actor,
+                    project_id,
+                    conversation_id,
+                    _runner(
+                        session,
+                        actor,
+                        project,
+                        _registry(),
+                        InMemorySecretStore(),
+                        ContentStore(tmp_path),
+                        model=model,
+                    ),
+                    message=message,
+                )
+        except Exception as exc:
+            errors.append(exc)
+
+    thread_a = threading.Thread(target=worker, args=(model_a, "A-message"))
+    thread_a.start()
+    assert model_a.started.wait(timeout=10)  # A holds the conversation execution lock
+
+    thread_b = threading.Thread(target=worker, args=(model_b, "B-message"))
+    thread_b.start()
+    time.sleep(0.5)
+    # B is blocked on the per-conversation lock: it has not reached the model.
+    assert model_b.requests == []
+
+    model_a.release.set()
+    thread_a.join(timeout=20)
+    thread_b.join(timeout=20)
+    assert not thread_a.is_alive()
+    assert not thread_b.is_alive()
+    assert errors == []
+
+    # B's model saw A's persisted message, and the seq allocation is ordered.
+    assert any(message.content == "A-message" for message in model_b.requests[0].messages)
+    with ORMSession(engine) as check:
+        seqs = list(
+            check.scalars(
+                select(ConversationMessage)
+                .where(ConversationMessage.conversation_id == conversation_id)
+                .order_by(ConversationMessage.seq.asc())
+            )
+        )
+    assert [row.seq for row in seqs] == [1, 2, 3, 4]

@@ -176,6 +176,25 @@ Durable writes are rejection-bounded at ingestion; model assembly uses bounded
 selection. A long-lived conversation may hold many messages without all of them
 entering the model.
 
+## Transaction and concurrency semantics
+
+One turn is ONE outer transaction and `run_conversation_turn` is its sole commit
+point. The load→run→persist section is serialized per conversation:
+
+```text
+PostgreSQL  SELECT ... FOR UPDATE on the conversation row (cross-process truth)
+SQLite      explicit process-level execution lock per conversation, because
+            SQLite silently ignores FOR UPDATE (single-process dev/test
+            substrate; PostgreSQL remains the concurrency truth)
+```
+
+Each Agent-executed Tool call runs inside its own SAVEPOINT. A tool that fails
+after partially flushing its own rows (for example a Decision draft whose
+citation validation fails after the row was flushed) is rolled back to its
+savepoint, so a `failed` Tool call can never leak a ghost/partial write into the
+turn's final commit. A Tool call that succeeds stays uncommitted in the outer
+transaction and becomes durable only at the turn's single commit.
+
 ## Explicit non-goals
 
 No RAG, embeddings, vector database, semantic memory, `AgentMemory`, notebooks,

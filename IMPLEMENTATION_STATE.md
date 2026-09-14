@@ -1268,7 +1268,7 @@ every job.
 ## Verified evidence (Phase 9)
 
 - Backend: `ruff check backend` and strict `mypy` pass on 50 source files.
-  `pytest` passes **340 passed, 9 skipped** (SQLite fast tests; the 9 skips are
+  `pytest` passes **342 passed, 9 skipped** (SQLite fast tests; the 9 skips are
   the opt-in PostgreSQL acceptance file). `test_conversations.py` regressions
   cover: persist+reload, server-owned second-turn history, structural rejection
   of client-supplied history, Actor isolation (incl. the OWNER cannot read a
@@ -1431,7 +1431,7 @@ helper (which previously treated 0 as unbounded); `agent_max_history_messages` /
 `agent_max_history_chars` are now `ge=0`-validated. Also from that round: the deferred-durability
 regression now pins the flush half (rows visible in the caller's session pre-commit), and a
 reloaded `pending` entry keeps its inert "NOT executed: <reason>" framing. Final counts:
-**340 backend tests**, **24 frontend tests**.
+**342 backend tests**, **24 frontend tests**.
 
 Delta round 6 (fresh reviewers over the correction) returned **PASS on all lenses with no
 P0/P1**: an exhaustive slice check (101 cases per helper, 0 mismatches), a real in-place mutation
@@ -1442,7 +1442,7 @@ rejection while 0 stays legal) and documenting that a 0 count ceiling also suppr
 results — a diagnostic value, not a supported production setting. The round's remaining test
 nits were also closed: `ge=0` settings validation has its own regression, and the
 deferred-durability assertion runs under `no_autoflush` so it pins the explicit flush rather than
-an incidental autoflush. Final counts: **340 backend tests**, **24 frontend tests**.
+an incidental autoflush. Final counts: **342 backend tests**, **24 frontend tests**.
 
 ## Known deferrals (explicit, not silently postponed)
 
@@ -1474,3 +1474,24 @@ an incidental autoflush. Final counts: **340 backend tests**, **24 frontend test
   earlier phases).
 - Frontend: `openapi-fetch` (typed client), `openapi-typescript` (contract
   generation, dev), `@playwright/test` (browser smoke, dev), `@types/node` (dev).
+
+### Human-review hold: two P1 fixes
+
+A human review put the PR on HOLD for two substantive P1s, both now fixed with
+mutation-verified regressions:
+
+- **Failed policy tool could leave a ghost/partial write.** Phase 9 made Agent-loop tool
+  mutations `commit=False`, and `decision.record_draft` flushes its Decision before citation
+  validation completes; a `DomainError` after that flush left the row in the outer transaction,
+  which the turn's final commit then persisted. Each Agent-executed tool call now runs inside its
+  own SAVEPOINT (`AgentTurnRunner._handle_tool_call`), so a failed tool rolls back only its own
+  partial rows. Regression `test_failed_policy_tool_leaves_no_partial_write` fails if the
+  savepoint is removed.
+- **SQLite ignored `FOR UPDATE`, so concurrent same-conversation turns could start from the same
+  history and collide on `seq`.** `run_conversation_turn` now takes an explicit process-level
+  per-conversation execution lock on the SQLite substrate (PostgreSQL keeps the cross-process row
+  lock as the concurrency truth). Regression `test_sqlite_concurrent_turns_serialize` fails if that
+  lock is disabled.
+
+Full gates re-ran green: backend **342 passed / 9 skipped**, PostgreSQL acceptance **9 passed**
+(no drift), frontend **24 passed**, Playwright **4 specs**.

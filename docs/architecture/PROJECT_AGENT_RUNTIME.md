@@ -119,7 +119,10 @@ Unknown tools fail closed; malformed or non-object arguments fail closed;
 invented resource ids are re-authorized at execution time. Persistence inside
 the loop is always the typed `LocalToolRuntime` path with `persist=False` — the
 model cannot bypass it and cannot construct arbitrary HTTP/SQL/filesystem/shell
-operations.
+operations. Each tool call executes inside its own SAVEPOINT: a tool that fails
+after partially flushing its own rows is rolled back to that savepoint, so a
+`failed` trace can never leave a ghost write for the turn's single outer commit
+(`docs/architecture/PROJECT_CONVERSATIONS.md`).
 
 ## Authority (`AgentToolAutonomy`)
 

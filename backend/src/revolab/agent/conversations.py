@@ -18,6 +18,10 @@ persist bounded user/assistant rows), it never forks it.
 
 from __future__ import annotations
 
+import threading
+import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
@@ -47,6 +51,33 @@ MAX_CONVERSATION_MESSAGE_CHARS = 8000
 MAX_TRACE_SUMMARY_ENTRIES = 64
 MAX_TRACE_SUMMARY_FIELD_CHARS = 500
 DEFAULT_CONVERSATION_TITLE = "New conversation"
+
+# Process-level per-conversation execution locks for the SQLite substrate.
+# `SELECT ... FOR UPDATE` is silently ignored by SQLite, so the row lock alone
+# cannot order concurrent turns there; this lock restores the same guarantee for
+# a single process. A weak-value map avoids unbounded growth, and a lock is only
+# collected when uncontended (a waiting thread holds a strong reference).
+_sqlite_turn_locks: weakref.WeakValueDictionary[UUID, threading.Lock] = (
+    weakref.WeakValueDictionary()
+)
+_sqlite_turn_locks_guard = threading.Lock()
+
+
+def _is_sqlite(session: Session) -> bool:
+    return session.get_bind().dialect.name == "sqlite"
+
+
+@contextmanager
+def _turn_execution_lock(session: Session, conversation_id: UUID) -> Iterator[None]:
+    """Serialize one conversation's turn on SQLite; on PostgreSQL the row lock
+    taken inside `_execute_turn` is the ordering primitive."""
+    if not _is_sqlite(session):
+        yield
+        return
+    with _sqlite_turn_locks_guard:
+        lock = _sqlite_turn_locks.setdefault(conversation_id, threading.Lock())
+    with lock:
+        yield
 
 
 def _now() -> datetime:
@@ -202,20 +233,47 @@ def run_conversation_turn(
     selection: ContextSelectionCreate | None = None,
     history_limit: int = 20,
 ) -> ConversationTurnRead:
-    """One durable turn: lock the conversation, load server-owned bounded
+    """One durable turn: serialize per conversation, load server-owned bounded
     history, run the canonical AgentTurnRunner, then persist the bounded
-    user/assistant transcript. The load->run->persist section is serialized per
-    conversation, so a second concurrent turn always sees the first turn's
-    persisted messages. The client never supplies historical assistant
-    messages; authority is still resolved by the runner from the one canonical
-    ToolCatalog and current Project state."""
+    user/assistant transcript in ONE transaction. The client never supplies
+    historical assistant messages; authority is still resolved by the runner from
+    the one canonical ToolCatalog and current Project state.
+
+    Serialization: PostgreSQL takes the conversation row lock (`SELECT ... FOR
+    UPDATE`), which orders concurrent turns across processes. SQLite ignores
+    `FOR UPDATE`, so on that substrate an explicit process-level execution lock
+    per conversation provides the same ordering (SQLite is a single-process
+    dev/test substrate; PostgreSQL remains the concurrency truth)."""
     if len(message) > MAX_CONVERSATION_MESSAGE_CHARS:
         raise ValidationError("message exceeds the maximum conversation message length")
 
+    with _turn_execution_lock(session, conversation_id):
+        return _execute_turn(
+            session,
+            actor_id,
+            project_id,
+            conversation_id,
+            runner,
+            message=message,
+            selection=selection,
+            history_limit=history_limit,
+        )
+
+
+def _execute_turn(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    conversation_id: UUID,
+    runner: AgentTurnRunner,
+    *,
+    message: str,
+    selection: ContextSelectionCreate | None = None,
+    history_limit: int = 20,
+) -> ConversationTurnRead:
     # Row lock FIRST: the model loop may be slow, and conversational continuity
     # requires that two concurrent turns on one conversation serialize their
-    # read->compute->write as a unit (PostgreSQL FOR UPDATE; SQLite is
-    # single-writer so the unique seq constraint is the backstop there).
+    # read->compute->write as a unit.
     conversation = _owned_conversation(
         session, actor_id, project_id, conversation_id, with_for_update=True
     )
