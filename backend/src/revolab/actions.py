@@ -525,20 +525,55 @@ def _recover_confirmed_run(
        authoritative answer — never a reason string claiming nothing was recorded
        when something was.
 
-    Returns the reference when it exists (with a bounded note when its input
-    provenance could not be completed), or `run_id=None` when the canonical
-    identity genuinely does not exist."""
+    The read-back RE-APPLIES the canonical immutable identity contract
+    (`provenance.assert_reference_compatible`) instead of accepting any row that
+    merely shares `(authority, native_id)`: an existing reference that contradicts
+    the confirmed handle's immutable assertion (at minimum a different `task_type`)
+    is NOT this action's result and must never be attached to it. The external
+    submission was still confirmed, so the honest outcome is a bounded ambiguity
+    rather than a success or a silent no-op.
+
+    Nothing raised in here may escape: a compatibility conflict, a read failure or a
+    retry failure all resolve to a bounded `_RecoveredRun`, so the caller always
+    settles the action terminally instead of stranding it in `executing`.
+
+    Returns the reference when a COMPATIBLE one exists (with a bounded note when its
+    input provenance could not be completed), or `run_id=None` with a bounded
+    reconciliation `reason`."""
     try:
         return _RecoveredRun(run_id=_record_confirmed_run(ctx, action, exc.handle, exc.bindings))
     except _UnrecordedExternalSuccess:
         ctx.session.rollback()
     except SQLAlchemyError:
         ctx.session.rollback()
-    existing = provenance.find_run_reference(
-        ctx.session, exc.handle.authority, exc.handle.native_id
-    )
-    if existing is None:
-        return _RecoveredRun(run_id=None)
+    identity = f"{exc.handle.authority}/{exc.handle.native_id}"
+    try:
+        existing = provenance.find_run_reference(
+            ctx.session, exc.handle.authority, exc.handle.native_id
+        )
+        if existing is None:
+            return _RecoveredRun(run_id=None)
+        # Same canonical identity may be reused only when it does not contradict the
+        # confirmed handle's immutable record.
+        provenance.assert_reference_compatible(existing, task_type=exc.handle.task_type)
+    except SQLAlchemyError:
+        ctx.session.rollback()
+        return _RecoveredRun(
+            run_id=None,
+            reason=(
+                f"the provider confirmed {identity} but the canonical run reference "
+                "could not be read back"
+            ),
+        )
+    except DomainError as conflict:
+        ctx.session.rollback()
+        return _RecoveredRun(
+            run_id=None,
+            reason=(
+                f"the provider confirmed {identity} but the existing run reference is "
+                f"incompatible with it: {conflict}"
+            ),
+        )
     return _RecoveredRun(
         run_id=existing.run_id,
         reason="canonical run reference recorded; input provenance could not be completed",
@@ -678,9 +713,12 @@ def execute_action_request(
                 action_request_id,
                 ActionRequestStatus.AMBIGUOUS,
                 reason=(
-                    "the provider accepted the submission "
-                    f"({exc.handle.authority}/{exc.handle.native_id}) but no canonical "
-                    f"run reference could be recorded: {exc}"
+                    recovered.reason
+                    or (
+                        "the provider accepted the submission "
+                        f"({exc.handle.authority}/{exc.handle.native_id}) but no canonical "
+                        f"run reference could be recorded: {exc}"
+                    )
                 ),
             )
     except (DomainError, CapabilityError) as exc:

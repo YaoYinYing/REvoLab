@@ -1354,3 +1354,72 @@ def test_provider_agreement_fails_closed_when_the_payload_omits_the_provider() -
     # Fails CLOSED when a remote payload omits the provider identity entirely.
     assert explicit_arguments_match_provider("prov", {}) is False
     assert explicit_arguments_match_provider("prov", {"provider_key": None}) is False
+
+
+def test_recovery_never_attaches_an_incompatible_existing_run_reference(
+    session: Session,
+) -> None:
+    """The read-back fallback must RE-APPLY the canonical immutable identity
+    contract, not accept any row that merely shares `(authority, native_id)`.
+
+    A pre-existing RunReference with the same identity but a DIFFERENT task_type is
+    not this submission's result. The provider submission is confirmed exactly once,
+    the action must not be `succeeded`, its `result_run_id` must stay null, and the
+    incompatible row must never be attached to it.
+    """
+    from revolab.domain import provenance
+
+    scenario = _scenario(session)
+    # Pre-seed the SAME (authority, native_id) the provider will return ("native-1")
+    # with a contradictory immutable task_type.
+    seeded = provenance.create_run_reference_row(
+        session,
+        AUTHORITY,
+        "native-1",
+        task_type="pre-existing-task",
+        input_parameter_digest=None,
+        submitted_at=None,
+    )
+    session.commit()
+    seeded_id = seeded.run_id
+
+    action = _propose(session, scenario, f"{PROVIDER}.compute.submit", _compute_arguments(scenario))
+
+    executed = actions.execute_action_request(
+        _execution(session, scenario), scenario["actor"], scenario["project"].id, action.id
+    )
+
+    # The external submission happened exactly once ...
+    assert scenario["state"].submit_calls == 1
+    # ... but it cannot be reconciled with the immutable identity contract.
+    assert executed.status != ActionRequestStatus.SUCCEEDED.value
+    assert executed.status == ActionRequestStatus.AMBIGUOUS.value
+    assert executed.result_run_id is None
+    assert executed.resolved_at is not None
+    # Bounded reconciliation detail names the conflict, not a false success.
+    reason = executed.status_reason or ""
+    assert f"{AUTHORITY}/native-1" in reason
+    assert "incompatible" in reason
+    # The incompatible pre-existing row is untouched and NOT attached as the result.
+    session.expire_all()
+    stored = session.get(RunReference, seeded_id)
+    assert stored is not None and stored.task_type == "pre-existing-task"
+    assert executed.result_run_id != seeded_id
+    # No second reference was fabricated for the same identity.
+    assert (
+        session.scalar(
+            select(func.count())
+            .select_from(RunReference)
+            .where(RunReference.authority == AUTHORITY, RunReference.native_id == "native-1")
+        )
+        == 1
+    )
+    # Terminal, never stranded, and never re-submitted.
+    with pytest.raises(ConflictError):
+        actions.execute_action_request(
+            _execution(session, scenario),
+            scenario["actor"],
+            scenario["project"].id,
+            action.id,
+        )
+    assert scenario["state"].submit_calls == 1

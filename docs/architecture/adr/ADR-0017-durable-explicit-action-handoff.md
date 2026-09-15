@@ -108,8 +108,10 @@ never duplicates scheduler/task/Runner/artifact-publication state. A confirmed
 handle whose canonical recording fails is retried once through the same
 get-or-create path, and if that fails the committed RunReference is read back by the
 provider identity (the recording commits the identity card before its provenance
-edges), so a partially recorded run is reported `succeeded` with its REAL reference
-rather than orphaned behind a false "nothing recorded" ambiguity. Only when no
+edges) with the canonical immutable identity contract re-applied, so a partially
+recorded, COMPATIBLE run is reported `succeeded` with its REAL reference rather than
+orphaned behind a false "nothing recorded" ambiguity, while an INCOMPATIBLE existing
+reference is never attached and settles `ambiguous`. Only when no
 canonical identity exists does the action settle `ambiguous`, retaining the bounded
 provider identity for human reconciliation. Failure paths roll back before writing
 the terminal outcome and the terminal write tolerates a failed transaction, so an

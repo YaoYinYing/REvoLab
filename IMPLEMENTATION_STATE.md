@@ -1870,7 +1870,7 @@ Commands run on this branch head (2026-09-15):
 ```text
 ruff check backend                                  All checks passed
 mypy (strict, 53 source files)                      Success: no issues found
-pytest (SQLite)                                     435 passed, 18 skipped
+pytest (SQLite)                                     436 passed, 18 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
 pytest backend/tests/test_postgres_integration.py   18 passed (migrated PostgreSQL)
@@ -2056,6 +2056,29 @@ delta reviewers):
   consistent with the deletion invariant (a referenced Decision is never
   hard-deleted, so the action's canonical result is never silently nulled); the
   global-resource run FK stays `SET NULL` because global resources are only revoked.
+
+### Delta review round 4 (human review) — identity-compatibility gate
+
+Human review of the recovery fallback found that reading an existing
+`(authority, native_id)` back merely because it EXISTS is not sufficient: the
+canonical immutable identity contract must be re-applied. Fixed:
+
+- `_recover_confirmed_run` now calls `provenance.assert_reference_compatible(existing,
+  task_type=exc.handle.task_type)` (the same assertion
+  `_persist_run_reference_trusted` uses). A COMPATIBLE reference settles `succeeded`
+  with the real reference plus the bounded provenance note; an INCOMPATIBLE one is
+  never attached and settles `ambiguous` with bounded reconciliation detail and
+  `result_run_id = NULL`.
+- No exception from the compatibility assertion, the read-back, or the retry can
+  escape the recovery handler, so the action is always settled terminally (never
+  stranded in `executing`).
+- Regression `test_recovery_never_attaches_an_incompatible_existing_run_reference`
+  pre-seeds a same-identity/different-`task_type` `RunReference`, makes the provider
+  return that identity, and proves: exactly one provider submission; status
+  `ambiguous` (not `succeeded`); `result_run_id` null; the incompatible row untouched
+  and not attached; no second reference fabricated; a further execute fails closed
+  without re-submitting. Mutation-verified: removing the compatibility assertion
+  fails the test.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

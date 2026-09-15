@@ -229,10 +229,14 @@ back and then RECOVERS the canonical truth on a healthy transaction:
    duplicated (the external submission is never repeated);
 2. if that also fails, the canonical RunReference is read back by the confirmed
    provider identity — the failed attempt commits the identity card before its
-   provenance edges, so it may already exist. The read-back is authoritative: the
-   action then settles `succeeded` with the REAL reference plus a bounded note that
-   its input provenance could not be completed. It is never reported as
-   "nothing was recorded" when something was.
+   provenance edges, so it may already exist. The read-back RE-APPLIES the canonical
+   immutable identity contract (`provenance.assert_reference_compatible`), never
+   accepting a row merely because it shares `(authority, native_id)`. A **compatible**
+   reference settles the action `succeeded` with the REAL reference plus a bounded
+   note that its input provenance could not be completed — it is never reported as
+   "nothing was recorded" when something was. An **incompatible** existing reference
+   (at minimum a different `task_type`) is NOT this action's result: it is never
+   attached, and the action settles `ambiguous` with bounded reconciliation detail.
 
 Only if no canonical identity exists does the action settle `ambiguous`, and then the
 bounded `status_reason` retains the confirmed provider identity
@@ -248,11 +252,13 @@ commit (`commit_decision_row`, `_persist_run_reference_trusted`), so a SAVEPOINT
 cannot wrap them; the rollback-first discipline is what prevents an uncommitted
 partial local write from being persisted by the terminal write.
 
-A terminal outcome that cannot be written at all (the DB rejects it twice) and a
-read-back of the settled row that fails after the outcome was committed both surface
-as an explicit error while the durable state stays whatever was actually committed.
-The system never converts such a case into a success, and never auto-retries the
-external call.
+Nothing raised inside the recovery may escape it: a compatibility conflict, a
+read-back failure and a retry failure all resolve to a bounded outcome, so the action
+is always settled terminally rather than stranded in `executing`. A terminal outcome
+that cannot be written at all (the DB rejects it twice) and a read-back of the
+settled row that fails after the outcome was committed both surface as an explicit
+error while the durable state stays whatever was actually committed. The system never
+converts such a case into a success, and never auto-retries the external call.
 
 ## 9. Authoritative surfaces
 
