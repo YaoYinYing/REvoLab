@@ -704,6 +704,15 @@ class ActionRequest(Base, TimestampMixin):
     __tablename__ = "action_requests"
     __table_args__ = (
         Index("ix_action_requests_actor_project", "actor_id", "project_id"),
+        # A terminal SUCCESS always names the canonical result it produced: the
+        # reference is the only way the action becomes observable, and a
+        # `succeeded` row with no reference would be a state-machine lie. The
+        # status value is interpolated from the enum, never re-typed.
+        CheckConstraint(
+            f"status <> '{ActionRequestStatus.SUCCEEDED.value}'"
+            " OR result_run_id IS NOT NULL OR result_decision_id IS NOT NULL",
+            name="ck_action_succeeded_has_result",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)

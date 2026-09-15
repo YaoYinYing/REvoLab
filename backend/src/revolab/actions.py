@@ -69,6 +69,7 @@ from revolab.tools.catalog import build_tool_catalog
 from revolab.tools.explicit_actions import (
     COMPUTE_SUBMIT_SUFFIX,
     MAX_ACTION_ARGUMENT_CHARS,
+    explicit_arguments_match_provider,
     remote_explicit_action_input_model,
 )
 from revolab.tools.registry import LocalToolRegistry
@@ -581,6 +582,10 @@ def execute_action_request(
     mutation_capable_membership(session, actor_id, project_id)
     descriptor = _current_descriptor(ctx, actor_id, project_id, action)
     arguments = _revalidate_arguments(ctx, action)
+    if not explicit_arguments_match_provider(descriptor.provider_key, arguments):
+        raise ConflictError(
+            "stored action arguments name a provider other than the tool's; refusing to execute"
+        )
     _preflight_referenced_resources(ctx, project_id, descriptor, arguments)
 
     # --- durable one-shot claim ----------------------------------------------

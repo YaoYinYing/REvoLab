@@ -41,6 +41,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['result_decision_id'], ['decisions.id'], ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['result_run_id'], ['global_resource_registry.resource_id'], ondelete='SET NULL'),
+    sa.CheckConstraint("status <> 'succeeded' OR result_run_id IS NOT NULL OR result_decision_id IS NOT NULL", name='ck_action_succeeded_has_result'),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_action_requests_actor_id'), 'action_requests', ['actor_id'], unique=False)

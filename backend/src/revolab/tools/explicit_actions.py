@@ -21,6 +21,9 @@ import cycle or provider vocabulary leaking into Core.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from pydantic import BaseModel
 
 from revolab.schemas import ComputeSubmissionCreate
@@ -52,9 +55,29 @@ def remote_explicit_action_input_model(tool_id: str) -> type[BaseModel] | None:
     return None
 
 
+def explicit_arguments_match_provider(
+    provider_key: str | None, arguments: Mapping[str, Any]
+) -> bool:
+    """Whether a validated explicit-action payload names the SAME provider the Tool
+    id resolves to.
+
+    A remote explicit action carries provider identity twice — in the canonical
+    `tool_id` (the authority execution uses) and in the canonical input model's
+    `provider_key` field (what a human reads on the authorization surface). They
+    must agree: otherwise a human would authorize the operation under a false
+    description of the external side effect. A local action has no provider identity
+    (`provider_key is None`) and is exempt.
+    """
+    if provider_key is None:
+        return True
+    declared = arguments.get("provider_key")
+    return declared is None or declared == provider_key
+
+
 __all__ = [
     "COMPUTE_SUBMIT_SUFFIX",
     "MAX_ACTION_ARGUMENT_CHARS",
     "REMOTE_EXPLICIT_INPUT_MODEL_SUFFIXES",
+    "explicit_arguments_match_provider",
     "remote_explicit_action_input_model",
 ]

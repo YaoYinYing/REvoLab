@@ -63,6 +63,7 @@ from revolab.secret_store import SecretStore
 from revolab.tools.catalog import build_tool_catalog
 from revolab.tools.explicit_actions import (
     MAX_ACTION_ARGUMENT_CHARS,
+    explicit_arguments_match_provider,
     remote_explicit_action_input_model,
 )
 from revolab.tools.registry import LocalToolRegistry, build_default_registry
@@ -498,6 +499,21 @@ class AgentTurnRunner:
                         tool_id=call.name,
                         status=AgentToolCallStatus.FAILED,
                         error="explicit action arguments are invalid",
+                    ),
+                    None,
+                    None,
+                )
+            if not explicit_arguments_match_provider(
+                descriptor.provider_key, validated
+            ):
+                # The canonical Tool id is the authority; a payload naming a
+                # DIFFERENT provider would make the human authorize the operation
+                # under a false description of the external side effect.
+                return (
+                    ToolCallTraceRead(
+                        tool_id=call.name,
+                        status=AgentToolCallStatus.FAILED,
+                        error="explicit action arguments name a different provider than the tool",
                     ),
                     None,
                     None,

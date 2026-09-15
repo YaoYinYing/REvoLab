@@ -1870,7 +1870,7 @@ Commands run on this branch head (2026-09-15):
 ```text
 ruff check backend                                  All checks passed
 mypy (strict, 53 source files)                      Success: no issues found
-pytest (SQLite)                                     423 passed, 17 skipped
+pytest (SQLite)                                     430 passed, 17 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
 pytest backend/tests/test_postgres_integration.py   17 passed (migrated PostgreSQL)
@@ -1897,7 +1897,94 @@ provider); success creates the canonical `RunReference` and a second execute nev
 resubmits; the provider boundary classification is `failed` vs `ambiguous`; an
 ambiguous outcome is never retried; execute/reject are absent from the Agent
 catalog; hostile Note text cannot authorize or execute; an over-bound payload is
-refused rather than truncated.
+refused rather than truncated by BOTH the Agent loop and the persistence boundary.
+Post-claim failure honesty is covered too: a plain recording failure, a DB-level
+recording failure that leaves the session in a failed transaction, and a partially
+recorded run whose retry completes the canonical recording (no orphaned
+`RunReference`, no action stranded in `executing`).
+
+## Independent review (Phase 11)
+
+Three FRESH read-only reviewers ran in parallel against this branch (architecture /
+ownership; security / authority / external-side-effect semantics; API /
+persistence / frontend / verification), each independently verifying claims against
+the code and tests. All three returned completed structured reports; the integrator
+reconciled them (subagents do not vote on architecture) and fixed every valid
+P0/P1 plus the material P2s.
+
+| Reviewer | Verdict | P0 | P1 | P2 |
+|---|---|---|---|---|
+| A — architecture / ownership | APPROVE WITH FINDINGS | 0 | 1 | 3 |
+| B — security / authority / side effects | REQUEST CHANGES | 0 | 2 | 5 |
+| C — API / persistence / frontend / tests | REQUEST CHANGES | 0 | 1 | 6 |
+
+Reconciled findings (all fixed in `ddbc658` + the follow-up reconciliation commit):
+
+1. **A-P1 — duplicate source of truth for the local explicit-action input model.**
+   `tools/explicit_actions.py` kept a second `decision.commit -> DecisionCommitCreate`
+   map that duplicated (and contradicted) the registered `LocalToolSpec.input_model`.
+   Retired the local map: a local explicit action now resolves its model from the
+   registry (`LocalToolRegistry.explicit_action_input_model`), a remote one from the
+   ONE capability-suffix map. `PROJECT_TOOL_HARNESS.md` states the truth, and
+   `test_explicit_action_input_models_are_single_sourced` now compares against the
+   LIVE registry, so drift fails the test (it was tautological before).
+2. **B-P1 — broken transaction boundary in human execution.** A caught recording
+   failure could strand a durably claimed action in `executing` while the external
+   side effect had happened, and `_settle`'s commit could persist a partially
+   flushed RunReference. Fixed: every failure path ROLLS BACK before the terminal
+   write; `_settle` tolerates a session left in a failed transaction (rollback-first,
+   one retry) and reports whether the conditional transition won; a
+   confirmed-but-unrecorded run is retried ONCE through the canonical get-or-create
+   recording, so a partially committed attempt is completed instead of orphaned.
+   Regressions: `test_confirmed_but_unrecorded_run_is_terminal_and_never_stuck`,
+   `test_db_level_recording_failure_still_settles_the_action`,
+   `test_partially_recorded_run_is_completed_not_orphaned`.
+3. **C-P1 — provider misattribution on the human authorization surface.** A remote
+   action's `tool_id` (the execution authority) and its argument `provider_key` (what
+   the human reads) could disagree, so a human could authorize under a false
+   description of the external side effect. Fixed with ONE canonical rule
+   (`explicit_arguments_match_provider`) enforced at BOTH the proposal boundary
+   (fail closed, no durable row) and the execution boundary (defense in depth).
+   Regressions: `test_proposal_refuses_a_payload_naming_a_different_provider`,
+   `test_execution_refuses_a_stored_provider_mismatch`.
+4. **B-P2 — the persistence boundary did not enforce its own argument bound.**
+   `propose_action_request` now refuses an over-bound payload itself
+   (`test_propose_refuses_an_over_bound_payload`), not only the Agent loop.
+5. **B-P2 — an unreconcilable confirmed submission.** The `ambiguous` reason now
+   retains the bounded provider identity (`authority/native_id`); documented as the
+   ONE place an external identity appears outside a RunReference, precisely because
+   the canonical card could not be created.
+6. **B-P2 / C-P2 — `arguments_digest` was described as tamper protection.** It is an
+   UNKEYED content digest for corruption / out-of-band-edit detection, never an
+   authentication tag and never authority; the docs, function docstring and error
+   wording now say so.
+7. **B-P2 — the concurrency regressions did not race the claim.** Both the SQLite and
+   the PostgreSQL concurrent-execute tests now force both workers to be about to
+   take the one-shot claim at the same instant (a barrier immediately before
+   `_claim`), so they exercise the atomic conditional UPDATE itself rather than only
+   the stale-`pending` guard.
+8. **A-P2 — stale/duplicated facts.** One shared `COMPUTE_SUBMIT_SUFFIX` constant;
+   the ADR/handoff now cite `services.compute_submit_handle` + `record_compute_run`
+   (the actual call path); the local-action → Decision-result assumption is
+   documented in code and model.
+9. **C-P2 — no DB invariant for `succeeded ⇒ result reference`.** Added
+   `ck_action_succeeded_has_result` to the model AND the migration (asserted on the
+   migrated PostgreSQL schema); regression
+   `test_succeeded_requires_a_canonical_result_reference`.
+
+Findings recorded as intentional / informational (no change):
+- A hard process kill between the committed claim and the terminal write still leaves
+  `executing`; it is honestly rendered, never auto-retried, fails further executes
+  closed, and a background reaper is an explicit non-goal (documented deferral).
+- The new routes declare only 200/422 in OpenAPI; 401/403/404/409 come from the
+  global exception handlers and are covered by tests. This matches the repo-wide
+  route convention (no per-route error declarations anywhere), so declaring them
+  only here would be inconsistent contract style.
+- The pre-existing process-global scripted-model turn counter makes the Phase-8
+  `agent.spec.ts` repeat-sensitive (`--repeat-each=2` fails its second repeat). CI
+  runs each spec once (8/8 green); the NEW Phase-11 spec is deliberately
+  counter-independent and is stable at 2x and 4x repeats. Recorded, not a Phase-11
+  regression.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

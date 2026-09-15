@@ -1184,3 +1184,82 @@ def test_propose_refuses_an_over_bound_payload(session: Session) -> None:
         )
     session.rollback()
     assert session.scalar(select(func.count()).select_from(ActionRequest)) == 0
+
+
+# ---------------------------------------------------------------------------
+# The authorization surface must describe the action that will actually run
+# ---------------------------------------------------------------------------
+
+
+def test_proposal_refuses_a_payload_naming_a_different_provider(session: Session) -> None:
+    """The canonical Tool id is the authority and the human reads the payload's
+    provider, so a payload naming a DIFFERENT provider is refused at proposal:
+    otherwise a human would authorize the operation under a false description of
+    the external side effect."""
+    scenario = _scenario(session)
+    conversation = create_conversation(session, scenario["actor"], scenario["project"].id)
+    lying = _compute_arguments(scenario, provider_key="someotherprovider")
+    model = _Scripted([_tool_call(f"{PROVIDER}.compute.submit", lying)])
+    turn = run_conversation_turn(
+        session,
+        scenario["actor"],
+        scenario["project"].id,
+        conversation.id,
+        _runner(session, scenario, model),
+        message="submit compute",
+    )
+
+    assert turn.turn.pending_actions == []
+    entry = next(item for item in turn.turn.tool_trace if item.tool_id.endswith(".compute.submit"))
+    assert entry.status.value == "failed"
+    assert "different provider" in (entry.error or "")
+    assert session.scalar(select(func.count()).select_from(ActionRequest)) == 0
+    assert scenario["state"].submit_calls == 0
+
+
+def test_execution_refuses_a_stored_provider_mismatch(session: Session) -> None:
+    """Defense in depth: a row that predates the proposal-time check (or was
+    written out of band) is refused at execution, before any side effect."""
+    scenario = _scenario(session)
+    action = _propose(
+        session,
+        scenario,
+        f"{PROVIDER}.compute.submit",
+        _compute_arguments(scenario, provider_key="someotherprovider"),
+    )
+
+    with pytest.raises(ConflictError):
+        actions.execute_action_request(
+            _execution(session, scenario),
+            scenario["actor"],
+            scenario["project"].id,
+            action.id,
+        )
+    session.refresh(action)
+    assert action.status == ActionRequestStatus.PENDING.value
+    assert scenario["state"].submit_calls == 0
+
+
+def test_succeeded_requires_a_canonical_result_reference(session: Session) -> None:
+    """The durable state machine cannot represent a `succeeded` action with no
+    canonical result: the DB constraint rejects it."""
+    from sqlalchemy.exc import IntegrityError
+
+    scenario = _scenario(session)
+    row = ActionRequest(
+        project_id=scenario["project"].id,
+        actor_id=scenario["actor"],
+        conversation_id=None,
+        tool_id=f"{PROVIDER}.compute.submit",
+        autonomy=AgentToolAutonomy.EXPLICIT_ACTION.value,
+        execution_class=ToolExecutionClass.REMOTE.value,
+        side_effect_class=ToolSideEffectClass.EXTERNAL_ACTION.value,
+        arguments=_compute_arguments(scenario),
+        arguments_digest="0" * 64,
+        status=ActionRequestStatus.SUCCEEDED.value,
+        resolved_at=actions._now(),
+    )
+    session.add(row)
+    with pytest.raises(IntegrityError):
+        session.flush()
+    session.rollback()

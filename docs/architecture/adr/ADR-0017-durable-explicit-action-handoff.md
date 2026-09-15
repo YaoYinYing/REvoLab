@@ -63,6 +63,12 @@ conversation transcript, which keeps only inert bounded summaries.
 
 ### Execution re-derives authority from current truth
 
+A remote explicit action must name the SAME provider in its canonical `tool_id`
+and its canonical argument payload; a mismatch fails closed at proposal and again
+at execution, so a human can never authorize an operation under a false
+description of the external side effect. A `succeeded` action always names the
+canonical result it produced, enforced by the durable schema.
+
 Execution is an explicit human/API operation (`X-Actor-Id` is a development scoping
 seam, not authentication). Before any side effect it rebuilds: current readable
 membership and Project state, current mutation-capable role, current ToolCatalog

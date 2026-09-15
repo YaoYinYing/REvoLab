@@ -150,6 +150,24 @@ explicit human/API request (X-Actor-Id is a development scoping seam, not auth)
          uncertain    -> mark ambiguous (see §8)
 ```
 
+### The authorization surface must describe the action that will actually run
+
+A remote explicit action carries provider identity twice: in the canonical
+`tool_id` (the authority execution resolves through the live ToolCatalog) and in
+the canonical input model's `provider_key` field (what a human reads before
+authorizing). The two MUST agree. A payload naming a different provider is refused
+at proposal (fail closed, no durable row) and re-refused at execution (defense in
+depth for any row written out of band), because otherwise a human would authorize
+the operation under a false description of the external side effect. A local
+explicit action has no provider identity and is exempt.
+
+### State-machine invariant
+
+A `succeeded` action always names the canonical result it produced. This is
+enforced by the durable schema itself (`ck_action_succeeded_has_result`), not only
+by application code: a `succeeded` row with no `result_run_id`/`result_decision_id`
+is not representable.
+
 Execution-time revalidation is not an optimization: membership revocation, role
 change, Project tombstone, resource unlink, credential removal, provider loss,
 Tool removal, autonomy change, or an input-schema change must all take effect

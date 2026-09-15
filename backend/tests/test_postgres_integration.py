@@ -1216,6 +1216,16 @@ def test_phase11_schema_has_no_authority_or_secret_columns(pg_session: Session) 
         "status",
         "created_at",
     } <= columns
+    # The migrated schema carries the durable state-machine invariant: a
+    # `succeeded` action always names the canonical result it produced.
+    checks = {constraint["name"] for constraint in inspector.get_check_constraints("action_requests")}
+    assert "ck_action_succeeded_has_result" in checks
+    assert "action_request_status" in {
+        constraint["name"] for constraint in inspector.get_check_constraints("action_requests")
+    } or "action_request_status" in " ".join(
+        str(constraint.get("sqltext", ""))
+        for constraint in inspector.get_check_constraints("action_requests")
+    )
     # Persist intent, never authority: no credential/authorization/health snapshot.
     assert not {
         "secret_ref",
