@@ -18,17 +18,34 @@ The governing invariant is unchanged:
 
 **Phase 10 (Project Notebook / structured working notes) is merged into `main`**
 (PR #11, commit `135a591`); its architectural decision is **Accepted**
-(`PROJECT_NOTEBOOK.md`, ADR-0016). Phases 1–10 are the accepted `main` state.
+(`PROJECT_NOTEBOOK.md`, ADR-0016).
 
-**Phase 11 (durable explicit-action handoff / human-authorized execution) is
-implemented on `feat/phase-11-human-authorized-actions` and machine-verified**; its
-architectural decision is **Proposed — pending human acceptance**
-(`docs/architecture/AGENT_ACTION_HANDOFF.md`, ADR-0017). The governing invariant is:
+**Phase 11 (durable explicit-action handoff / human-authorized execution) is merged
+into `main`** (PR #12, squash commit `83f1827`,
+`feat(phase 11): add human-authorized action handoff`); its architectural decision is
+**Accepted** (`docs/architecture/AGENT_ACTION_HANDOFF.md`, ADR-0017) — the PR #12
+merge itself is the explicit human acceptance. The governing invariant is:
 
 > **Persist intent, never authority. Re-derive authority at execution time.**
 
-The Phase-11 section below records the machine-verified state of the current head of
-that branch.
+**Phases 1–11 are the accepted `main` state.** The Phase-11 section below records the
+machine-verified state at the merge head (the two human-review P1 fixes are included in
+`83f1827`).
+
+**Phase 12 (Project Search & Bounded Context Retrieval) is implemented on
+`feat/phase-12-project-search` and machine-verified**; its architectural decision is
+**Proposed — pending human acceptance** (`docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`,
+ADR-0018). It adds the first Project-wide retrieval surface — canonical Project truth →
+authorization-aware bounded lexical search → typed `SearchHit` references → workspace
+search → explicit Add-to-Agent-context through the EXISTING `ContextSelection`/`ContextBuilder`
+→ a bounded read-only Agent `project.search` Tool — without introducing RAG, embeddings,
+a vector store, Agent memory, a central copied `SearchDocument` truth, a second context
+model, or a new Core domain. The governing invariants are:
+
+> **Search discovers references; it never creates truth, widens authority, or silently
+> enlarges Agent context.**
+
+> **Retrieve first, select explicitly, then build context.**
 
 ## Implemented (Phase 1)
 
@@ -2080,6 +2097,194 @@ canonical immutable identity contract must be re-applied. Fixed:
   without re-submitting. Mutation-verified: removing the compatibility assertion
   fails the test.
 
+## Implemented (Phase 12)
+
+- **Search as an application/query sub-boundary** (`revolab/search.py`): an
+  authorization-aware, bounded read projection over canonical rows. It owns only
+  query parsing/bounds, authorized retrieval, ranking, bounded plain-text snippets
+  and the typed `SearchHit` projection; it adds **no Core domain**, no
+  `SearchDocument` truth table, and no migration. Normative owner:
+  `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md` (ADR-0018, **Proposed**).
+- **Closed vocabulary** (`revolab/enums.py`): `SearchScope`
+  (`project_shared` / `my_conversations` / `all`), `SearchTargetKind` (a
+  retrieval/presentation classifier — deliberately NOT `ResourceKind`), and
+  `SearchMatchedField` (presentation metadata). Scope→kind membership is derived
+  from one frozen mapping (`PROJECT_SHARED_TARGET_KINDS`,
+  `MY_CONVERSATION_TARGET_KINDS`).
+- **Bounded query contract** (`revolab/schemas.py`): `SearchHitRead`,
+  `ProjectSearchResultsRead`, `ProjectSearchToolInput`, and the bounds constants
+  (query 200 chars, 8 terms, 64 chars/term, limit 1..50, snippet 240 chars, one
+  closed kind set). Over-bound input fails closed with a typed 422; a wildcard-only
+  query is not a query language. No raw SQL/`tsquery`/regex/glob/URL is accepted.
+- **Nine corpora**, each filtered/ranked/capped in ONE SQL query under the current
+  read lens: `scientific_object_series` (name/description/object_type/external
+  identities/aliases), `evidence` (label/interpretation/scope), `decision`
+  (title/statement/next_actions), `note` (title + LATEST revision body only,
+  archived excluded), `run_reference`, `artifact_reference`,
+  `literature_reference`, `external_reference` (stored identity/header metadata
+  only — never a provider call), and the Actor-private `conversation` corpus
+  (title + messages, Actor × Project scoped). Global rows are reached only through
+  `ProjectResourceLink`; Evidence/Decision rows must be current and unarchived.
+- **Exact canonical UUID**: a query that IS one canonical UUID (hyphenated, compact,
+  or braced) is matched against the canonical identity column and ranks first — still
+  only inside the corpus's authorization filter, so TODO.md section 15's exact-UUID
+  non-leakage vector is real and tested positively and negatively.
+- **Authorization before disclosure**: unauthorized rows are never ranked,
+  counted, snippeted, or reported as hidden. A unique query matching only an
+  inaccessible resource is indistinguishable from no result; membership/tombstone
+  changes apply on the next query because authorization is re-derived every time.
+- **Ranking**: computed in SQL (`exact identifier → exact title → title prefix →
+  lexical`, then PostgreSQL `ts_rank` with configuration `simple`, then recency
+  and a stable identity tie-break). No ML/embedding/external ranking; no numeric
+  score is exposed (ordering is the contract).
+- **Snippets**: application-level bounded plain text (never `ts_headline` markup);
+  control characters removed, everything else inert. Hostile Markdown/HTML cannot
+  become active content.
+- **PostgreSQL / SQLite**: one shared parameterized token-substring predicate gives
+  the same semantic contract on both substrates (authorization, target classes,
+  bounds, SearchHit shape); case folding is the database's `lower()`, so non-ASCII
+  case folding differs (PostgreSQL folds per locale, SQLite ASCII-only — an accepted
+  substrate limitation). PostgreSQL adds native `to_tsvector`/`ts_rank` ordering. Neither materializes the Project in Python:
+  each corpus is one bounded SQL statement with LIMIT, and only the bounded
+  candidate set is merged. **No index/migration is added**: a persisted derived
+  index would be a second representation requiring its own freshness/authorization
+  ADR (documented; `alembic check` stays drift-clean on both substrates).
+- **API** (`revolab/api.py`): `GET /api/projects/{project_id}/search` with typed
+  `q`, `scope`, `target_kinds`, `limit` query parameters, returning the bounded
+  `ProjectSearchResultsRead` envelope (no pagination, no `total_count` — a count
+  over authorized rows is itself an oracle).
+- **Reference lifecycle on handoff**: an explicit `reference_ids` selection also
+  checks the reference's own lifecycle flag, so a revoked reference is not admitted
+  as current context; explicit evidence/decision/reference selections are honored
+  regardless of the `include_*` category switches.
+- **Explicit Search → ContextSelection handoff** (`revolab/schemas.py`,
+  `agent/builder.py`): `ContextSelectionCreate` gained the smallest canonical typed
+  fields for previously transitive-only targets — `evidence_ids`, `decision_ids`,
+  and `reference_ids` (reference identity cards only; a series/revision id there
+  fails closed, so it is not a generic resource-id bag). The builder includes
+  explicitly selected rows first and re-validates every id against the CURRENT
+  Project read lens (foreign/archived/wrong-kind fails closed even with a zero
+  budget). No `SearchContext`/`SearchMemory`/`RetrievalContext` was introduced.
+- **Agent Tool** (`revolab/tools/registry.py`, `tools/handlers.py`):
+  `project.search` — `automatic` / `local` / `read_only`, `requires_mutation=False`.
+  Its input has NO scope field, so it is structurally fixed to `PROJECT_SHARED`
+  (private conversations cannot be requested), and it calls the SAME search
+  application service the human workspace uses. It performs no durable write, does
+  not change a ContextSelection, never promotes Evidence/Decision, never executes
+  an Action Request, and never resolves provider content or artifact bytes.
+- **Workspace surface** (`frontend/src/views/Search.tsx`, `App.tsx`,
+  `views/agentContext.ts`): a dense Project search view with an explicit scope and
+  optional target-kind filter, results grouped by backend-owned target kind, per-hit
+  `Open` navigation into the EXISTING canonical surface (object detail / Notes /
+  Evidence / Decisions / Runs & Artifacts, with row selection rather than a parallel
+  detail page), and an explicit `Add to Agent context` for context-selectable kinds.
+  Conversation hits are labelled `private working memory` and never offered for
+  handoff. The Agent view shows the pending selection as removable chips before
+  sending and projects the items into the canonical `ContextSelectionCreate` typed
+  id lists. `SearchScope`/`SearchTargetKind`/`SearchMatchedField` come from the
+  generated contract (added to `scripts/generate-enums.mjs`), never hand-written.
+
+## Verified evidence (Phase 12)
+
+Commands run on this branch head (2026-09-15):
+
+```text
+ruff check backend                                  All checks passed
+mypy (strict, 54 source files)                      Success: no issues found
+pytest (SQLite)                                     478 passed, 24 skipped
+alembic upgrade head + alembic check (SQLite)       no new upgrade operations
+alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
+pytest backend/tests/test_postgres_integration.py   24 passed (migrated PostgreSQL)
+python -m revolab.export_openapi -> openapi.json    refreshed (byte-identical after export)
+frontend: npm run typecheck                         clean
+frontend: npm run test                              65 passed
+frontend: npm run build                             built
+frontend: npm run check:contracts                   clean (generation idempotent)
+playwright test (real FastAPI + DB + fake model)    9 passed
+git diff --check                                    clean
+```
+
+Phase-12 regressions (`backend/tests/test_search.py`,
+`backend/tests/test_postgres_integration.py`, `frontend/src/views/Search.test.tsx`,
+`frontend/src/views/Agent.test.tsx`, `frontend/e2e/search.spec.ts`) cover, with
+mutation-sensitive assertions: member retrieval by name/identifier/label/statement/
+latest Note body; external-identifier and alias search that is not English-stemmed;
+superseded Note revision text never presented as current and archived Note/Evidence/
+Decision excluded; stored reference hits survive provider unavailability; exact
+UUID/native-id/checksum/title/cross-Project non-leakage; cross-Actor private
+conversation isolation (service and HTTP); the Agent Tool cannot request the private
+scope; the Tool performs no durable write (statement-level listener) and does not
+alter a built context; a hostile note returned as a hit stays untrusted data and
+creates no truth/Action Request; over-bound query/limit/kind fails closed; SQL-like
+and wildcard input is inert plain text; hits/titles/snippets stay bounded; explicit
+handoff includes Evidence/Decision/reference identity cards and rejects foreign/
+archived/wrong-kind/stale ids; PostgreSQL proves native `to_tsvector`/`ts_rank`
+emission, latest-revision semantics, private isolation, bounded top-N in SQL, and
+cross-Project non-leakage; the browser slice proves search → explicit
+`Add to Agent context` → the deterministic model receives the selected Decision.
+
+## Independent review (Phase 12)
+
+Three FRESH read-only reviewers ran in parallel on the implemented head (TODO.md
+section 41): (A) architecture/retrieval semantics, (B) authorization/privacy/
+security, (C) database/API/frontend/verification. All three returned **APPROVE WITH
+FINDINGS**, **no P0**, no unresolved P1. Findings were reconciled by the Primary
+Integrator; every valid P1 and material P2 was fixed on the same branch, each with a
+regression:
+
+- **P1 (A) — the normative ranking contract over-promised exact UUID matching** (no
+  corpus matched a canonical UUID, which made the cross-Project UUID regression
+  vacuous). Fixed: a query that is one canonical UUID is now matched against the
+  canonical identity column and ranks first, inside the same authorization filter;
+  added a POSITIVE owning-Project regression and strengthened the cross-Project
+  negative. `PROJECT_SEARCH_RETRIEVAL.md` section 7 documents it.
+- **P1 (A) — the normative doc claimed `Accepted` while ADR-0018 is Proposed.**
+  Fixed: the doc is now `Proposed — pending human acceptance`, matching the ADR and
+  the Phase-11 precedent.
+- **P1 (C) — a private-only target kind stayed selected after a scope change**,
+  producing a sticky 422. Fixed: changing to `PROJECT_SHARED` clears an
+  incompatible kind; results render only for a settled request so a previous
+  scope's hits never remain mounted; new unit regression.
+- **P2 (B) — `_allowed_kinds` failed open for a raw non-enum scope value.** Fixed:
+  the scope is coerced through `SearchScope` at the service boundary and an unknown
+  scope raises a typed validation error; regression added.
+- **P2 (A/C) — explicitly selected `evidence_ids`/`decision_ids` were silently
+  dropped when `include_evidence`/`include_decisions` was false.** Fixed: an
+  explicit identity selection is honored unconditionally; regression added.
+- **P2 (B) — the builder could load a foreign series skeleton when a revision was
+  linked without its owning series (a DB state no domain path produces).** Fixed:
+  the loop no longer falls back to the global table and fails closed; regression
+  added.
+- **P2 (B/C) — a revoked reference was admitted by `reference_ids`.** Fixed: the
+  selection now honours the reference's own lifecycle flag; regression added.
+- **P2 (C) — the per-corpus SQL `LIMIT` lacked the documented identity tie-break**,
+  making a tied top-N non-reproducible. Fixed: the canonical identity is the final
+  SQL `ORDER BY` key (matching the application merge key).
+- **P2 (C) — cross-backend equivalence was overstated for non-ASCII case folding.**
+  Fixed: docs/ADR/state now state the SQLite ASCII-only `lower()` limitation
+  explicitly, and PostgreSQL acceptance asserts locale folding while the SQLite test
+  documents the substrate behavior.
+- **P2 (A/C) — Decision status was not visible in a hit** (TODO.md section 28).
+  Fixed: `SearchHitRead.status` (canonical `DecisionStatus`, presentation only) is
+  returned for Decision hits and rendered as a badge.
+- **P2 (C) — `session_reference` was an undocumented taxonomy omission.** Recorded
+  explicitly as a deliberate Phase-12 omission with its reason.
+- **P2 (C) — "Open" highlight is limited to the loaded page.** Documented as
+  best-effort selection in the existing surface (no parallel detail page).
+- **P2 (A/C) — coverage gaps and cleanup**: added regressions for the Tool-level
+  `conversation` target kind, foreign/revoked hand-off ids, `target_kinds` over the
+  wire, the total-returned-text ceiling, and the revision-implied foreign-series
+  case; removed the unused frontend export.
+
+The reconciled fixes materially changed authorization/selection semantics and the
+search-query architecture, so TODO.md section 44's optional delta review applies to
+this fix delta. It is **not claimed as performed** here: this round stopped at three
+completed first-round reviews (the minimum) by explicit instruction, and the fix
+delta is currently evidenced by the full re-run of every machine gate plus the new
+mutation-sensitive regressions listed above. The delta review remains available
+within the 3..5 reviewer budget for a later round or the human reviewer; no
+unperformed review is recorded as done.
+
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
 - Remote provider tool execution inside the Agent loop (the Agent surfaces remote
@@ -2112,6 +2317,14 @@ canonical immutable identity contract must be re-applied. Fixed:
 - Rich collaborative editing (CRDT/realtime), a block-editor framework, RAG/
   embeddings/vector search over Notes, and a global full-text search are
   deferred; Phase 10 content is bounded Markdown/plain text.
+- Phase-12 deferrals (explicit, documented in `PROJECT_SEARCH_RETRIEVAL.md` §12 and
+  ADR-0018): semantic/vector retrieval, a persisted/denormalized search index
+  (including any PostgreSQL expression index), historical Note-revision search,
+  cross-Actor conversation search, external biological/Web knowledge search and
+  import, a query DSL / saved searches / faceted engine, automatic per-turn search,
+  and a cross-Project top-bar command palette. Phase 12 adds **no migration**: the
+  canonical schema plus the existing indexes are drift-clean on SQLite and
+  PostgreSQL 16, and a derived index requires its own freshness/authorization ADR.
 
 ## Working set
 
@@ -2121,10 +2334,11 @@ canonical immutable identity contract must be re-applied. Fixed:
 - Frontend: `openapi-fetch` (typed client), `openapi-typescript` (contract
   generation, dev), `@playwright/test` (browser smoke, dev), `@types/node` (dev).
 
-### Human-review hold: two P1 fixes
+### Post-merge record: two human-review P1 fixes
 
-A human review put the PR on HOLD for two substantive P1s, both now fixed with
-mutation-verified regressions:
+A human review put PR #12 on HOLD for two substantive P1s; both were fixed with
+mutation-verified regressions and are included in the squash-merged commit
+`83f1827`:
 
 - **Failed policy tool could leave a ghost/partial write.** Phase 9 made Agent-loop tool
   mutations `commit=False`, and `decision.record_draft` flushes its Decision before citation

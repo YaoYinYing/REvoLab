@@ -49,6 +49,21 @@ agent says becomes project graph data until promoted.
 deliberate divergence: **Relations is NOT a top-level bucket** — it is a graph lens
 inside object detail, not a page people browse top-down.
 
+**Project search (Phase 12, implemented):** the `Search` nav entry is the
+Project-level retrieval surface. It is a retrieval/presentation surface, not a
+domain resource bucket: a bounded query with an explicit scope
+(`Project shared context` / `My private conversations` / both), an optional
+target-kind filter, results grouped by backend-owned target kind, and a per-hit
+`Open` (navigate to the EXISTING canonical surface and select it) plus — for
+context-selectable kinds only — an explicit `Add to Agent context` that reuses the
+canonical `ContextSelectionCreate`. Conversation hits are visually labelled
+`private working memory` and are never selectable into shared Agent context.
+Search results are candidate references, never truth and never an implicit context
+change. The top-bar **global object search** above remains the future
+cross-Project command palette; it is **not** implemented in Phase 12, and any
+implementation must obey the same authorization projection described there.
+Normative retrieval semantics: `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`.
+
 ## Key pages (what each answers scientifically)
 
 - **Project Overview** — "What is this project's current state, and what should I do

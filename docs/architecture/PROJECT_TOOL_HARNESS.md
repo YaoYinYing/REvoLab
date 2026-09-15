@@ -116,7 +116,17 @@ plot.xy                 structured X-Y plot specification, optionally persisted
 evidence.create         typed Evidence creation (domain_mutation)
 decision.record_draft   typed Decision DRAFT creation (domain_mutation)
 decision.commit         Decision draft -> committed (promotion gate, explicit_action)
+project.search          bounded read-only Project-shared search (Phase 12)
 ```
+
+`project.search` is the only Phase-12 addition. It is `automatic` / `local` /
+`read_only` and calls the SAME authorization-aware search application service the
+human workspace uses (never an Agent-only search engine). Its input is a bounded
+plain-text query plus optional target kinds and limit — deliberately with **no
+scope field**, so the private-conversation corpus cannot be requested through the
+Tool. It writes nothing, never changes a ContextSelection, never resolves provider
+content, and its result is data for the model, never truth. Normative semantics:
+`docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`.
 
 Remote REvoCompute tools are projected through the same catalog
 (`{provider}.compute.*`, `{provider}.artifact.resolve`) with

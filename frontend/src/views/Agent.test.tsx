@@ -522,6 +522,61 @@ describe('Agent view (Phase 9)', () => {
     expect(body.selection.note_ids).toEqual([note.id])
   })
 
+  it('projects explicit search hand-off items into typed ContextSelection fields (Phase 12)', async () => {
+    const turnMock = vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), createConversationTurn: turnMock } as never)
+
+    const user = userEvent.setup()
+    render(
+      <AgentView
+        actorId="actor-1"
+        projectId="project-1"
+        initialContextItems={[
+          { target_kind: 'evidence', target_id: 'evidence-1', title: 'Selected evidence' },
+          { target_kind: 'decision', target_id: 'decision-1', title: 'Selected decision' },
+          { target_kind: 'run_reference', target_id: 'run-1', title: 'revocompute:run-1' },
+        ]}
+      />,
+    )
+
+    // The user can SEE what was selected before sending.
+    const handoff = await screen.findByLabelText('Selected for agent context')
+    expect(handoff).toHaveTextContent('Selected evidence')
+    expect(handoff).toHaveTextContent('Selected decision')
+
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'What did we conclude?',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    const body = turnMock.mock.calls[0][2] as {
+      selection: { evidence_ids?: string[]; decision_ids?: string[]; reference_ids?: string[] }
+    }
+    expect(body.selection.evidence_ids).toEqual(['evidence-1'])
+    expect(body.selection.decision_ids).toEqual(['decision-1'])
+    expect(body.selection.reference_ids).toEqual(['run-1'])
+  })
+
+  it('lets the human remove a search hand-off item before sending (Phase 12)', async () => {
+    mockedProjectApi.mockReturnValue(defaultApi() as never)
+
+    const user = userEvent.setup()
+    render(
+      <AgentView
+        actorId="actor-1"
+        projectId="project-1"
+        initialContextItems={[
+          { target_kind: 'decision', target_id: 'decision-1', title: 'Selected decision' },
+        ]}
+      />,
+    )
+    await user.click(
+      await screen.findByRole('button', { name: 'Remove Selected decision from agent context' }),
+    )
+    expect(screen.queryByLabelText('Selected for agent context')).not.toBeInTheDocument()
+  })
+
   it('captures conversation content into a Note only on explicit human action', async () => {
     const createNote = vi.fn().mockResolvedValue({
       data: { ...note, latest: null },

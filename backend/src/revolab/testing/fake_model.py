@@ -100,6 +100,13 @@ def _first_note(context: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _first_decision(context: dict[str, Any]) -> dict[str, Any] | None:
+    for decision in context.get("decisions") or []:
+        if isinstance(decision, dict):
+            return decision
+    return None
+
+
 class ScriptedModelBackend:
     """A deterministic ModelBackend. `steps` is an optional list of explicit
     turn dicts; when exhausted (or absent) the default Phase-8 slice runs."""
@@ -186,6 +193,20 @@ class ScriptedModelBackend:
                         f'I read the selected Project note "{note.get("title")}" '
                         f'(revision {note.get("revision_seq")}). It is shared working '
                         "knowledge, not project truth."
+                    ),
+                )
+            decision = _first_decision(context)
+            if decision is not None:
+                # The Phase-12 browser slice: an explicitly selected Decision (the
+                # human "Add to Agent context" handoff from search) is answered
+                # deterministically from the untrusted context, so the spec can
+                # prove the selection actually reached the model.
+                return ModelResponse(
+                    finish="stop",
+                    content=(
+                        f'I read the explicitly selected Decision "{decision.get("title")}" '
+                        f'({decision.get("decision_id")}). It is bounded Project context for '
+                        "this turn, not new truth."
                     ),
                 )
             return ModelResponse(finish="stop", content="No artifact was selected in context.")

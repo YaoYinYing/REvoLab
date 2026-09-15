@@ -36,6 +36,9 @@ from revolab.enums import (
     RelationType,
     ResourceKind,
     Role,
+    SearchMatchedField,
+    SearchScope,
+    SearchTargetKind,
     ToolExecutionClass,
     ToolResultKind,
     ToolSideEffectClass,
@@ -51,6 +54,23 @@ MAX_SELECT_COLUMNS = 100
 MAX_NOTE_TITLE_CHARS = 200
 MAX_NOTE_BODY_CHARS = 20_000
 MAX_NOTE_MENTIONS_PER_REVISION = 100
+
+# Phase-12 Project search bounds. These are the single source of truth for the
+# wire contract; `revolab.search` imports them rather than restating literals.
+# Search is a bounded read: over-bound input fails closed (never truncated into a
+# wider query) and no request may name a raw query language (SQL/tsquery/regex/
+# glob/URL).
+MAX_SEARCH_QUERY_CHARS = 200
+MAX_SEARCH_TOKENS = 8
+MAX_SEARCH_TOKEN_CHARS = 64
+MAX_SEARCH_LIMIT = 50
+DEFAULT_SEARCH_LIMIT = 20
+MAX_SEARCH_TITLE_CHARS = 200
+MAX_SEARCH_SNIPPET_CHARS = 240
+MAX_SEARCH_TARGET_KINDS = 9
+# Derived ceiling on ALL text one search may return (title + snippet per hit).
+# It is an explicit bound, not an implicit consequence of the per-field caps.
+MAX_SEARCH_TOTAL_TEXT_CHARS = MAX_SEARCH_LIMIT * (MAX_SEARCH_TITLE_CHARS + MAX_SEARCH_SNIPPET_CHARS)
 
 # ---------------------------------------------------------------------------
 # Identity / Project
@@ -586,6 +606,18 @@ class ContextSelectionCreate(BaseModel):
     # Selected Note text is bounded untrusted Project data, never instructions.
     note_ids: list[UUID] | None = Field(default=None, max_length=50)
     note_revision_ids: list[UUID] | None = Field(default=None, max_length=100)
+    # Phase 12: explicit typed selection of Project-scoped Evidence / Decisions
+    # (the human "Add to Agent context" handoff from a search hit). Without an
+    # explicit id they are only ever reached transitively through the graph
+    # neighborhood. Each id is validated against the CURRENT Project read lens.
+    evidence_ids: list[UUID] | None = Field(default=None, max_length=100)
+    decision_ids: list[UUID] | None = Field(default=None, max_length=100)
+    # Phase 12: explicit selection of GLOBAL REFERENCE identity cards
+    # (run/session/artifact/literature/external). This is NOT a generic
+    # resource-id bag: every element must resolve through the Project read lens
+    # AND carry a reference `ResourceKind`; a series/revision id here fails
+    # closed. `artifact_ids` above remains the narrower Phase-8 field.
+    reference_ids: list[UUID] | None = Field(default=None, max_length=100)
     include_relations: bool = True
     include_evidence: bool = True
     include_decisions: bool = True
@@ -724,6 +756,65 @@ class ProjectContextRead(BaseModel):
     provider_capabilities: list[ProviderRead] = Field(default_factory=list)
     loaded_skill_ids: list[str] = Field(default_factory=list)
     budget: BudgetReportRead
+
+
+class SearchHitRead(BaseModel):
+    """One canonical-target reference discovered by Project search (Phase 12).
+
+    A SearchHit is a READ PROJECTION: it points back at a canonical identity an
+    existing domain owns and carries only what is needed to identify the target,
+    say what matched, preview it safely, and navigate/select it. It is never
+    truth, never authority, never a context inclusion, and never Agent memory.
+
+    `snippet` is bounded PLAIN TEXT (no HTML, no active Markdown) copied from
+    current authorized canonical data; it is untrusted Project data wherever it
+    is rendered or returned to a model. `private` is true only for a
+    conversation hit and makes "this is Actor-private working memory, not shared
+    Project knowledge" a contract fact rather than a UI convention. There is
+    deliberately no numeric score: the ORDER of hits is the contract, and a
+    score would invite reading relevance as scientific confidence.
+    """
+
+    target_kind: SearchTargetKind
+    target_id: UUID
+    title: str
+    snippet: str | None = None
+    matched_field: SearchMatchedField | None = None
+    private: bool = False
+    # Lifecycle presentation for a Decision hit (draft vs committed). It is the
+    # canonical Decision status, never a search-relevance or confidence value;
+    # other target kinds leave it null.
+    status: DecisionStatus | None = None
+
+
+class ProjectSearchResultsRead(BaseModel):
+    """The bounded envelope of one Project search: ordered hits plus an explicit
+    truncation flag. Never paginated (top-N retrieval only) and never a
+    `total_count` (a count over authorized rows is itself an existence oracle)."""
+
+    project_id: UUID
+    query: str
+    scope: SearchScope
+    hits: list[SearchHitRead] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class ProjectSearchToolInput(BaseModel):
+    """The canonical input of the read-only `project.search` Agent Tool.
+
+    Deliberately scope-free: the Agent surface searches the PROJECT_SHARED corpus
+    only, so private working memory cannot even be requested. Input is a plain
+    untrusted query string — never SQL/tsquery/regex/glob/URL — plus an optional
+    bounded target-kind filter and a bounded result limit.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=MAX_SEARCH_QUERY_CHARS)
+    target_kinds: list[SearchTargetKind] | None = Field(
+        default=None, max_length=MAX_SEARCH_TARGET_KINDS
+    )
+    limit: int = Field(default=10, ge=1, le=MAX_SEARCH_LIMIT)
 
 
 class ToolDescriptorRead(BaseModel):

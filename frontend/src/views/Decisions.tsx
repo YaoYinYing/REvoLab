@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FileText } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
@@ -10,12 +10,27 @@ import { DECISION_STATUS_COMMITTED, DECISION_STATUS_DRAFT } from '../contracts/e
 
 const PAGE_SIZE = 50
 
-export function DecisionsView({ actorId, projectId }: { actorId: string; projectId: string }) {
+export function DecisionsView({
+  actorId,
+  projectId,
+  focusId = null,
+}: {
+  actorId: string
+  projectId: string
+  /** A search-hit target to select/highlight in this existing surface. */
+  focusId?: string | null
+}) {
   const [limit, setLimit] = useState(PAGE_SIZE)
   const { data, loading, error, reload } = useDecisions(actorId, projectId, { limit })
   const hasMore = (data?.length ?? 0) === limit
   const [busyId, setBusyId] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  // Search navigation reuses the canonical Decisions list; no duplicate detail
+  // page is introduced, the matched row is simply selected and scrolled to.
+  const focusRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (focusId) focusRef.current?.scrollIntoView({ block: 'center' })
+  }, [focusId, data])
 
   async function commit(decision: DecisionRead) {
     setBusyId(decision.id)
@@ -41,7 +56,11 @@ export function DecisionsView({ actorId, projectId }: { actorId: string; project
         {data && data.length === 0 ? <Empty label="No decisions in this project yet." /> : null}
         <div className="list">
           {data?.map((item) => (
-            <div className="list-row" key={item.id}>
+            <div
+              className={`list-row${item.id === focusId ? ' focused' : ''}`}
+              key={item.id}
+              ref={item.id === focusId ? focusRef : undefined}
+            >
               <div className="list-row-head">
                 <FileText size={15} />
                 <strong>{item.title}</strong>

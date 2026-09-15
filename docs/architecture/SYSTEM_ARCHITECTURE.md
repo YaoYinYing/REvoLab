@@ -169,6 +169,15 @@ truth — and both its proposal and its human-authorized execution reuse the
 existing Tool Harness and Provider/Capability paths (`AGENT_ACTION_HANDOFF.md`,
 ADR-0017). The nine-domain DAG is unchanged.
 
+**Project Search** is an application/query sub-boundary consumed by Presentation
+and Agent Context (not a tenth domain, and not a Core dependency): it is an
+authorization-aware read projection over canonical rows reached through the
+existing Project read lens, with no copied `SearchDocument` truth. A SearchHit is
+a candidate reference — never truth, authority, or an implicit context inclusion —
+and the read-only `project.search` Tool reuses the same search service fixed to the
+Project-shared corpus (`PROJECT_SEARCH_RETRIEVAL.md`, ADR-0018). The nine-domain
+DAG is unchanged.
+
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
 Knowledge) never depend on the Agent Context domain or the Project Tool Harness
 domain. The Agent is a *consumer*, not an owner, of both project truth and Tool:
@@ -400,6 +409,7 @@ direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 | `PROJECT_CONVERSATIONS.md` | Persistent Actor × Project conversation working memory: ownership, server-owned history, trust model, API, lifecycle, bounds |
 | `AGENT_ACTION_HANDOFF.md` | Durable explicit-action requests: proposal vs authority, lifecycle, execution-time revalidation, concurrency, external-side-effect ambiguity, human surface |
 | `PROJECT_NOTEBOOK.md` | Project Note working documents: revision ownership, mention semantics, concurrency, trust and Agent-context boundary |
+| `PROJECT_SEARCH_RETRIEVAL.md` | Project search: ownership, scopes, corpora, authorization-before-disclosure, ranking, bounds, PostgreSQL/SQLite behavior, Search → ContextSelection handoff, `project.search` Tool |
 | `COLLABORATION_IDENTITY.md` | Identity, sharing, persistence, lifecycle/deletion, event/audit |
 | `WORKSPACE_INFORMATION_ARCHITECTURE.md` | The product surface and API/frontend contract |
 | `IMPLEMENTATION_ROADMAP.md` | Staged vertical slices and bootstrap classification |

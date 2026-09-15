@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from revolab import actions as action_service
 from revolab import queries, schemas, services
+from revolab import search as search_service
 from revolab.agent.builder import build_context
 from revolab.agent.conversations import (
     create_conversation,
@@ -57,6 +58,8 @@ from revolab.enums import (
     CapabilityKind,
     ResourceKind,
     Role,
+    SearchScope,
+    SearchTargetKind,
     ToolExecutionClass,
     ToolSideEffectClass,
 )
@@ -1070,6 +1073,35 @@ def graph(
     services.readable_membership(session, actor_id, project_id)
     return queries.bounded_graph(
         session, project_id, from_id, depth=depth, kinds=set(kinds.split(","))
+    )
+
+
+# ---------------------------------------------------------------------------
+# Project Search (Phase 12) — an authorization-aware READ projection over
+# canonical Project truth. It never writes, never resolves a provider, and never
+# enters Agent context implicitly: a hit is a candidate reference, and only an
+# explicit `ContextSelection` can make it part of an Agent turn.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/projects/{project_id}/search", response_model=schemas.ProjectSearchResultsRead)
+def search_project(
+    project_id: UUID,
+    q: str = Query(min_length=1, max_length=schemas.MAX_SEARCH_QUERY_CHARS),
+    scope: SearchScope = SearchScope.PROJECT_SHARED,
+    target_kinds: list[SearchTargetKind] | None = Query(default=None),
+    limit: int = Query(default=schemas.DEFAULT_SEARCH_LIMIT, ge=1, le=schemas.MAX_SEARCH_LIMIT),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.ProjectSearchResultsRead:
+    return search_service.search(
+        session,
+        actor_id,
+        project_id,
+        query=q,
+        scope=scope,
+        target_kinds=list(target_kinds) if target_kinds is not None else None,
+        limit=limit,
     )
 
 

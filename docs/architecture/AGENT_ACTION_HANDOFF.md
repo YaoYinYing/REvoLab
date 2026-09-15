@@ -1,6 +1,7 @@
 # Agent Action Handoff — Durable Explicit-Action Requests & Human-Authorized Execution
 
-> **Status: Proposed — pending human acceptance.**
+> **Status: Accepted** (Phase 11; human-accepted during PR #12 review; squash-merged
+> to `main` as commit `83f1827`).
 > This document is normative for the Action Handoff sub-boundary. It does not
 > introduce a tenth Core domain; Action Handoff is an **Agent Context /
 > Application-orchestration sub-boundary** (the same placement family as

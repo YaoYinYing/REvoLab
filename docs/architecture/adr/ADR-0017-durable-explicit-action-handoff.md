@@ -1,8 +1,9 @@
 # ADR-0017: Durable Explicit-Action Handoff — Persist Intent, Never Authority
 
-> **Status: Proposed — pending human acceptance.**
-> Accepted only by explicit human acceptance; a green test suite does not promote
-> this ADR's status.
+> **Status: Accepted** (Phase 11; human-accepted during PR #12 review; squash-merged
+> to `main` as commit `83f1827`, `feat(phase 11): add human-authorized action handoff`).
+> The merge is the explicit human acceptance; a green test suite does not promote
+> an ADR's status.
 
 ## Context
 

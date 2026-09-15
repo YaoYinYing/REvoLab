@@ -15,7 +15,7 @@ from types import MappingProxyType
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import CheckConstraint, Engine, create_engine, func, inspect, select, text
+from sqlalchemy import CheckConstraint, Engine, create_engine, event, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1418,3 +1418,254 @@ def test_phase11_concurrent_execute_claims_once_on_postgres(pg_engine: Engine, t
             )
             == 1
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 12 — Project search acceptance on the migrated PostgreSQL schema:
+# native lexical retrieval/ranking, authorization-aware corpus filters, the
+# latest-Note-revision rule, private-conversation isolation, identifier search,
+# and bounded top-N without application-side whole-Project materialization.
+# ---------------------------------------------------------------------------
+
+
+class _Phase12State:
+    """One uniquely tagged Project with one searchable row of every corpus."""
+
+    def __init__(self, session: Session, tag: str) -> None:
+        from revolab.agent.conversations import create_conversation
+        from revolab.models import (
+            ConversationMessage,
+            ProjectNote,
+            ScientificObjectRevision,
+        )
+        from revolab.notes import append_revision as append_note_revision
+        from revolab.notes import create_note
+
+        self.tag = tag
+        self.native_id = f"run-{tag}"
+        self.external_id = f"P{tag.upper()}"
+        self.actor = services.create_actor(session)
+        self.project = services.create_project(session, self.actor, f"Search {tag}")
+        self.series = services.create_object(
+            session, self.actor, self.project.id, "protein", f"Kinase scaffold {tag}"
+        )
+        services.attach_external_identity(
+            session, self.actor, self.project.id, self.series, "uniprot", self.external_id
+        )
+        revision = session.scalar(
+            select(ScientificObjectRevision).where(
+                ScientificObjectRevision.series_id == self.series
+            )
+        )
+        self.evidence = services.create_evidence(
+            session,
+            self.actor,
+            self.project.id,
+            kind="experimental",
+            label=f"Substrate positioning assay {tag}",
+            interpretation="positions the substrate",
+            target_kind="scientific_object_revision",
+            target_id=revision.revision_id,
+        )
+        self.decision = services.create_decision(
+            session,
+            self.actor,
+            self.project.id,
+            title=f"Substrate positioning conclusion {tag}",
+            statement="the conclusion statement",
+        )
+        create_note(
+            session,
+            self.actor,
+            self.project.id,
+            title=f"Working note {tag}",
+            body=f"old {tag} hypothesis",
+            mentions=[],
+        )
+        self.note = session.scalar(
+            select(ProjectNote).where(ProjectNote.title == f"Working note {tag}")
+        )
+        append_note_revision(
+            session,
+            self.actor,
+            self.project.id,
+            self.note.id,
+            base_revision_seq=1,
+            body=f"latest {tag} conclusion",
+            mentions=[],
+        )
+        self.run = services.create_run_reference(
+            session,
+            self.actor,
+            self.project.id,
+            "revocompute",
+            self.native_id,
+            task_type=f"fold-{tag}",
+        )
+        conversation = create_conversation(
+            session, self.actor, self.project.id, f"Private planning {tag}"
+        )
+        session.add(
+            ConversationMessage(
+                conversation_id=conversation.id,
+                seq=1,
+                role="user",
+                content=f"unique private phrase {tag}",
+            )
+        )
+        session.commit()
+
+    def search(self, session: Session, query: str, **kwargs):
+        from revolab import search as search_service
+
+        return search_service.search(session, self.actor, self.project.id, query=query, **kwargs)
+
+
+def test_phase12_postgres_lexical_search_is_native_and_bounded(pg_session: Session) -> None:
+    from revolab.enums import SearchScope, SearchTargetKind
+
+    state = _Phase12State(pg_session, uuid4().hex[:8])
+    statements: list[str] = []
+
+    def _record(_conn, _cursor, statement, _params, _context, _many) -> None:  # type: ignore[no-untyped-def]
+        statements.append(statement)
+
+    engine = pg_session.get_bind()
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        result = state.search(pg_session, state.tag)
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    kinds = {hit.target_kind for hit in result.hits}
+    assert SearchTargetKind.SCIENTIFIC_OBJECT_SERIES in kinds
+    assert SearchTargetKind.EVIDENCE in kinds
+    assert SearchTargetKind.DECISION in kinds
+    assert SearchTargetKind.NOTE in kinds
+    assert SearchTargetKind.RUN_REFERENCE in kinds
+    # PostgreSQL native text search is genuinely part of the emitted query (not a
+    # Python-side rescoring), and every corpus query is bounded by SQL.
+    joins = " \n".join(statements).lower()
+    assert "to_tsvector" in joins
+    assert "ts_rank" in joins
+    assert "limit" in joins
+    assert "project_resource_links" in joins
+    # Wildcards/identifiers are bound parameters, never interpolated query text.
+    assert state.tag not in joins
+    # The private corpus is not part of the default Project-shared scope.
+    assert all(hit.private is False for hit in result.hits)
+    assert state.search(pg_session, "anything", scope=SearchScope.PROJECT_SHARED).scope is (
+        SearchScope.PROJECT_SHARED
+    )
+
+
+def test_phase12_postgres_latest_revision_and_identifiers(pg_session: Session) -> None:
+    state = _Phase12State(pg_session, uuid4().hex[:8])
+
+    old = state.search(pg_session, f"old {state.tag} hypothesis")
+    assert [hit.target_id for hit in old.hits if hit.target_kind.value == "note"] == []
+    latest = state.search(pg_session, f"latest {state.tag} conclusion")
+    assert [hit.target_id for hit in latest.hits if hit.target_kind.value == "note"] == [
+        state.note.id
+    ]
+    by_identifier = state.search(pg_session, state.external_id)
+    assert state.series in {hit.target_id for hit in by_identifier.hits}
+    by_native_id = state.search(pg_session, state.native_id)
+    assert state.run.run_id in {hit.target_id for hit in by_native_id.hits}
+
+
+def test_phase12_postgres_private_conversation_isolation(pg_session: Session) -> None:
+    from revolab import search as search_service
+    from revolab.enums import SearchScope
+
+    state = _Phase12State(pg_session, uuid4().hex[:8])
+    other = services.create_actor(pg_session)
+    services.add_membership(
+        pg_session, state.actor, state.project.id, other, Role.MEMBER.value
+    )
+
+    mine = search_service.search(
+        pg_session,
+        state.actor,
+        state.project.id,
+        query=f"private phrase {state.tag}",
+        scope=SearchScope.MY_CONVERSATIONS,
+    )
+    assert [hit.target_kind.value for hit in mine.hits] == ["conversation"]
+    assert mine.hits[0].private is True
+
+    theirs = search_service.search(
+        pg_session,
+        other,
+        state.project.id,
+        query=f"private phrase {state.tag}",
+        scope=SearchScope.MY_CONVERSATIONS,
+    )
+    assert theirs.hits == []
+
+
+def test_phase12_postgres_top_n_is_bounded_in_sql(pg_session: Session) -> None:
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Bounds {tag}")
+    for index in range(25):
+        services.create_decision(
+            pg_session,
+            actor,
+            project.id,
+            title=f"Bounded {tag} finding {index:02d}",
+            statement="bounded search text",
+        )
+
+    statements: list[str] = []
+
+    def _record(_conn, _cursor, statement, _params, _context, _many) -> None:  # type: ignore[no-untyped-def]
+        statements.append(statement)
+
+    engine = pg_session.get_bind()
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        from revolab import search as search_service
+
+        result = search_service.search(
+            pg_session, actor, project.id, query=f"bounded {tag}", limit=5
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert len(result.hits) == 5
+    assert result.truncated is True
+    assert all(hit.snippet is not None and len(hit.snippet) <= 240 for hit in result.hits)
+    # The LIMIT is pushed into each corpus query, so the whole Project is never
+    # materialized in Python to compute a top-N.
+    assert any("limit" in statement.lower() for statement in statements)
+
+
+def test_phase12_postgres_cross_project_non_leakage(pg_session: Session) -> None:
+    from revolab import search as search_service
+
+    state = _Phase12State(pg_session, uuid4().hex[:8])
+    other_actor = services.create_actor(pg_session)
+    other_project = services.create_project(pg_session, other_actor, f"Other {state.tag}")
+
+    for query in (str(state.series), state.external_id, state.native_id, f"Kinase scaffold {state.tag}"):
+        leaked = search_service.search(
+            pg_session, other_actor, other_project.id, query=query
+        )
+        assert leaked.hits == []
+
+
+def test_phase12_postgres_unicode_case_folding(pg_session: Session) -> None:
+    """PostgreSQL folds case per its locale, so an uppercase-accented query finds
+    the row. (SQLite folds ASCII only — a documented substrate difference; the
+    authorization/target-kind/bound contract is identical.)"""
+    from revolab import search as search_service
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Unicode {tag}")
+    series = services.create_object(pg_session, actor, project.id, "protein", f"Caf\u00e9 kinase {tag}")
+
+    result = search_service.search(pg_session, actor, project.id, query=f"CAF\u00c9 KINASE {tag}")
+
+    assert series in {hit.target_id for hit in result.hits}

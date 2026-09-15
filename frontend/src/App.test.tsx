@@ -66,7 +66,7 @@ describe('REvoLab project-scoped workspace', () => {
   it('renders the project shell with accepted navigation', async () => {
     render(<App />)
     expect(await screen.findByText('T5alphaH Engineering')).toBeInTheDocument()
-    for (const label of ['Overview', 'Objects', 'Agent', 'Notes', 'Evidence', 'Runs & Artifacts', 'Decisions', 'Knowledge', 'Providers']) {
+    for (const label of ['Overview', 'Search', 'Objects', 'Agent', 'Notes', 'Evidence', 'Runs & Artifacts', 'Decisions', 'Knowledge', 'Providers']) {
       expect(screen.getAllByText(label).length).toBeGreaterThanOrEqual(1)
     }
   })

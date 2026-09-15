@@ -75,8 +75,8 @@ Project -> Evidence / Knowledge edge to the Core DAG and never consumes those
 domains' ORM internals; application orchestration is the sanctioned composition
 layer.
 
-- **Normative owner:** `PROJECT_NOTEBOOK.md` (ADR-0016; status `Proposed — pending
-  human acceptance`).
+- **Normative owner:** `PROJECT_NOTEBOOK.md` (ADR-0016; status `Accepted`,
+  human-accepted during PR #11 review).
 - **Owned concepts:** `ProjectNote`, immutable `ProjectNoteRevision`, and typed,
   non-semantic `NoteMention`.
 - **Owned mutable state:** the Note title and `archived_at` (non-destructive);
@@ -97,6 +97,22 @@ layer.
 - **Non-responsibilities:** becoming Evidence/Decision truth; entering the
   scientific graph; per-note ACLs or sharing outside the Project; rich
   collaborative editing.
+
+### 1b. Project Search (application/query sub-boundary — no domain change)
+
+Project search (`revolab.search`) is an **application-level read projection**
+consumed by Presentation and Agent Context, at the same application-orchestration
+layer as `revolab.services`/`revolab.notes`. It is **not a tenth Core domain** and
+adds no Project → domain edge: the accepted nine-domain DAG is unchanged.
+
+It owns only query parsing/bounds, authorized retrieval, ranking, bounded
+plain-text snippets, and the typed SearchHit projection. Every returned row stays
+owned by its canonical domain, queried directly through the existing Project read
+lens (`ProjectResourceLink`) — there is **no copied `SearchDocument` truth**, and
+therefore no second source of truth for visibility or content. Search never
+changes context: `Search → explicit ContextSelection → ContextBuilder` is
+preserved unchanged. Normative owner:
+`docs/architecture/PROJECT_SEARCH_RETRIEVAL.md` (ADR-0018).
 
 ### 2. Scientific Object Domain
 
