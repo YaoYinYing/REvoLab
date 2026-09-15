@@ -48,3 +48,5 @@ export const AGENT_TERMINATION_REASONS: readonly components['schemas']['AgentTer
 export const AGENT_TOOL_CALL_STATUSES: readonly components['schemas']['AgentToolCallStatus'][] = ["completed","pending","failed","skipped"] as const
 
 export const CONVERSATION_ROLES: readonly components['schemas']['ConversationRole'][] = ["user","assistant"] as const
+
+export const ACTION_REQUEST_STATUSES: readonly components['schemas']['ActionRequestStatus'][] = ["pending","executing","succeeded","failed","ambiguous","rejected"] as const

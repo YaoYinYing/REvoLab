@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-09-14
+Last verified: 2026-09-15
 
 This file records actual, machine-verified repository state — not future plans.
 
@@ -16,11 +16,19 @@ The governing invariant is unchanged:
 
 > **Persist working memory, never stale truth or authority.**
 
-**Phase 10 (Project Notebook / structured working notes) is implemented and
-human-accepted**, pending merge of PR #11 on `feat/phase-10-project-notebook`; its
-architectural decision is **Accepted** (`PROJECT_NOTEBOOK.md`, ADR-0016). The
-Phase-10 section below records the machine-verified state of the CURRENT reviewed
-head of that branch. Phases 1–9 are the accepted `main` state.
+**Phase 10 (Project Notebook / structured working notes) is merged into `main`**
+(PR #11, commit `135a591`); its architectural decision is **Accepted**
+(`PROJECT_NOTEBOOK.md`, ADR-0016). Phases 1–10 are the accepted `main` state.
+
+**Phase 11 (durable explicit-action handoff / human-authorized execution) is
+implemented on `feat/phase-11-human-authorized-actions` and machine-verified**; its
+architectural decision is **Proposed — pending human acceptance**
+(`docs/architecture/AGENT_ACTION_HANDOFF.md`, ADR-0017). The governing invariant is:
+
+> **Persist intent, never authority. Re-derive authority at execution time.**
+
+The Phase-11 section below records the machine-verified state of the current head of
+that branch.
 
 ## Implemented (Phase 1)
 
@@ -1783,13 +1791,307 @@ The human reviewer found one remaining P2: the Notebook list and revision histor
   references in `SYSTEM_ARCHITECTURE.md` / `EVIDENCE_PROVENANCE.md`) are now
   `Accepted`; this ledger states that Phase 10 is human-accepted pending merge.
 
+## Implemented (Phase 11)
+
+- **Durable Action Request** (`revolab/models.py:ActionRequest`, migration
+  `9e20ac68603b_phase11_action_requests.py`): Project + owning-Actor scoped durable
+  operational intent recording the canonical `tool_id`, the COMPLETE
+  schema-validated size-bounded argument payload (`arguments` +
+  `arguments_digest`), lifecycle `status`, bounded `status_reason`, timestamps, and
+  the canonical result reference (`result_run_id` / `result_decision_id`). It is
+  **not** a ScientificObject, Evidence, Decision, `ProjectResourceLink`,
+  `GlobalResourceRegistry` entry, conversation message, Agent memory, `ToolResult`,
+  or provider execution truth, and the nine-domain Core DAG is unchanged: Action
+  Handoff is an Agent Context / application-orchestration sub-boundary
+  (`AGENT_ACTION_HANDOFF.md`, ADR-0017).
+- **Persist intent, never authority.** The row stores no authorization decision,
+  membership result, provider-health snapshot, capability availability, credential
+  material or `secret_ref`, and no column duplicates REvoCompute's mutable run
+  state (`test_action_row_stores_no_provider_execution_state`,
+  `test_phase11_schema_has_no_authority_or_secret_columns`). Proposal-time
+  `autonomy` / `execution_class` / `side_effect_class` are presentation metadata and
+  are never consulted as authority (execution re-reads the CURRENT catalog).
+- **Proposal path** (`revolab/agent/runtime.py`): an `explicit_action` (or
+  `external_action`) tool call is validated against its canonical input model and
+  persisted in the SAME turn transaction as the transcript; the bounded
+  `PendingActionRead` returned to the model/human is now a VIEW naming the durable
+  `action_request_id`. An invalid or over-bound payload fails closed and is never
+  stored (a truncated preview is display data, not executable state).
+- **One canonical explicit-action input mapping**
+  (`revolab/tools/explicit_actions.py`) is consumed by BOTH the proposal boundary
+  and the human execution boundary; the duplicate mapping that previously lived in
+  `agent/runtime.py` is retired. Execution revalidates the stored payload against
+  the CURRENT model, so a schema change fails closed with no compatibility shim.
+- **Human surface** (`revolab/actions.py` + `api.py`): list (per conversation),
+  read, execute, reject. Ownership is the Phase-9 conversation lens exactly — one
+  owning Actor in one Project, another Project member gets 404, a non-member gets
+  403 before any lookup (never an existence oracle). `execute`/`reject` are NOT
+  Tools and never appear in the Agent ToolCatalog.
+- **Execution-time revalidation**: current Project readability (tombstone),
+  mutation-capable membership/role, current ToolCatalog + autonomy, current
+  canonical input schema + payload integrity digest, current resource visibility for
+  every referenced input, current provider availability and credential presence,
+  current project policy. A pre-claim refusal raises the typed domain error and
+  leaves the action `pending` (no side effect, no claim consumed); a post-claim
+  definite refusal is terminal `failed`.
+- **One-shot concurrency**: the durable `pending -> executing` claim is a single
+  conditional `UPDATE` whose rowcount decides the winner; it is COMMITTED before the
+  external call, so the claim (never a process-memory flag) is the production truth.
+  PostgreSQL orders concurrent claims; the conditional update is the cross-backend
+  backstop.
+- **Canonical execution paths, no duplication**: a local explicit action
+  (`decision.commit`) runs through the SAME closed `LocalToolRuntime` the human
+  workspace uses; a remote explicit action runs through the SAME
+  `services.compute_submit_handle` + `record_compute_run` capability path the human
+  compute endpoint uses (the new helper is a split of the existing implementation,
+  not a second one). A confirmed handle creates/reuses the canonical `RunReference`
+  and its `consumed_as_input_by` edges; REvoCompute remains the sole owner of
+  execution state.
+- **Honest external ambiguity**: REvoCompute exposes no client-usable idempotency
+  key, so none is invented. A transport failure, 5xx/gateway response, unexpected
+  payload, or a 2xx without a task identity settles the action `ambiguous` and it is
+  **never** automatically retried; explicit 4xx rejections and pre-side-effect local
+  provider checks settle `failed`. A confirmed provider handle whose local
+  `RunReference` recording fails also settles `ambiguous` rather than pretending
+  either outcome.
+- **Frontend** (`frontend/src/views/Agent.tsx`): a durable "Action requests"
+  section inside the existing conversation surface showing tool id, execution class,
+  side-effect class, human-readable canonical arguments (provider/task kind/input
+  identities/parameters for a compute action), state, what Execute will do, and the
+  resulting canonical reference; Execute/Reject only for a `pending` action and a
+  mutation-capable membership, never on render/reload/navigation/model response, with
+  the Phase-8–10 scope guards so a stale in-flight response cannot repopulate another
+  scope. No credential detail is ever rendered.
+
+## Verified evidence (Phase 11)
+
+Commands run on this branch head (2026-09-15):
+
+```text
+ruff check backend                                  All checks passed
+mypy (strict, 53 source files)                      Success: no issues found
+pytest (SQLite)                                     436 passed, 18 skipped
+alembic upgrade head + alembic check (SQLite)       no new upgrade operations
+alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
+pytest backend/tests/test_postgres_integration.py   18 passed (migrated PostgreSQL)
+python -m revolab.export_openapi  -> openapi.json   byte-identical (no drift)
+frontend: npm run typecheck                         clean
+frontend: npm run test                              56 passed
+frontend: npm run build                             built
+frontend: npm run check:contracts                   clean (generation idempotent)
+playwright test (real FastAPI + DB + fake model/compute)  8 passed
+git diff --check                                    clean
+```
+
+Phase-11 regressions (`backend/tests/test_actions.py`,
+`backend/tests/test_actions_api.py`, `frontend/src/views/Agent.test.tsx`,
+`frontend/e2e/actions.spec.ts`) cover, with mutation-sensitive assertions: an Agent
+proposal is durable but NOT executed; reload returns the same pending action; another
+Actor cannot read/execute/reject and another Project cannot use it; non-member 403
+before any existence check; Project tombstone, membership/role revocation, input
+visibility revocation, credential revocation, unavailable provider, removed Tool,
+changed autonomy, stale schema and a tampered payload all block execution; no
+credential/`secret_ref`/executable argument reaches the durable row or the transcript; rejection has no side effect and is terminal; concurrent execution
+submits at most once (SQLite threads and PostgreSQL connections, both forcing the
+workers to reach the one-shot claim concurrently via a barrier immediately before
+`_claim`); success creates the canonical `RunReference` and a second execute never
+resubmits; the provider boundary classification is `failed` vs `ambiguous`; an
+ambiguous outcome is never retried; execute/reject are absent from the Agent
+catalog; hostile Note text cannot authorize or execute; an over-bound payload is
+refused rather than truncated by BOTH the Agent loop and the persistence boundary.
+Post-claim failure honesty is covered too: a plain recording failure, a DB-level
+recording failure that leaves the session in a failed transaction, and a partially
+recorded run whose retry completes the canonical recording (no orphaned
+`RunReference`, no action stranded in `executing`). The DB-level case is asserted on
+PostgreSQL as well, because SQLite does not abort a transaction on a failed
+statement; that PostgreSQL regression FAILS if `_settle`'s rollback-retry is
+removed, so the fix is machine-guarded on the substrate where it is load-bearing.
+
+Note on drift coverage: `alembic check` does not compare CHECK constraints, so the
+`ck_action_succeeded_has_result` model/migration agreement is asserted explicitly
+by the migrated-PostgreSQL schema regression (constraint name + predicate tokens)
+and by the SQLite raw-insert regression. A development database that applied an
+earlier revision of the Phase-11 migration must be recreated or
+`alembic downgrade 8822524ef06f && alembic upgrade head`-ed to pick it up.
+
+## Independent review (Phase 11)
+
+Three FRESH read-only reviewers ran in parallel against this branch (architecture /
+ownership; security / authority / external-side-effect semantics; API /
+persistence / frontend / verification), each independently verifying claims against
+the code and tests. All three returned completed structured reports; the integrator
+reconciled them (subagents do not vote on architecture) and fixed every valid
+P0/P1 plus the material P2s.
+
+| Reviewer | Verdict | P0 | P1 | P2 |
+|---|---|---|---|---|
+| A — architecture / ownership | APPROVE WITH FINDINGS | 0 | 1 | 3 |
+| B — security / authority / side effects | REQUEST CHANGES | 0 | 2 | 5 |
+| C — API / persistence / frontend / tests | REQUEST CHANGES | 0 | 1 | 6 |
+
+Reconciled findings (all fixed in `ddbc658` + the follow-up reconciliation commit):
+
+1. **A-P1 — duplicate source of truth for the local explicit-action input model.**
+   `tools/explicit_actions.py` kept a second `decision.commit -> DecisionCommitCreate`
+   map that duplicated (and contradicted) the registered `LocalToolSpec.input_model`.
+   Retired the local map: a local explicit action now resolves its model from the
+   registry (`LocalToolRegistry.explicit_action_input_model`), a remote one from the
+   ONE capability-suffix map. `PROJECT_TOOL_HARNESS.md` states the truth, and
+   `test_explicit_action_input_models_are_single_sourced` now compares against the
+   LIVE registry, so drift fails the test (it was tautological before).
+2. **B-P1 — broken transaction boundary in human execution.** A caught recording
+   failure could strand a durably claimed action in `executing` while the external
+   side effect had happened, and `_settle`'s commit could persist a partially
+   flushed RunReference. Fixed: every failure path ROLLS BACK before the terminal
+   write; `_settle` tolerates a session left in a failed transaction (rollback-first,
+   one retry) and reports whether the conditional transition won; a
+   confirmed-but-unrecorded run is retried ONCE through the canonical get-or-create
+   recording, so a partially committed attempt is completed instead of orphaned.
+   Regressions: `test_confirmed_but_unrecorded_run_is_terminal_and_never_stuck`,
+   `test_db_level_recording_failure_still_settles_the_action`,
+   `test_partially_recorded_run_is_completed_not_orphaned`.
+3. **C-P1 — provider misattribution on the human authorization surface.** A remote
+   action's `tool_id` (the execution authority) and its argument `provider_key` (what
+   the human reads) could disagree, so a human could authorize under a false
+   description of the external side effect. Fixed with ONE canonical rule
+   (`explicit_arguments_match_provider`) enforced at BOTH the proposal boundary
+   (fail closed, no durable row) and the execution boundary (defense in depth).
+   Regressions: `test_proposal_refuses_a_payload_naming_a_different_provider`,
+   `test_execution_refuses_a_stored_provider_mismatch`.
+4. **B-P2 — the persistence boundary did not enforce its own argument bound.**
+   `propose_action_request` now refuses an over-bound payload itself
+   (`test_propose_refuses_an_over_bound_payload`), not only the Agent loop.
+5. **B-P2 — an unreconcilable confirmed submission.** The `ambiguous` reason now
+   retains the bounded provider identity (`authority/native_id`); documented as the
+   ONE place an external identity appears outside a RunReference, precisely because
+   the canonical card could not be created.
+6. **B-P2 / C-P2 — `arguments_digest` was described as tamper protection.** It is an
+   UNKEYED content digest for corruption / out-of-band-edit detection, never an
+   authentication tag and never authority; the docs, function docstring and error
+   wording now say so.
+7. **B-P2 — the concurrency regressions did not race the claim.** Both the SQLite and
+   the PostgreSQL concurrent-execute tests now force both workers to be about to
+   take the one-shot claim at the same instant (a barrier immediately before
+   `_claim`), so they exercise the atomic conditional UPDATE itself rather than only
+   the stale-`pending` guard.
+8. **A-P2 — stale/duplicated facts.** One shared `COMPUTE_SUBMIT_SUFFIX` constant;
+   the ADR/handoff now cite `services.compute_submit_handle` + `record_compute_run`
+   (the actual call path); the local-action → Decision-result assumption is
+   documented in code and model.
+9. **C-P2 — no DB invariant for `succeeded ⇒ result reference`.** Added
+   `ck_action_succeeded_has_result` to the model AND the migration (asserted on the
+   migrated PostgreSQL schema); regression
+   `test_succeeded_requires_a_canonical_result_reference`.
+
+Findings recorded as intentional / informational (no change):
+- A hard process kill between the committed claim and the terminal write still leaves
+  `executing`; it is honestly rendered, never auto-retried, fails further executes
+  closed, and a background reaper is an explicit non-goal (documented deferral).
+- The new routes declare only 200/422 in OpenAPI; 401/403/404/409 come from the
+  global exception handlers and are covered by tests. This matches the repo-wide
+  route convention (no per-route error declarations anywhere), so declaring them
+  only here would be inconsistent contract style.
+- The pre-existing process-global scripted-model turn counter makes the Phase-8
+  `agent.spec.ts` repeat-sensitive (`--repeat-each=2` fails its second repeat). CI
+  runs each spec once (8/8 green); the NEW Phase-11 spec is deliberately
+  counter-independent and is stable at 2x and 4x repeats. Recorded, not a Phase-11
+  regression.
+
+### Delta review (round 2 — fix delta, 2 fresh reviewers)
+
+Two additional FRESH read-only reviewers examined only the fix delta
+(`f495df9..d834210`), the previously affected invariants and their regression
+coverage. One (security / failure semantics) is reported below; the persistence /
+contracts reviewer returned APPROVE WITH FINDINGS, all reconciled:
+
+- **P1 — the transaction-boundary fix was not machine-guarded on the substrate
+  where it is load-bearing.** SQLite does not abort a transaction on a failed
+  statement, so the SQLite "DB-level failure" regression never reproduced its own
+  premise; reverting `_settle`'s rollback-retry left the whole suite green. Fixed by
+  adding `test_phase11_post_claim_failure_settles_terminally_on_postgres`, which
+  aborts a real PostgreSQL transaction and FAILS when the retry is removed (verified
+  by mutation).
+- **P2 — `alembic check` does not compare CHECK constraints.** The
+  model/migration agreement for `ck_action_succeeded_has_result` is now asserted
+  explicitly by the migrated-schema regression (name + predicate tokens); the
+  drift-gate caveat and the required downgrade/upgrade for an already-migrated dev
+  database are recorded above.
+- **P2 — stale ledger wording / dead test scaffolding.** The concurrency description
+  now matches the barrier-before-`_claim` implementation, and the unused
+  provider-blocking hook was removed from both test doubles.
+
+### Delta review round 3 (security / failure semantics) — reconciliation
+
+The security delta reviewer returned REQUEST CHANGES on the fix delta; all findings
+were reconciled (the reviewer count stays within the 3..5 budget: 3 first-round + 2
+delta reviewers):
+
+- **P1 — the confirmed-but-unrecorded recovery could leave committed rows behind a
+  FALSE "nothing recorded" ambiguity.** `record_compute_run` commits the
+  RunReference before its per-input provenance edges, so a persistent edge failure
+  left a committed reference while the action reported `ambiguous /
+  result_run_id=NULL`, and the failed retry's pending state could be committed by
+  the terminal write. Fixed: the failure path rolls back, retries the canonical
+  recording once (get-or-create completes a partial attempt, never repeating the
+  external submission), then READS THE REFERENCE BACK by the confirmed provider
+  identity and settles `succeeded` with the real reference plus a bounded
+  provenance-incomplete note; only a genuinely absent identity settles
+  `ambiguous`. Regression
+  `test_persistent_provenance_failure_still_reports_the_real_run_reference`
+  (mutation-verified: it fails if the read-back fallback is removed) and
+  `test_no_canonical_reference_at_all_is_ambiguous_with_a_truthful_reason`.
+- **P2 — `_settle` could raise after its retry, and a local action returning no
+  result reference could strand the row.** Fixed: a local execution with no typed
+  result settles `ambiguous` with a precise reason (never `succeeded`, which the
+  durable CHECK forbids, and never a silent success), and the remote branch guards a
+  missing reference the same way.
+- **P2 — `_settle`'s "transition won" return value was dead.** The conditional
+  transition is now enforced: losing it raises a typed conflict instead of being
+  ignored.
+- **P2 — the provider-agreement predicate was fail-open when the payload omitted
+  `provider_key`.** It is now strict: a remote action's payload must name its
+  provider, and an omission fails closed.
+- **P2 — `ck_action_succeeded_has_result` was incompatible with the
+  `result_decision_id` FK's `ondelete='SET NULL'`.** The FK is now `RESTRICT`,
+  consistent with the deletion invariant (a referenced Decision is never
+  hard-deleted, so the action's canonical result is never silently nulled); the
+  global-resource run FK stays `SET NULL` because global resources are only revoked.
+
+### Delta review round 4 (human review) — identity-compatibility gate
+
+Human review of the recovery fallback found that reading an existing
+`(authority, native_id)` back merely because it EXISTS is not sufficient: the
+canonical immutable identity contract must be re-applied. Fixed:
+
+- `_recover_confirmed_run` now calls `provenance.assert_reference_compatible(existing,
+  task_type=exc.handle.task_type)` (the same assertion
+  `_persist_run_reference_trusted` uses). A COMPATIBLE reference settles `succeeded`
+  with the real reference plus the bounded provenance note; an INCOMPATIBLE one is
+  never attached and settles `ambiguous` with bounded reconciliation detail and
+  `result_run_id = NULL`.
+- No exception from the compatibility assertion, the read-back, or the retry can
+  escape the recovery handler, so the action is always settled terminally (never
+  stranded in `executing`).
+- Regression `test_recovery_never_attaches_an_incompatible_existing_run_reference`
+  pre-seeds a same-identity/different-`task_type` `RunReference`, makes the provider
+  return that identity, and proves: exactly one provider submission; status
+  `ambiguous` (not `succeeded`); `result_run_id` null; the incompatible row untouched
+  and not attached; no second reference fabricated; a further execute fails closed
+  without re-submitting. Mutation-verified: removing the compatibility assertion
+  fails the test.
+
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
-- Remote provider tool execution inside the Agent loop (Phase 8 surfaces remote
-  tools from the same catalog and converts remote `explicit_action` to a
-  PendingAction, but does not autonomously cross the external boundary; remote
+- Remote provider tool execution inside the Agent loop (the Agent surfaces remote
+  tools from the same catalog and converts remote `explicit_action` into a durable
+  Action Request, but never autonomously crosses the external boundary; remote
   reads remain on the human capability endpoints — documented in
-  `docs/architecture/PROJECT_AGENT_RUNTIME.md`).
+  `docs/architecture/PROJECT_AGENT_RUNTIME.md` and `AGENT_ACTION_HANDOFF.md`).
+- Phase-11 accepted limitation: a process hard-killed after the durable one-shot
+  claim and before the outcome write leaves the Action Request in `executing`. It is
+  reported honestly as an in-progress claim with its claim time, is never
+  auto-retried, and a further execute request fails closed; there is no automatic
+  reaper/reconciliation worker (a background worker is an explicit non-goal).
 - Live end-to-end acceptance against an authorized REvoCompute instance is
   external evidence: no authorized instance is configured in this development
   environment. The driver is built and tested against the documented public

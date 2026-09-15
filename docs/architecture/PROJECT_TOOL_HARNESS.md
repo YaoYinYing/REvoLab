@@ -125,9 +125,26 @@ endpoints — the Local Tool Runtime never invokes them.
 
 The Phase-8 Agent loop executes **local** tools through this same runtime. Remote
 tools are surfaced to the model from the same catalog but are not autonomously
-crossed in the loop: remote `explicit_action` becomes a `PendingAction`, and
-remote automatic/policy reads remain on the human capability endpoints
+crossed in the loop: remote `explicit_action` becomes a durable **Action Request**,
+and remote automatic/policy reads remain on the human capability endpoints
 (`docs/architecture/PROJECT_AGENT_RUNTIME.md`).
+
+An `explicit_action` proposal and its human execution are governed by
+`docs/architecture/AGENT_ACTION_HANDOFF.md` (ADR-0017). The Tool Harness side of
+the contract is:
+
+- the canonical input model for each explicit action is resolved from its single
+  authoritative owner by BOTH the proposal boundary and the execution boundary — a
+  LOCAL action from its registered `LocalToolSpec.input_model` (the same model the
+  closed runtime validates against), a REMOTE action from the ONE capability-suffix
+  mapping (`revolab/tools/explicit_actions.py`) — so a schema change takes effect
+  immediately;
+- execution re-resolves the Tool from the CURRENT catalog and fails closed if it
+  disappeared, is unavailable, or is no longer `explicit_action`;
+- a local explicit action executes through this same closed `LocalToolRuntime`
+  (no second Decision-promotion path), and a remote one through the same
+  Provider/Capability path the human compute endpoint uses (no second submission
+  implementation).
 
 ## Lightweight vs heavyweight execution boundary
 
@@ -189,7 +206,9 @@ One canonical authority truth: `AgentToolAutonomy`.
 ```text
 automatic         safe reads / bounded local analysis
 policy            typed domain mutations (evidence, decision draft)
-explicit_action   decision commit, external compute submission
+explicit_action   decision commit, external compute submission — the Agent may
+                  PROPOSE only; a human authorizes execution of a durable Action
+                  Request (never itself a Tool, and never in the Agent catalog)
 never_agent       membership / credential / destructive operations — never projected
 ```
 

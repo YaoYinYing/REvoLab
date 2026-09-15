@@ -234,12 +234,19 @@ layer.
   server-owned history, still never project truth — see
   `PROJECT_CONVERSATIONS.md`.)
 - **Owned mutable state:** the persistence boundary owns conversation working
-  memory (`ProjectConversation`/`ConversationMessage`). Those rows are not
-  ScientificObjects, provenance nodes, or evidence/decision truth; every turn
-  still rebuilds ProjectContext and authority from current canonical state.
+  memory (`ProjectConversation`/`ConversationMessage`) and, since Phase 11, the
+  **Action Handoff sub-boundary** (`ActionRequest` — durable operational intent
+  proposed by an explicit-action tool call, never authority; see
+  `AGENT_ACTION_HANDOFF.md`, ADR-0017). None of those rows are ScientificObjects,
+  provenance nodes, or evidence/decision truth, and the nine-domain DAG is
+  unchanged: every turn and every human execution still rebuilds ProjectContext,
+  the ToolCatalog, and authority from current canonical state.
 - **Owned invariants:** chat history is not project truth; a persisted transcript
   is untrusted conversational data and never authority; context references large
-  artifacts instead of embedding them; the agent never raw-writes.
+  artifacts instead of embedding them; the agent never raw-writes; an Action
+  Request stores intent only (no authorization decision, credential, `secret_ref`,
+  provider-health or capability-availability snapshot) and its execution
+  re-derives current truth through the canonical Tool/domain/provider path.
 - **Public contracts:** context assembly, typed tool calls (via the shared
   ToolCatalog), skill loading.
 - **Dependencies:** Project, Evidence/Provenance, Knowledge/Decision, Provider /

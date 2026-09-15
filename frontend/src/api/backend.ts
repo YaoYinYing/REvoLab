@@ -354,6 +354,36 @@ export function projectApi(actorId: string) {
         headers,
         params: { path: { project_id: projectId, note_id: noteId }, query },
       }),
+
+    // Phase-11 Action Handoff. Execute/reject are explicit human operations:
+    // nothing here is ever triggered by rendering or by an Agent response.
+    listConversationActionRequests: (
+      projectId: string,
+      conversationId: string,
+      query: { limit?: number; offset?: number } = {},
+    ) =>
+      api.GET('/api/projects/{project_id}/agent/conversations/{conversation_id}/action-requests', {
+        headers,
+        params: { path: { project_id: projectId, conversation_id: conversationId }, query },
+      }),
+
+    getActionRequest: (projectId: string, actionRequestId: string) =>
+      api.GET('/api/projects/{project_id}/action-requests/{action_request_id}', {
+        headers,
+        params: { path: { project_id: projectId, action_request_id: actionRequestId } },
+      }),
+
+    executeActionRequest: (projectId: string, actionRequestId: string) =>
+      api.POST('/api/projects/{project_id}/action-requests/{action_request_id}/execute', {
+        headers,
+        params: { path: { project_id: projectId, action_request_id: actionRequestId } },
+      }),
+
+    rejectActionRequest: (projectId: string, actionRequestId: string) =>
+      api.POST('/api/projects/{project_id}/action-requests/{action_request_id}/reject', {
+        headers,
+        params: { path: { project_id: projectId, action_request_id: actionRequestId } },
+      }),
   }
 }
 

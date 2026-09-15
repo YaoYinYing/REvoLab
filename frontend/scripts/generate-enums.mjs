@@ -36,6 +36,7 @@ const enumNames = [
   'AgentTerminationReason',
   'AgentToolCallStatus',
   'ConversationRole',
+  'ActionRequestStatus',
 ]
 
 const constName = (name) =>
@@ -63,6 +64,7 @@ const constName = (name) =>
     AgentTerminationReason: 'AGENT_TERMINATION_REASONS',
     AgentToolCallStatus: 'AGENT_TOOL_CALL_STATUSES',
     ConversationRole: 'CONVERSATION_ROLES',
+    ActionRequestStatus: 'ACTION_REQUEST_STATUSES',
   })[name]
 
 const lines = [

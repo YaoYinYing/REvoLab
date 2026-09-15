@@ -1,6 +1,7 @@
 import { projectApi, type ContextSelectionCreate, type ProjectApi } from './backend'
 import { apiErrorMessage } from './client'
 import type {
+  ActionRequestRead,
   ComputeArtifactRead,
   ComputeRunStatusRead,
   ComputeSubmissionRead,
@@ -267,6 +268,25 @@ export function useNoteRevisions(
             .then((res) => value<NoteRevisionRead[]>(res as ApiResult<NoteRevisionRead[]>))
         : Promise.resolve([]),
     [actorId, projectId, noteId, query.limit, query.offset],
+  )
+}
+
+// Phase-11 Action Handoff: the current Actor's OWN durable Action Requests for
+// one conversation. A reload re-derives the list from durable state.
+export function useConversationActionRequests(
+  actorId: string | null,
+  projectId: string | null,
+  conversationId: string | null,
+  query: ListQuery = {},
+): AsyncState<ActionRequestRead[]> {
+  return useAsync(
+    () =>
+      actorId && projectId && conversationId
+        ? projectApi(actorId)
+            .listConversationActionRequests(projectId, conversationId, query)
+            .then((res) => value<ActionRequestRead[]>(res as ApiResult<ActionRequestRead[]>))
+        : Promise.resolve([]),
+    [actorId, projectId, conversationId, query.limit, query.offset],
   )
 }
 

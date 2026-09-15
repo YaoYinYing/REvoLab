@@ -3,14 +3,28 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { projectApi } from '../api/backend'
-import { useNotes, useObjects, useResources } from '../api/hooks'
-import type { AgentTurnRead, ConversationRead, ConversationTurnRead, NoteRead } from '../api/types'
+import {
+  useConversationActionRequests,
+  useMyMembership,
+  useNotes,
+  useObjects,
+  useResources,
+} from '../api/hooks'
+import type {
+  ActionRequestRead,
+  AgentTurnRead,
+  ConversationRead,
+  ConversationTurnRead,
+  NoteRead,
+} from '../api/types'
 import { AgentView } from './Agent'
 
 vi.mock('../api/hooks', () => ({
   useObjects: vi.fn(),
   useResources: vi.fn(),
   useNotes: vi.fn(),
+  useMyMembership: vi.fn(),
+  useConversationActionRequests: vi.fn(),
 }))
 
 vi.mock('../api/backend', () => ({
@@ -20,6 +34,8 @@ vi.mock('../api/backend', () => ({
 const mockedUseObjects = vi.mocked(useObjects)
 const mockedUseResources = vi.mocked(useResources)
 const mockedUseNotes = vi.mocked(useNotes)
+const mockedUseMembership = vi.mocked(useMyMembership)
+const mockedUseActionRequests = vi.mocked(useConversationActionRequests)
 const mockedProjectApi = vi.mocked(projectApi)
 
 const note: NoteRead = {
@@ -126,8 +142,36 @@ const turnRead: ConversationTurnRead = {
   },
 }
 
+export const pendingAction: ActionRequestRead = {
+  id: '99999999-9999-4999-8999-999999999999',
+  project_id: 'project-1',
+  actor_id: 'actor-1',
+  conversation_id: conversation.id,
+  tool_id: 'fakecompute.compute.submit',
+  autonomy: 'explicit_action',
+  execution_class: 'remote',
+  side_effect_class: 'external_action',
+  arguments: {
+    provider_key: 'fakecompute',
+    task_kind: 'tabular',
+    inputs: [{ kind: 'scientific_object_revision', resource_id: '77777777-7777-4777-8777-777777777777' }],
+    params: { rows: 5 },
+  },
+  status: 'pending',
+  status_reason: null,
+  created_at: '2026-09-15T00:00:00Z',
+  updated_at: '2026-09-15T00:00:00Z',
+  claimed_at: null,
+  resolved_at: null,
+  result_run_id: null,
+  result_decision_id: null,
+}
+
 const defaultApi = () => ({
   listConversations: vi.fn().mockResolvedValue({ data: [], error: undefined, response: new Response() }),
+  listConversationActionRequests: vi
+    .fn()
+    .mockResolvedValue({ data: [], error: undefined, response: new Response() }),
   getConversation: vi.fn().mockResolvedValue({
     data: { ...conversation, messages: [], total_messages: 0 },
     error: undefined,
@@ -145,6 +189,16 @@ const defaultApi = () => ({
     error: new Error('not found'),
     response: new Response(),
   }),
+  executeActionRequest: vi.fn().mockResolvedValue({
+    data: { ...pendingAction, status: 'succeeded', result_run_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    error: undefined,
+    response: new Response(),
+  }),
+  rejectActionRequest: vi.fn().mockResolvedValue({
+    data: { ...pendingAction, status: 'rejected' },
+    error: undefined,
+    response: new Response(),
+  }),
 })
 
 beforeEach(() => {
@@ -152,6 +206,13 @@ beforeEach(() => {
   mockedUseObjects.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
   mockedUseResources.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
   mockedUseNotes.mockReturnValue({ data: [note], loading: false, error: null, reload: vi.fn() })
+  mockedUseMembership.mockReturnValue({
+    data: { project_id: 'project-1', actor_id: 'actor-1', role: 'owner' },
+    loading: false,
+    error: null,
+    reload: vi.fn(),
+  })
+  mockedUseActionRequests.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
   mockedProjectApi.mockReturnValue(defaultApi() as never)
 })
 
@@ -560,5 +621,173 @@ describe('Agent view (Phase 9)', () => {
 
     const body = turnMock.mock.calls[0][2] as { selection: { note_ids?: string[] } }
     expect(body.selection.note_ids).toEqual([note.id])
+  })
+})
+
+describe('Agent view (Phase 11 durable Action Handoff)', () => {
+  function withConversation(api: Record<string, unknown> = {}) {
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi
+        .fn()
+        .mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: [], total_messages: 0 },
+        error: undefined,
+        response: new Response(),
+      }),
+      ...api,
+    } as never)
+  }
+
+  it('renders a durable pending action with its canonical arguments and never executes on render', async () => {
+    withConversation()
+    mockedUseActionRequests.mockReturnValue({
+      data: [pendingAction],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    const execute = vi.fn()
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi
+        .fn()
+        .mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: [], total_messages: 0 },
+        error: undefined,
+        response: new Response(),
+      }),
+      executeActionRequest: execute,
+    } as never)
+
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+
+    expect(await screen.findByText('fakecompute.compute.submit')).toBeInTheDocument()
+    expect(screen.getByText('provider: fakecompute')).toBeInTheDocument()
+    expect(screen.getByText('task kind: tabular')).toBeInTheDocument()
+    expect(screen.getByText(/77777777-7777-4777-8777-777777777777/)).toBeInTheDocument()
+    // Render alone must never authorize anything.
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('executes only on an explicit click and surfaces the canonical run reference', async () => {
+    const user = userEvent.setup()
+    const execute = vi.fn().mockResolvedValue({
+      data: { ...pendingAction, status: 'succeeded', result_run_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+      error: undefined,
+      response: new Response(),
+    })
+    mockedUseActionRequests.mockReturnValue({
+      data: [pendingAction],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi
+        .fn()
+        .mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: [], total_messages: 0 },
+        error: undefined,
+        response: new Response(),
+      }),
+      executeActionRequest: execute,
+    } as never)
+
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.click(await screen.findByRole('button', { name: `Execute action request ${pendingAction.id}` }))
+
+    expect(execute).toHaveBeenCalledWith('project-1', pendingAction.id)
+    expect(await screen.findByText(/Canonical run reference aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/)).toBeInTheDocument()
+  })
+
+  it('rejects only on an explicit click and calls no execution', async () => {
+    const user = userEvent.setup()
+    const execute = vi.fn()
+    const reject = vi.fn().mockResolvedValue({
+      data: { ...pendingAction, status: 'rejected' },
+      error: undefined,
+      response: new Response(),
+    })
+    mockedUseActionRequests.mockReturnValue({
+      data: [pendingAction],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi
+        .fn()
+        .mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: [], total_messages: 0 },
+        error: undefined,
+        response: new Response(),
+      }),
+      executeActionRequest: execute,
+      rejectActionRequest: reject,
+    } as never)
+
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.click(await screen.findByRole('button', { name: `Reject action request ${pendingAction.id}` }))
+
+    expect(reject).toHaveBeenCalledWith('project-1', pendingAction.id)
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('offers no decision controls to a viewer', async () => {
+    mockedUseMembership.mockReturnValue({
+      data: { project_id: 'project-1', actor_id: 'actor-1', role: 'viewer' },
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    mockedUseActionRequests.mockReturnValue({
+      data: [pendingAction],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    withConversation()
+
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    const execute = await screen.findByRole('button', { name: `Execute action request ${pendingAction.id}` })
+    expect(execute).toBeDisabled()
+    expect(screen.getByText(/Owner\/member membership required to decide/)).toBeInTheDocument()
+  })
+
+  it('reports an ambiguous external outcome honestly and offers no retry', async () => {
+    const user = userEvent.setup()
+    mockedUseActionRequests.mockReturnValue({
+      data: [pendingAction],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi
+        .fn()
+        .mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: [], total_messages: 0 },
+        error: undefined,
+        response: new Response(),
+      }),
+      executeActionRequest: vi.fn().mockResolvedValue({
+        data: { ...pendingAction, status: 'ambiguous', status_reason: 'transport failure' },
+        error: undefined,
+        response: new Response(),
+      }),
+    } as never)
+
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.click(await screen.findByRole('button', { name: `Execute action request ${pendingAction.id}` }))
+    expect(await screen.findByText(/will NOT be retried automatically/)).toBeInTheDocument()
   })
 })
