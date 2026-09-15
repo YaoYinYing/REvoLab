@@ -3000,6 +3000,7 @@ export interface components {
             private: boolean;
             /** Snippet */
             snippet?: string | null;
+            status?: components["schemas"]["DecisionStatus"] | null;
             /**
              * Target Id
              * Format: uuid

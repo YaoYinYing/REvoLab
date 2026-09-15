@@ -122,12 +122,18 @@ def build_context(
         selected_artifact_ids.add(artifact_id)
 
     # Phase 12: explicit typed selection of GLOBAL REFERENCE identity cards. The
-    # field is deliberately restricted to reference kinds — a series/revision id
-    # here fails closed instead of degrading into an opaque resource-id bag.
+    # field is deliberately restricted to reference kinds AND to references whose
+    # own lifecycle flag is still active (a revoked/archived reference is not
+    # current context); a series/revision id here fails closed instead of
+    # degrading into an opaque resource-id bag.
     selected_reference_ids: set[UUID] = set()
     for reference_id in selection.reference_ids or []:
         kind = visible.get(reference_id)
-        if kind is None or kind not in _REFERENCE_KINDS:
+        if (
+            kind is None
+            or kind not in _REFERENCE_KINDS
+            or not queries.resource_mention_active(session, reference_id, kind)
+        ):
             raise AuthorizationError("selected reference is not visible in this project")
         selected_reference_ids.add(reference_id)
 
@@ -166,9 +172,13 @@ def build_context(
 
     ordered_series_ids = sorted(selected_series_ids)
     for series_id in ordered_series_ids[: selection.max_series]:
-        series = series_by_id.get(series_id) or session.get(ScientificObjectSeries, series_id)
+        # A selected series MUST be in the current Project read lens. A revision-
+        # implied owning series that is not visible fails closed rather than being
+        # loaded from the global table (revision => series visibility closure is a
+        # domain invariant, and this projection never widens it).
+        series = series_by_id.get(series_id)
         if series is None:
-            raise NotFoundError("selected series not found")
+            raise AuthorizationError("selected series is not visible in this project")
         series_refs.append(_series_ref(series))
         # Only an EXPLICIT series selection expands visible revisions. A revision-
         # implied series contributes its skeleton only; the explicitly selected
@@ -258,18 +268,18 @@ def build_context(
             truncated = True
 
     evidence_refs: list[EvidenceRefRead] = []
+    seen_evidence_ids: set[UUID] = set()
+    # An EXPLICIT evidence selection is honored unconditionally: the human
+    # declared these identities, so a category switch never silently drops them.
+    for evidence_id in sorted(selected_evidence_ids):
+        if len(evidence_refs) >= selection.max_evidence:
+            truncated = True
+            break
+        evidence = session.get(Evidence, evidence_id)
+        if evidence is not None:
+            evidence_refs.append(_evidence_ref(session, evidence))
+            seen_evidence_ids.add(evidence_id)
     if selection.include_evidence:
-        # Explicitly selected Evidence is included first and unconditionally of
-        # graph reachability (the human declared it); reachable Evidence follows.
-        seen_evidence_ids: set[UUID] = set()
-        for evidence_id in sorted(selected_evidence_ids):
-            if len(evidence_refs) >= selection.max_evidence:
-                truncated = True
-                break
-            evidence = session.get(Evidence, evidence_id)
-            if evidence is not None:
-                evidence_refs.append(_evidence_ref(session, evidence))
-                seen_evidence_ids.add(evidence_id)
         for evidence in session.scalars(
             select(Evidence)
             .where(Evidence.project_id == project_id, Evidence.archived_at.is_(None))
@@ -288,16 +298,18 @@ def build_context(
             truncated = True
 
     decision_refs: list[DecisionRefRead] = []
+    seen_decision_ids: set[UUID] = set()
+    # Same rule: an explicit Decision selection is never dropped by
+    # `include_decisions=False`.
+    for decision_id in sorted(selected_decision_ids):
+        if len(decision_refs) >= selection.max_decisions:
+            truncated = True
+            break
+        decision = session.get(Decision, decision_id)
+        if decision is not None:
+            decision_refs.append(_decision_ref(session, decision))
+            seen_decision_ids.add(decision_id)
     if selection.include_decisions:
-        seen_decision_ids: set[UUID] = set()
-        for decision_id in sorted(selected_decision_ids):
-            if len(decision_refs) >= selection.max_decisions:
-                truncated = True
-                break
-            decision = session.get(Decision, decision_id)
-            if decision is not None:
-                decision_refs.append(_decision_ref(session, decision))
-                seen_decision_ids.add(decision_id)
         for decision in session.scalars(
             select(Decision)
             .where(Decision.project_id == project_id, Decision.archived_at.is_(None))

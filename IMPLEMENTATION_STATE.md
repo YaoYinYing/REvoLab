@@ -2125,6 +2125,10 @@ canonical immutable identity contract must be re-applied. Fixed:
   only — never a provider call), and the Actor-private `conversation` corpus
   (title + messages, Actor × Project scoped). Global rows are reached only through
   `ProjectResourceLink`; Evidence/Decision rows must be current and unarchived.
+- **Exact canonical UUID**: a query that IS one canonical UUID (hyphenated, compact,
+  or braced) is matched against the canonical identity column and ranks first — still
+  only inside the corpus's authorization filter, so TODO.md section 15's exact-UUID
+  non-leakage vector is real and tested positively and negatively.
 - **Authorization before disclosure**: unauthorized rows are never ranked,
   counted, snippeted, or reported as hidden. A unique query matching only an
   inaccessible resource is indistinguishable from no result; membership/tombstone
@@ -2137,8 +2141,10 @@ canonical immutable identity contract must be re-applied. Fixed:
   control characters removed, everything else inert. Hostile Markdown/HTML cannot
   become active content.
 - **PostgreSQL / SQLite**: one shared parameterized token-substring predicate gives
-  identical semantics on both substrates; PostgreSQL adds native
-  `to_tsvector`/`ts_rank` ordering. Neither materializes the Project in Python:
+  the same semantic contract on both substrates (authorization, target classes,
+  bounds, SearchHit shape); case folding is the database's `lower()`, so non-ASCII
+  case folding differs (PostgreSQL folds per locale, SQLite ASCII-only — an accepted
+  substrate limitation). PostgreSQL adds native `to_tsvector`/`ts_rank` ordering. Neither materializes the Project in Python:
   each corpus is one bounded SQL statement with LIMIT, and only the bounded
   candidate set is merged. **No index/migration is added**: a persisted derived
   index would be a second representation requiring its own freshness/authorization
@@ -2147,6 +2153,10 @@ canonical immutable identity contract must be re-applied. Fixed:
   `q`, `scope`, `target_kinds`, `limit` query parameters, returning the bounded
   `ProjectSearchResultsRead` envelope (no pagination, no `total_count` — a count
   over authorized rows is itself an oracle).
+- **Reference lifecycle on handoff**: an explicit `reference_ids` selection also
+  checks the reference's own lifecycle flag, so a revoked reference is not admitted
+  as current context; explicit evidence/decision/reference selections are honored
+  regardless of the `include_*` category switches.
 - **Explicit Search → ContextSelection handoff** (`revolab/schemas.py`,
   `agent/builder.py`): `ContextSelectionCreate` gained the smallest canonical typed
   fields for previously transitive-only targets — `evidence_ids`, `decision_ids`,
@@ -2181,13 +2191,13 @@ Commands run on this branch head (2026-09-15):
 ```text
 ruff check backend                                  All checks passed
 mypy (strict, 54 source files)                      Success: no issues found
-pytest (SQLite)                                     469 passed, 23 skipped
+pytest (SQLite)                                     478 passed, 24 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
-pytest backend/tests/test_postgres_integration.py   23 passed (migrated PostgreSQL)
-python -m revolab.export_openapi -> openapi.json    refreshed (Phase-12 schemas/path)
+pytest backend/tests/test_postgres_integration.py   24 passed (migrated PostgreSQL)
+python -m revolab.export_openapi -> openapi.json    refreshed (byte-identical after export)
 frontend: npm run typecheck                         clean
-frontend: npm run test                              63 passed
+frontend: npm run test                              65 passed
 frontend: npm run build                             built
 frontend: npm run check:contracts                   clean (generation idempotent)
 playwright test (real FastAPI + DB + fake model)    9 passed
@@ -2212,6 +2222,68 @@ archived/wrong-kind/stale ids; PostgreSQL proves native `to_tsvector`/`ts_rank`
 emission, latest-revision semantics, private isolation, bounded top-N in SQL, and
 cross-Project non-leakage; the browser slice proves search → explicit
 `Add to Agent context` → the deterministic model receives the selected Decision.
+
+## Independent review (Phase 12)
+
+Three FRESH read-only reviewers ran in parallel on the implemented head (TODO.md
+section 41): (A) architecture/retrieval semantics, (B) authorization/privacy/
+security, (C) database/API/frontend/verification. All three returned **APPROVE WITH
+FINDINGS**, **no P0**, no unresolved P1. Findings were reconciled by the Primary
+Integrator; every valid P1 and material P2 was fixed on the same branch, each with a
+regression:
+
+- **P1 (A) — the normative ranking contract over-promised exact UUID matching** (no
+  corpus matched a canonical UUID, which made the cross-Project UUID regression
+  vacuous). Fixed: a query that is one canonical UUID is now matched against the
+  canonical identity column and ranks first, inside the same authorization filter;
+  added a POSITIVE owning-Project regression and strengthened the cross-Project
+  negative. `PROJECT_SEARCH_RETRIEVAL.md` section 7 documents it.
+- **P1 (A) — the normative doc claimed `Accepted` while ADR-0018 is Proposed.**
+  Fixed: the doc is now `Proposed — pending human acceptance`, matching the ADR and
+  the Phase-11 precedent.
+- **P1 (C) — a private-only target kind stayed selected after a scope change**,
+  producing a sticky 422. Fixed: changing to `PROJECT_SHARED` clears an
+  incompatible kind; results render only for a settled request so a previous
+  scope's hits never remain mounted; new unit regression.
+- **P2 (B) — `_allowed_kinds` failed open for a raw non-enum scope value.** Fixed:
+  the scope is coerced through `SearchScope` at the service boundary and an unknown
+  scope raises a typed validation error; regression added.
+- **P2 (A/C) — explicitly selected `evidence_ids`/`decision_ids` were silently
+  dropped when `include_evidence`/`include_decisions` was false.** Fixed: an
+  explicit identity selection is honored unconditionally; regression added.
+- **P2 (B) — the builder could load a foreign series skeleton when a revision was
+  linked without its owning series (a DB state no domain path produces).** Fixed:
+  the loop no longer falls back to the global table and fails closed; regression
+  added.
+- **P2 (B/C) — a revoked reference was admitted by `reference_ids`.** Fixed: the
+  selection now honours the reference's own lifecycle flag; regression added.
+- **P2 (C) — the per-corpus SQL `LIMIT` lacked the documented identity tie-break**,
+  making a tied top-N non-reproducible. Fixed: the canonical identity is the final
+  SQL `ORDER BY` key (matching the application merge key).
+- **P2 (C) — cross-backend equivalence was overstated for non-ASCII case folding.**
+  Fixed: docs/ADR/state now state the SQLite ASCII-only `lower()` limitation
+  explicitly, and PostgreSQL acceptance asserts locale folding while the SQLite test
+  documents the substrate behavior.
+- **P2 (A/C) — Decision status was not visible in a hit** (TODO.md section 28).
+  Fixed: `SearchHitRead.status` (canonical `DecisionStatus`, presentation only) is
+  returned for Decision hits and rendered as a badge.
+- **P2 (C) — `session_reference` was an undocumented taxonomy omission.** Recorded
+  explicitly as a deliberate Phase-12 omission with its reason.
+- **P2 (C) — "Open" highlight is limited to the loaded page.** Documented as
+  best-effort selection in the existing surface (no parallel detail page).
+- **P2 (A/C) — coverage gaps and cleanup**: added regressions for the Tool-level
+  `conversation` target kind, foreign/revoked hand-off ids, `target_kinds` over the
+  wire, the total-returned-text ceiling, and the revision-implied foreign-series
+  case; removed the unused frontend export.
+
+The reconciled fixes materially changed authorization/selection semantics and the
+search-query architecture, so TODO.md section 44's optional delta review applies to
+this fix delta. It is **not claimed as performed** here: this round stopped at three
+completed first-round reviews (the minimum) by explicit instruction, and the fix
+delta is currently evidenced by the full re-run of every machine gate plus the new
+mutation-sensitive regressions listed above. The delta review remains available
+within the 3..5 reviewer budget for a later round or the human reviewer; no
+unperformed review is recorded as done.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

@@ -1653,3 +1653,19 @@ def test_phase12_postgres_cross_project_non_leakage(pg_session: Session) -> None
             pg_session, other_actor, other_project.id, query=query
         )
         assert leaked.hits == []
+
+
+def test_phase12_postgres_unicode_case_folding(pg_session: Session) -> None:
+    """PostgreSQL folds case per its locale, so an uppercase-accented query finds
+    the row. (SQLite folds ASCII only — a documented substrate difference; the
+    authorization/target-kind/bound contract is identical.)"""
+    from revolab import search as search_service
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Unicode {tag}")
+    series = services.create_object(pg_session, actor, project.id, "protein", f"Caf\u00e9 kinase {tag}")
+
+    result = search_service.search(pg_session, actor, project.id, query=f"CAF\u00c9 KINASE {tag}")
+
+    assert series in {hit.target_id for hit in result.hits}

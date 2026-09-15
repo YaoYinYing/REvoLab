@@ -1,6 +1,5 @@
 import type { ContextSelectionCreate } from '../api/backend'
 import type { SearchHitRead, SearchTargetKind } from '../api/types'
-import { SEARCH_TARGET_KINDS } from '../contracts/enums'
 
 /** The canonical selection body type without the route's nullable wrapper. */
 type Selection = NonNullable<ContextSelectionCreate>
@@ -97,6 +96,3 @@ export function targetKindLabel(kind: SearchTargetKind): string {
       return kind
   }
 }
-
-/** The closed, generated target-kind list in canonical order. */
-export const SEARCH_TARGET_KIND_ORDER: readonly SearchTargetKind[] = SEARCH_TARGET_KINDS

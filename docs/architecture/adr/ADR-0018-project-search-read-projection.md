@@ -96,11 +96,13 @@ selectable into shared Agent context. There is no "all users' conversations" sco
 
 ### PostgreSQL is acceptance truth; no derived index in this phase
 
-Matching is one deterministic parameterized case-insensitive token-substring
-predicate evaluated identically by PostgreSQL and SQLite, so the SQLite development
-substrate keeps the same semantic contract while PostgreSQL adds native
-`to_tsvector`/`ts_rank` (configuration `simple`, language neutral) as an ordering
-signal. Every corpus filters, authorizes, ranks, and caps inside one bounded SQL
+Matching is one deterministic parameterized token-substring predicate. PostgreSQL
+and SQLite share the same semantic contract (authorization, target classes, bounds,
+SearchHit shape); case folding is the database's `lower()`, so PostgreSQL folds per
+its locale while SQLite folds ASCII only (an accepted substrate limitation).
+PostgreSQL adds native `to_tsvector`/`ts_rank` (configuration `simple`, language
+neutral) as an ordering signal, and an exact canonical UUID is matched against the
+identity column under the same authorization filter. Every corpus filters, authorizes, ranks, and caps inside one bounded SQL
 statement; the Project is never materialized in Python. Phase 12 adds no migration:
 a persisted search index would be a second derived representation requiring its own
 freshness/authorization ADR.

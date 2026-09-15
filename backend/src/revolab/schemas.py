@@ -65,8 +65,12 @@ MAX_SEARCH_TOKENS = 8
 MAX_SEARCH_TOKEN_CHARS = 64
 MAX_SEARCH_LIMIT = 50
 DEFAULT_SEARCH_LIMIT = 20
+MAX_SEARCH_TITLE_CHARS = 200
 MAX_SEARCH_SNIPPET_CHARS = 240
 MAX_SEARCH_TARGET_KINDS = 9
+# Derived ceiling on ALL text one search may return (title + snippet per hit).
+# It is an explicit bound, not an implicit consequence of the per-field caps.
+MAX_SEARCH_TOTAL_TEXT_CHARS = MAX_SEARCH_LIMIT * (MAX_SEARCH_TITLE_CHARS + MAX_SEARCH_SNIPPET_CHARS)
 
 # ---------------------------------------------------------------------------
 # Identity / Project
@@ -777,6 +781,10 @@ class SearchHitRead(BaseModel):
     snippet: str | None = None
     matched_field: SearchMatchedField | None = None
     private: bool = False
+    # Lifecycle presentation for a Decision hit (draft vs committed). It is the
+    # canonical Decision status, never a search-relevance or confidence value;
+    # other target kinds leave it null.
+    status: DecisionStatus | None = None
 
 
 class ProjectSearchResultsRead(BaseModel):

@@ -4262,6 +4262,16 @@
             ],
             "title": "Snippet"
           },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecisionStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "target_id": {
             "format": "uuid",
             "title": "Target Id",

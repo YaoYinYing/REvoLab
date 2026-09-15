@@ -74,6 +74,7 @@ from revolab.domain.identity import readable_membership
 from revolab.enums import (
     MY_CONVERSATION_TARGET_KINDS,
     PROJECT_SHARED_TARGET_KINDS,
+    DecisionStatus,
     SearchMatchedField,
     SearchScope,
     SearchTargetKind,
@@ -102,6 +103,7 @@ from revolab.schemas import (
     MAX_SEARCH_QUERY_CHARS,
     MAX_SEARCH_SNIPPET_CHARS,
     MAX_SEARCH_TARGET_KINDS,
+    MAX_SEARCH_TITLE_CHARS,
     MAX_SEARCH_TOKEN_CHARS,
     MAX_SEARCH_TOKENS,
     ProjectSearchResultsRead,
@@ -110,7 +112,7 @@ from revolab.schemas import (
 
 # Titles are bounded presentation data: a canonical title can legitimately be up
 # to 500 chars (literature) and must not blow up the result envelope.
-_TITLE_CHARS = 200
+_TITLE_CHARS = MAX_SEARCH_TITLE_CHARS
 # Characters that can never appear in a bounded plain-text snippet: C0/C1 control
 # codes (including NUL and escape). Everything else — including `<`/`>`/`&` and
 # Markdown markers — is preserved verbatim as INERT text.
@@ -126,6 +128,10 @@ class _Query:
     tokens: tuple[str, ...]
     patterns: tuple[str, ...]
     prefix_pattern: str
+    # The canonical UUID this query IS, when the whole query is one. It is matched
+    # against the canonical identity column only, inside the same authorization
+    # filter, so TODO.md section 15's exact-UUID vector is real and still safe.
+    uuid: UUID | None = None
 
     @property
     def is_postgres_rankable(self) -> bool:
@@ -144,6 +150,7 @@ class _Candidate:
     rank: int
     text_rank: float
     created_at: datetime | None
+    status: DecisionStatus | None = None
 
     @property
     def sort_key(self) -> tuple[int, float, float, str, str]:
@@ -185,9 +192,16 @@ def search(
     if project is None or project.deleted_at is not None:
         raise AuthorizationError("project is not active")
 
+    # Coerce the scope through its owning enum: a raw string that merely equals an
+    # enum VALUE must never fall through to a wider corpus set.
+    try:
+        effective_scope = scope if isinstance(scope, SearchScope) else SearchScope(scope)
+    except ValueError as exc:
+        raise ValidationError(f"unknown search scope {scope!r}") from exc
+
     prepared = _prepare_query(query)
     bounded_limit = _bounded_limit(limit)
-    kinds = _resolve_kinds(scope, target_kinds)
+    kinds = _resolve_kinds(effective_scope, target_kinds)
     postgres = session.get_bind().dialect.name == "postgresql"
 
     candidates: list[_Candidate] = []
@@ -205,7 +219,7 @@ def search(
     return ProjectSearchResultsRead(
         project_id=project_id,
         query=prepared.raw,
-        scope=scope,
+        scope=effective_scope,
         hits=hits,
         truncated=len(candidates) > bounded_limit,
     )
@@ -288,7 +302,24 @@ def _prepare_query(query: str) -> _Query:
         tokens=tokens,
         patterns=tuple(_like_contains(token) for token in tokens),
         prefix_pattern=_like_prefix(lower),
+        uuid=_uuid_probe(raw),
     )
+
+
+def _uuid_probe(raw: str) -> UUID | None:
+    """The canonical UUID this query IS, if the whole query is one.
+
+    Hyphens/braces are accepted (canonical textual forms). An exact-UUID query is
+    matched against the canonical identity column only, under the same corpus
+    authorization filter — it never widens visibility.
+    """
+    compact = raw.strip().strip("{}").replace("-", "").lower()
+    if len(compact) != 32 or any(character not in "0123456789abcdef" for character in compact):
+        return None
+    try:
+        return UUID(compact)
+    except ValueError:
+        return None
 
 
 # A token is a maximal run of Unicode word characters (letters/digits/underscore).
@@ -345,11 +376,19 @@ def _resolve_kinds(
 
 
 def _allowed_kinds(scope: SearchScope) -> frozenset[SearchTargetKind]:
-    if scope is SearchScope.PROJECT_SHARED:
+    """The closed kind set of one scope. Anything but the two named scopes fails
+    closed — an unrecognized scope never widens to "all kinds"."""
+    try:
+        effective = scope if isinstance(scope, SearchScope) else SearchScope(scope)
+    except ValueError as exc:
+        raise ValidationError(f"unknown search scope {scope!r}") from exc
+    if effective is SearchScope.PROJECT_SHARED:
         return PROJECT_SHARED_TARGET_KINDS
-    if scope is SearchScope.MY_CONVERSATIONS:
+    if effective is SearchScope.MY_CONVERSATIONS:
         return MY_CONVERSATION_TARGET_KINDS
-    return frozenset(SearchTargetKind)
+    if effective is SearchScope.ALL:
+        return frozenset(SearchTargetKind)
+    raise ValidationError(f"unknown search scope {scope!r}")
 
 
 # ---------------------------------------------------------------------------
@@ -393,13 +432,31 @@ def _text_rank(
     )
 
 
-def _match_all(query: _Query, text_lower: ColumnElement[Any]) -> ColumnElement[Any]:
+def _match_all(
+    query: _Query, text_lower: ColumnElement[Any], identity_column: Any = None
+) -> ColumnElement[Any]:
     """Every query term must appear as a case-insensitive substring.
 
     AND across terms, substring within the row: this keeps multi-term queries
-    meaningful and keeps identifiers exact rather than stemmed.
+    meaningful and keeps identifiers exact rather than stemmed. An exact canonical
+    UUID is OR'd onto the lexical match, still inside the corpus authorization
+    filter, so it is never an existence oracle.
+
+    Case folding is `lower()` on the DATABASE: PostgreSQL folds per the database
+    locale (so `CAFÉ` matches `café`) while SQLite folds ASCII only. Authorization,
+    target classes and bounds are identical on both substrates; only non-ASCII case
+    folding differs (an accepted SQLite limitation, TODO.md section 13).
     """
-    return and_(*[text_lower.like(pattern, escape="\\") for pattern in query.patterns])
+    base = and_(*[text_lower.like(pattern, escape="\\") for pattern in query.patterns])
+    return _uuid_or(query, identity_column, base)
+
+
+def _uuid_or(
+    query: _Query, identity_column: Any, base: ColumnElement[Any]
+) -> ColumnElement[Any]:
+    if identity_column is None or query.uuid is None:
+        return base
+    return or_(base, identity_column == query.uuid)
 
 
 def _exists_like(
@@ -427,15 +484,18 @@ def _rank_case(
     title_lower: ColumnElement[Any],
     identity_lowers: tuple[ColumnElement[Any], ...] = (),
     identity_exact: Any = None,
+    identity_column: Any = None,
 ) -> ColumnElement[Any]:
     """A small, documented, non-ML ordering key.
 
-    0 = exact canonical/external identifier match
+    0 = exact canonical UUID / external identifier match
     1 = exact title/name match
     2 = title/name prefix match
     3 = other authorized full-text/lexical match
     """
     conditions: list[tuple[Any, int]] = []
+    if identity_column is not None and query.uuid is not None:
+        conditions.append((identity_column == query.uuid, 0))
     if identity_exact is not None:
         conditions.append((identity_exact, 0))
     conditions.extend((identity == query.lower, 0) for identity in identity_lowers)
@@ -450,8 +510,17 @@ def _rows(
     return list(session.execute(statement.limit(limit)))
 
 
-def _ordered(statement: Any, rank: ColumnElement[Any], text_rank: ColumnElement[Any], tie: Any) -> Any:
-    return statement.order_by(rank.asc(), text_rank.desc(), tie.desc())
+def _ordered(
+    statement: Any,
+    rank: ColumnElement[Any],
+    text_rank: ColumnElement[Any],
+    tie: Any,
+    identity: Any,
+) -> Any:
+    """Deterministic per-corpus ordering: the canonical identity is the FINAL
+    tie-break, so the SQL `LIMIT`ed top-N is reproducible (the application merge
+    key uses the same last resort)."""
+    return statement.order_by(rank.asc(), text_rank.desc(), tie.desc(), identity.asc())
 
 
 def _created(value: Any) -> datetime | None:
@@ -503,6 +572,7 @@ def _series_corpus(
             for pattern in query.patterns
         ]
     )
+    match = _uuid_or(query, series.series_id, match)
     ext_exact = exists(
         select(literal(1))
         .select_from(ext)
@@ -527,6 +597,7 @@ def _series_corpus(
         rank,
         text_rank,
         series.created_at,
+        series.series_id,
     )
     return [
         _Candidate(
@@ -553,7 +624,7 @@ def _evidence_corpus(
     evidence = Evidence
     text_lower = _lower_text(evidence.label, evidence.interpretation, evidence.scope)
     label_lower = func.lower(func.coalesce(evidence.label, evidence.interpretation, evidence.kind))
-    rank = _rank_case(query, label_lower)
+    rank = _rank_case(query, label_lower, identity_column=evidence.id)
     text_rank = _text_rank(
         postgres, query.raw, _text_expr(evidence.label, evidence.interpretation, evidence.scope)
     )
@@ -571,11 +642,12 @@ def _evidence_corpus(
         .where(
             evidence.project_id == project_id,
             evidence.archived_at.is_(None),
-            _match_all(query, text_lower),
+            _match_all(query, text_lower, evidence.id),
         ),
         rank,
         text_rank,
         evidence.created_at,
+        evidence.id,
     )
     candidates: list[_Candidate] = []
     for row in _rows(session, statement, limit):
@@ -606,7 +678,7 @@ def _decision_corpus(
     next_actions = cast(decision.next_actions, String)
     text_lower = _lower_text(decision.title, decision.statement, next_actions)
     title_lower = func.lower(decision.title)
-    rank = _rank_case(query, title_lower)
+    rank = _rank_case(query, title_lower, identity_column=decision.id)
     text_rank = _text_rank(
         postgres, query.raw, _text_expr(decision.title, decision.statement, next_actions)
     )
@@ -624,11 +696,12 @@ def _decision_corpus(
         .where(
             decision.project_id == project_id,
             decision.archived_at.is_(None),
-            _match_all(query, text_lower),
+            _match_all(query, text_lower, decision.id),
         ),
         rank,
         text_rank,
         decision.created_at,
+        decision.id,
     )
     return [
         _Candidate(
@@ -644,6 +717,7 @@ def _decision_corpus(
             rank=row[5],
             text_rank=float(row[6] or 0.0),
             created_at=_created(row[7]),
+            status=DecisionStatus(row[4]),
         )
         for row in _rows(session, statement, limit)
     ]
@@ -662,7 +736,7 @@ def _note_corpus(
     )
     text_lower = _lower_text(note.title, revision.body)
     title_lower = func.lower(note.title)
-    rank = _rank_case(query, title_lower)
+    rank = _rank_case(query, title_lower, identity_column=note.id)
     text_rank = _text_rank(postgres, query.raw, _text_expr(note.title, revision.body))
     statement = _ordered(
         select(
@@ -680,11 +754,12 @@ def _note_corpus(
         .where(
             note.project_id == project_id,
             note.archived_at.is_(None),
-            _match_all(query, text_lower),
+            _match_all(query, text_lower, note.id),
         ),
         rank,
         text_rank,
         note.updated_at,
+        note.id,
     )
     return [
         _Candidate(
@@ -715,7 +790,7 @@ def _run_corpus(
     text_lower = _lower_text(run.authority, run.native_id, run.task_type)
     identity_lowers = (func.lower(run.native_id), func.lower(compound))
     title_lower = func.lower(compound)
-    rank = _rank_case(query, title_lower, identity_lowers)
+    rank = _rank_case(query, title_lower, identity_lowers, identity_column=run.run_id)
     text_rank = _text_rank(postgres, query.raw, _text_expr(run.authority, run.native_id, run.task_type))
     statement = _ordered(
         select(
@@ -731,11 +806,12 @@ def _run_corpus(
         .where(
             link.project_id == project_id,
             run.revoked_at.is_(None),
-            _match_all(query, text_lower),
+            _match_all(query, text_lower, run.run_id),
         ),
         rank,
         text_rank,
         run.created_at,
+        run.run_id,
     )
     return [
         _Candidate(
@@ -774,7 +850,7 @@ def _artifact_corpus(
         func.lower(artifact.checksum),
     )
     title_lower = func.lower(compound)
-    rank = _rank_case(query, title_lower, identity_lowers)
+    rank = _rank_case(query, title_lower, identity_lowers, identity_column=artifact.artifact_id)
     text_rank = _text_rank(
         postgres, query.raw, _text_expr(artifact.authority, artifact.native_id, artifact.content_type)
     )
@@ -794,11 +870,12 @@ def _artifact_corpus(
         .where(
             link.project_id == project_id,
             artifact.revoked_at.is_(None),
-            _match_all(query, text_lower),
+            _match_all(query, text_lower, artifact.artifact_id),
         ),
         rank,
         text_rank,
         artifact.created_at,
+        artifact.artifact_id,
     )
     candidates: list[_Candidate] = []
     for row in _rows(session, statement, limit):
@@ -831,7 +908,7 @@ def _literature_corpus(
     text_lower = _lower_text(literature.authority, literature.native_id, literature.title)
     identity_lowers = (func.lower(literature.native_id), func.lower(compound))
     title_lower = func.lower(func.coalesce(literature.title, compound))
-    rank = _rank_case(query, title_lower, identity_lowers)
+    rank = _rank_case(query, title_lower, identity_lowers, identity_column=literature.literature_id)
     text_rank = _text_rank(
         postgres, query.raw, _text_expr(literature.authority, literature.native_id, literature.title)
     )
@@ -846,10 +923,11 @@ def _literature_corpus(
             literature.created_at,
         )
         .join(link, link.resource_id == literature.literature_id)
-        .where(link.project_id == project_id, _match_all(query, text_lower)),
+        .where(link.project_id == project_id, _match_all(query, text_lower, literature.literature_id)),
         rank,
         text_rank,
         literature.created_at,
+        literature.literature_id,
     )
     return [
         _Candidate(
@@ -878,7 +956,7 @@ def _external_corpus(
     compound = identity.authority + literal(":") + identity.native_id
     text_lower = _lower_text(identity.authority, identity.native_id, external.checksum)
     identity_lowers = (func.lower(identity.native_id), func.lower(compound))
-    rank = _rank_case(query, func.lower(compound), identity_lowers)
+    rank = _rank_case(query, func.lower(compound), identity_lowers, identity_column=external.external_reference_id)
     text_rank = _text_rank(
         postgres, query.raw, _text_expr(identity.authority, identity.native_id, external.checksum)
     )
@@ -895,10 +973,11 @@ def _external_corpus(
         .select_from(external)
         .join(identity, identity.external_identity_id == external.external_identity_id)
         .join(link, link.resource_id == external.external_reference_id)
-        .where(link.project_id == project_id, _match_all(query, text_lower)),
+        .where(link.project_id == project_id, _match_all(query, text_lower, external.external_reference_id)),
         rank,
         text_rank,
         external.created_at,
+        external.external_reference_id,
     )
     return [
         _Candidate(
@@ -945,6 +1024,7 @@ def _conversation_corpus(
             for pattern in query.patterns
         ]
     )
+    match = _uuid_or(query, conversation.id, match)
     first_message: ScalarSelect[Any] = (
         select(message.content)
         .where(message.conversation_id == conversation.id)
@@ -953,7 +1033,7 @@ def _conversation_corpus(
         .limit(1)
         .scalar_subquery()
     )
-    rank = _rank_case(query, title_lower)
+    rank = _rank_case(query, title_lower, identity_column=conversation.id)
     text_rank = _text_rank(postgres, query.raw, _text_expr(conversation.title))
     statement = _ordered(
         select(
@@ -973,6 +1053,7 @@ def _conversation_corpus(
         rank,
         text_rank,
         conversation.updated_at,
+        conversation.id,
     )
     return [
         _Candidate(
@@ -1057,6 +1138,7 @@ def _to_hit(candidate: _Candidate, query: _Query) -> SearchHitRead:
         snippet=_snippet(candidate, query),
         matched_field=_matched_field(candidate, query),
         private=candidate.private,
+        status=candidate.status,
     )
 
 

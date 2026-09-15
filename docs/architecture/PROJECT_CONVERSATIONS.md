@@ -215,6 +215,13 @@ conversations, conversation search, background Agents, recursive Agents, Agent
 subagents, workflow engines, generic approval workflow, or remote provider Agent
 execution. Remote-provider Agent execution remains a separately-phased concern.
 
+**Phase-12 update:** the human workspace may now lexically search the calling
+Actor's OWN conversations in one Project (`PROJECT_SEARCH_RETRIEVAL.md`). This does
+not change any boundary above: conversation hits are Actor × Project scoped, are
+never shared, are never visible to another member, are labelled private working
+memory, and are never reachable through the Agent `project.search` Tool. There is
+still no cross-Actor, cross-Project, semantic, or Agent-facing conversation search.
+
 ## Conversation → Note boundary
 
 Phase 10 adds **Project Notes** (`PROJECT_NOTEBOOK.md`): Project-shared working

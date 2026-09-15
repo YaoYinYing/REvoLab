@@ -160,4 +160,67 @@ describe('Search view (Phase 12)', () => {
       screen.getByText(/This scope includes MY private conversation history/),
     ).toBeInTheDocument()
   })
+
+  it('sends the selected target kind and drops a private-only kind on scope change', async () => {
+    const user = userEvent.setup()
+    render(
+      <SearchView
+        actorId="actor-1"
+        projectId="project-1"
+        onOpenHit={vi.fn()}
+        onAddToAgentContext={vi.fn()}
+      />,
+    )
+
+    await user.type(screen.getByLabelText('Search project context'), 'positioning')
+    await user.selectOptions(screen.getByLabelText('Search target kind'), 'evidence')
+    await user.click(screen.getByRole('button', { name: /Search/ }))
+    expect(mockedSearch).toHaveBeenLastCalledWith('actor-1', 'project-1', {
+      q: 'positioning',
+      scope: 'project_shared',
+      target_kinds: ['evidence'],
+      limit: 20,
+    })
+
+    // Switching to the private scope and back must never leave a private-only
+    // kind selected under the shared scope (the backend would reject it).
+    await user.selectOptions(screen.getByLabelText('Search scope'), 'my_conversations')
+    await user.selectOptions(screen.getByLabelText('Search target kind'), 'conversation')
+    await user.selectOptions(screen.getByLabelText('Search scope'), 'project_shared')
+    await user.click(screen.getByRole('button', { name: /Search/ }))
+    expect(mockedSearch).toHaveBeenLastCalledWith('actor-1', 'project-1', {
+      q: 'positioning',
+      scope: 'project_shared',
+      limit: 20,
+    })
+  })
+
+  it('renders the canonical Decision status on a Decision hit', () => {
+    mockedSearch.mockReturnValue({
+      data: results([
+        {
+          target_kind: 'decision',
+          target_id: '33333333-3333-4333-8333-333333333333',
+          title: 'A draft conclusion',
+          snippet: 'not committed yet',
+          matched_field: 'title',
+          private: false,
+          status: 'draft',
+        },
+      ]),
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    })
+    render(
+      <SearchView
+        actorId="actor-1"
+        projectId="project-1"
+        onOpenHit={vi.fn()}
+        onAddToAgentContext={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('draft')).toBeInTheDocument()
+  })
 })

@@ -934,3 +934,227 @@ def test_search_api_never_searches_another_actors_conversation(client):
     ).json()
     assert [hit["target_kind"] for hit in owner_view["hits"]] == ["conversation"]
     assert owner_view["hits"][0]["private"] is True
+
+
+# ---------------------------------------------------------------------------
+# Final-review regressions (Phase 12)
+# ---------------------------------------------------------------------------
+
+
+def test_owning_project_finds_global_resource_by_exact_uuid(session):
+    owner_a = _actor(session)
+    owner_b = _actor(session)
+    project_a = _project(session, owner_a, "A")
+    project_b = _project(session, owner_b, "B")
+    series = _object(session, owner_a, project_a, name="A-only kinase")
+    run = services.create_run_reference(
+        session, owner_a, project_a.id, "revocompute", "run-uuid", task_type="folding"
+    )
+
+    # An exact canonical UUID IS a search term in the owning Project...
+    assert [hit.target_id for hit in _search(session, owner_a, project_a, str(series)).hits] == [
+        series
+    ]
+    assert _search(session, owner_a, project_a, str(run.run_id)).hits[0].target_id == run.run_id
+    # ...and still resolves to nothing in a Project that does not link it.
+    assert _search(session, owner_b, project_b, str(series)).hits == []
+    assert _search(session, owner_b, project_b, str(run.run_id)).hits == []
+
+
+def test_unknown_scope_value_fails_closed(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    _conversation(session, actor, project, title="Private", message="secret phrase")
+
+    # A raw string equal to an enum VALUE is coerced to that scope, never widened
+    # to "all kinds": the private conversation corpus stays unreachable.
+    coerced = search_service.search(session, actor, project.id, query="secret", scope="project_shared")  # type: ignore[arg-type]
+    assert coerced.hits == []
+    # An unknown scope fails closed instead of defaulting to the widest set.
+    with pytest.raises(ValidationError):
+        search_service.search(session, actor, project.id, query="secret", scope="nope")  # type: ignore[arg-type]
+
+
+def test_explicit_selection_is_honored_regardless_of_include_flags(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    series = _object(session, actor, project, name="Kinase")
+    evidence = _evidence(session, actor, project, series, label="declared evidence")
+    decision = _decision(
+        session, actor, project, title="declared decision", statement="declared statement"
+    )
+
+    context = build_context(
+        session,
+        actor,
+        project.id,
+        _registry(),
+        ContextSelectionCreate(
+            evidence_ids=[evidence.id],
+            decision_ids=[decision.id],
+            include_evidence=False,
+            include_decisions=False,
+        ),
+    )
+
+    assert [ref.evidence_id for ref in context.evidence] == [evidence.id]
+    assert [ref.decision_id for ref in context.decisions] == [decision.id]
+
+
+def test_revision_implied_foreign_series_fails_closed(session):
+    from revolab.domain import persistence
+
+    owner_a = _actor(session)
+    owner_b = _actor(session)
+    project_a = _project(session, owner_a, "A")
+    project_b = _project(session, owner_b, "B")
+    series = _object(session, owner_a, project_a, name="Foreign series")
+    revision_id = _revision_id(session, series)
+    # A DB state a domain path never produces (revision linked without its owning
+    # series): the projection must fail closed rather than load a foreign series.
+    persistence.link(session, project_b.id, revision_id)
+    session.commit()
+
+    with pytest.raises(AuthorizationError):
+        build_context(
+            session,
+            owner_b,
+            project_b.id,
+            _registry(),
+            ContextSelectionCreate(revision_ids=[revision_id]),
+        )
+
+
+def test_handoff_rejects_foreign_decision_and_revoked_reference(session):
+    owner_a = _actor(session)
+    owner_b = _actor(session)
+    project_a = _project(session, owner_a, "A")
+    project_b = _project(session, owner_b, "B")
+    decision = _decision(
+        session, owner_a, project_a, title="A decision", statement="A statement"
+    )
+    run = services.create_run_reference(
+        session, owner_a, project_a.id, "revocompute", "run-revoked", task_type="folding"
+    )
+
+    with pytest.raises(AuthorizationError):
+        build_context(
+            session,
+            owner_b,
+            project_b.id,
+            _registry(),
+            ContextSelectionCreate(decision_ids=[decision.id]),
+        )
+
+    run.revoked_at = datetime.now(UTC)
+    session.commit()
+    # A revoked reference is no longer visible through the Project's read lens.
+    with pytest.raises(AuthorizationError):
+        build_context(
+            session,
+            owner_a,
+            project_a.id,
+            _registry(),
+            ContextSelectionCreate(reference_ids=[run.run_id]),
+        )
+
+
+def test_agent_search_tool_rejects_conversation_target_kind(session, tmp_path):
+    actor = _actor(session)
+    project = _project(session, actor)
+    _conversation(session, actor, project, title="Private", message="secret phrase")
+
+    runtime = LocalToolRuntime(build_default_registry())
+    ctx = InvocationContext(
+        session=session,
+        registry=_registry(),
+        secret_store=InMemorySecretStore(),
+        content_store=ContentStore(tmp_path),
+        actor_id=actor,
+        project_id=project.id,
+    )
+    with pytest.raises(ValidationError):
+        runtime.invoke(
+            ctx,
+            ToolInvocationCreate(
+                tool_id="project.search",
+                input={"query": "secret", "target_kinds": ["conversation"]},
+            ),
+        )
+
+
+def test_total_returned_text_is_bounded(session):
+    from revolab.schemas import MAX_SEARCH_TOTAL_TEXT_CHARS
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    for index in range(30):
+        _decision(
+            session,
+            actor,
+            project,
+            title=f"Bounded text {index:02d} " + "t" * 150,
+            statement="bounded " + "x" * 500,
+        )
+
+    result = _search(session, actor, project, "bounded", limit=MAX_SEARCH_LIMIT)
+
+    total = sum(len(hit.title) + len(hit.snippet or "") for hit in result.hits)
+    assert total <= MAX_SEARCH_TOTAL_TEXT_CHARS
+
+
+def test_case_folding_matches_ascii_case_insensitively_on_sqlite(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    series = _object(session, actor, project, name="Thermostable Kinase")
+
+    assert [hit.target_id for hit in _search(session, actor, project, "THERMOSTABLE").hits] == [
+        series
+    ]
+    # SQLite folds ASCII only: a non-ASCII uppercase query is a documented
+    # substrate limitation (PostgreSQL folds per its locale — see the PostgreSQL
+    # acceptance test). The catalog itself is found by its exact character.
+    accented = _object(session, actor, project, name="Caf\u00e9 kinase")
+    assert [hit.target_id for hit in _search(session, actor, project, "caf\u00e9").hits] == [
+        accented
+    ]
+
+
+def test_search_api_target_kinds_filter_over_the_wire(client):
+    actor = client.post("/api/actors").json()["actor_id"]
+    project = client.post("/api/projects", json={"name": "P"}, headers=_headers(actor)).json()
+    client.post(
+        f"/api/projects/{project['id']}/objects",
+        json={"object_type": "protein", "name": "Wire kinase", "description": None, "payload": {}},
+        headers=_headers(actor),
+    )
+    body = {"kind": "experimental", "target_kind": "scientific_object_revision"}
+    series_id = client.get(
+        f"/api/projects/{project['id']}/objects", headers=_headers(actor)
+    ).json()[0]["series_id"]
+    detail = client.get(
+        f"/api/projects/{project['id']}/objects/{series_id}", headers=_headers(actor)
+    ).json()
+    revision_id = detail["visible_revisions"][0]["revision_id"]
+    client.post(
+        f"/api/projects/{project['id']}/evidence",
+        json={**body, "label": "Wire kinase evidence", "target_id": revision_id},
+        headers=_headers(actor),
+    )
+
+    # Repeated query params (the generated client's array serialization) filter.
+    filtered = client.get(
+        f"/api/projects/{project['id']}/search",
+        params=[("q", "wire kinase"), ("target_kinds", "evidence")],
+        headers=_headers(actor),
+    )
+    assert filtered.status_code == 200
+    assert {hit["target_kind"] for hit in filtered.json()["hits"]} == {"evidence"}
+
+    # The conversation kind is not available in the Project-shared scope.
+    rejected = client.get(
+        f"/api/projects/{project['id']}/search",
+        params=[("q", "wire"), ("scope", "project_shared"), ("target_kinds", "conversation")],
+        headers=_headers(actor),
+    )
+    assert rejected.status_code == 422

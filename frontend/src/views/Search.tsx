@@ -6,6 +6,7 @@ import type { SearchHitRead, SearchScope, SearchTargetKind } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Field, Loading } from '../components/ui'
 import {
+  DECISION_STATUS_COMMITTED,
   SEARCH_SCOPE_ALL,
   SEARCH_SCOPE_MY_CONVERSATIONS,
   SEARCH_SCOPE_PROJECT_SHARED,
@@ -99,8 +100,13 @@ export function SearchView({
 
   function changeScope(next: SearchScope) {
     setScope(next)
-    // A scope change invalidates the previous result set: never show a private
-    // or shared hit under the other scope's heading.
+    // A scope change invalidates the previous result set AND a target kind that
+    // the new scope does not allow (the conversation kind is private-only): never
+    // show a private/shared hit under the other scope, and never send a request
+    // that the backend must reject.
+    if (next === SEARCH_SCOPE_PROJECT_SHARED && kind === 'conversation') {
+      setKind('')
+    }
     setRequest(null)
   }
 
@@ -108,6 +114,9 @@ export function SearchView({
     scope === SEARCH_SCOPE_MY_CONVERSATIONS || scope === SEARCH_SCOPE_ALL
   const hits = data?.hits ?? []
   const total = hits.length
+  // Results render only for a settled request: a previous scope's hits must never
+  // stay mounted under the new scope's heading while the new query is in flight.
+  const showResults = !loading && data !== null
 
   return (
     <div className="view">
@@ -181,11 +190,11 @@ export function SearchView({
 
         {loading ? <Loading label="Searching…" /> : null}
 
-        {data && total === 0 && !loading ? (
+        {showResults && total === 0 ? (
           <Empty label="No authorized results for this query." />
         ) : null}
 
-        {data && total > 0 ? (
+        {showResults && total > 0 ? (
           <div className="search-results">
             <div className="search-summary">
               {total} result{total === 1 ? '' : 's'}
@@ -205,6 +214,13 @@ export function SearchView({
                         <div className="list-row-head">
                           <strong>{hit.title}</strong>
                           {hit.private ? <Badge tone="warn">private working memory</Badge> : null}
+                          {hit.status ? (
+                            <Badge
+                              tone={hit.status === DECISION_STATUS_COMMITTED ? 'good' : 'warn'}
+                            >
+                              {hit.status}
+                            </Badge>
+                          ) : null}
                           {hit.matched_field ? <Badge>{hit.matched_field}</Badge> : null}
                         </div>
                         {hit.snippet ? <p className="search-snippet">{hit.snippet}</p> : null}

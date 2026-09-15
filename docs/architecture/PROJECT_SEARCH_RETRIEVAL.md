@@ -1,8 +1,10 @@
 # Project Search & Bounded Context Retrieval
 
-> **Status: Accepted** (Phase 12; normative owner of the search/retrieval
-> sub-boundary). Related ADR: `adr/ADR-0018-project-search-read-projection.md`
-> (**Proposed — pending human acceptance**).
+> **Status: Proposed — pending human acceptance** (Phase 12; normative owner of the
+> search/retrieval sub-boundary). Related ADR:
+> `adr/ADR-0018-project-search-read-projection.md` (**Proposed — pending human
+> acceptance**). Both are promoted only by explicit human acceptance at PR review;
+> a green test suite does not promote them.
 >
 > This document is normative for the Project search sub-boundary. Search is an
 > **application/query sub-boundary consumed by Presentation and Agent Context** —
@@ -146,6 +148,14 @@ into shared Agent context.
 is deliberately **not** `ResourceKind` (it also names Project-local, non-global
 targets) and `ResourceKind` is not overloaded for search convenience.
 
+**Deliberate Phase-12 omission:** `session_reference` is a real, Project-linked,
+navigable reference kind (`GET /resources` returns it and Runs & Artifacts renders
+it as "Sessions") but is **not** a Phase-12 search target. It has no required
+Phase-12 retrieval use case, and TODO.md section 20 only authorizes kinds actually
+returned in this phase; adding it would be speculative vocabulary. It is recorded
+here rather than silently absent and can be added later behind the SAME
+authorized-query -> SearchHit contract.
+
 ---
 
 ## 5. Authorization before disclosure
@@ -208,9 +218,15 @@ query terms              8
 single term length       64 characters
 requested target kinds   the closed target-kind set
 result limit             1..50 (default 20 for the workspace, 10 for the Tool)
+title length             200 characters
 snippet length           240 characters
+total returned text      at most 22000 characters (limit x (title + snippet))
 per-corpus candidates    limit + 1, ranked and bounded in SQL
 ```
+
+An exact canonical UUID (hyphenated, compact, or braced) is itself a valid one-term
+query: it is matched against the canonical identity column and ranks first, still
+only inside the corpus's authorization filter, so it is never an existence oracle.
 
 `raw SQL`, PostgreSQL `tsquery` syntax, regex, filesystem globs, URLs, Python, and
 shell are never accepted as query language. All database interaction is
@@ -221,15 +237,19 @@ parameterized.
 ## 8. Backends: PostgreSQL is acceptance truth
 
 PostgreSQL is the search acceptance truth. Matching itself is one deterministic
-case-insensitive token-substring predicate that both backends evaluate
-identically, so SQLite development keeps the same **semantic** contract (same
-authorization, same target classes, same bounds). PostgreSQL additionally
+parameterized token-substring predicate. Both backends share the same **semantic**
+contract (authorization, target classes, bounds, SearchHit shape), but case folding
+is the database's `lower()`: PostgreSQL folds per the database locale (so `CAFÉ`
+matches `café`) while SQLite folds ASCII only. That non-ASCII difference is an
+accepted SQLite substrate limitation (TODO.md section 13 allows a simpler SQLite
+fallback) and never affects authorization or bounds. PostgreSQL additionally
 contributes native `to_tsvector`/`ts_rank` (configuration `simple`, language
 neutral) as an ordering signal.
 
 ```text
 semantic contract:   identical on both backends (authorization + target classes
-                     + bounds + SearchHit shape)
+                     + bounds + SearchHit shape); non-ASCII case folding differs
+                     because it is the database's lower()
 ranking contract:    PostgreSQL is the production/acceptance truth; SQLite uses
                      the same primary keys without the native text rank
 ```
@@ -284,6 +304,17 @@ authorization is a query result, never a cached grant.
 
 Conversation hits are private working memory and are never selectable into shared
 Agent context.
+
+An explicit evidence/decision/reference selection is honored regardless of the
+`include_*` category switches (an explicit identity is a stronger declaration than a
+category toggle and is never silently dropped), and it fails closed for a stale,
+foreign, archived, revoked, or wrong-kind id.
+
+**Navigation is best-effort selection, not a second surface.** "Open" reuses the
+existing canonical view and selects/highlights the matching row when it is inside
+that view's loaded page (50 rows). A target outside the loaded page still navigates
+to the correct surface but may not be scrolled to/highlighted; no parallel detail
+page or object model is introduced to work around it.
 
 ---
 
