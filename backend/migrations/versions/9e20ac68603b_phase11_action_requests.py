@@ -39,7 +39,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['actor_id'], ['actors.actor_id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['conversation_id'], ['project_conversations.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ondelete='CASCADE'),
-    sa.ForeignKeyConstraint(['result_decision_id'], ['decisions.id'], ondelete='SET NULL'),
+    sa.ForeignKeyConstraint(['result_decision_id'], ['decisions.id'], ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['result_run_id'], ['global_resource_registry.resource_id'], ondelete='SET NULL'),
     sa.CheckConstraint("status <> 'succeeded' OR result_run_id IS NOT NULL OR result_decision_id IS NOT NULL", name='ck_action_succeeded_has_result'),
     sa.PrimaryKeyConstraint('id')

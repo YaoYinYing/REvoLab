@@ -745,8 +745,13 @@ class ActionRequest(Base, TimestampMixin):
     result_run_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("global_resource_registry.resource_id", ondelete="SET NULL"), nullable=True
     )
+    # RESTRICT (not SET NULL): a hard delete of a Decision this action names as
+    # its canonical result is refused, because nulling it would violate
+    # `ck_action_succeeded_has_result` and would silently erase the action's
+    # result. (The global-resource run reference uses SET NULL because global
+    # resources are never hard-deleted — they are only revoked.)
     result_decision_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("decisions.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("decisions.id", ondelete="RESTRICT"), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

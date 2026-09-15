@@ -64,14 +64,16 @@ def explicit_arguments_match_provider(
     A remote explicit action carries provider identity twice — in the canonical
     `tool_id` (the authority execution uses) and in the canonical input model's
     `provider_key` field (what a human reads on the authorization surface). They
-    must agree: otherwise a human would authorize the operation under a false
-    description of the external side effect. A local action has no provider identity
+    MUST agree: otherwise a human would authorize the operation under a false
+    description of the external side effect.
+
+    The check fails CLOSED: a remote action whose payload omits `provider_key` is
+    refused rather than trusted. A local action has no provider identity
     (`provider_key is None`) and is exempt.
     """
     if provider_key is None:
         return True
-    declared = arguments.get("provider_key")
-    return declared is None or declared == provider_key
+    return arguments.get("provider_key") == provider_key
 
 
 __all__ = [

@@ -50,7 +50,7 @@ from revolab import services
 from revolab.agent.conversations import owned_conversation
 from revolab.capabilities import CapabilityError, InputBinding, RunHandle
 from revolab.content_store import ContentStore
-from revolab.domain import persistence
+from revolab.domain import persistence, provenance
 from revolab.domain.errors import ConflictError, DomainError, NotFoundError, ValidationError
 from revolab.domain.identity import mutation_capable_membership, readable_membership
 from revolab.drivers import DriverRegistry
@@ -366,7 +366,7 @@ def _settle(
     reason: str | None = None,
     run_resource_id: UUID | None = None,
     decision_id: UUID | None = None,
-) -> bool:
+) -> None:
     """Write the terminal outcome of a claimed action.
 
     The one-shot claim is already durably committed, so a terminal write MUST land:
@@ -390,11 +390,17 @@ def _settle(
         )
     )
     last_error: Exception | None = None
-    for attempt in range(2):
+    for _attempt in range(2):
         try:
             result = session.execute(statement)
+            if _rowcount(result) != 1:
+                # Unreachable with the claim protocol (only the claim winner may
+                # settle); a lost transition is surfaced rather than ignored so a
+                # silently-unsettled action can never masquerade as done.
+                session.rollback()
+                raise ConflictError("action request terminal transition was lost")
             session.commit()
-            return _rowcount(result) == 1
+            return
         except SQLAlchemyError as exc:  # a failed transaction must not strand the row
             last_error = exc
             session.rollback()
@@ -496,6 +502,47 @@ def _record_confirmed_run(
             str(exc), handle=handle, bindings=bindings
         ) from exc
     return cast(UUID, recorded["run_resource_id"])
+
+
+@dataclass(frozen=True)
+class _RecoveredRun:
+    run_id: UUID | None
+    reason: str | None = None
+
+
+def _recover_confirmed_run(
+    ctx: ActionExecution, action: ActionRequest, exc: _UnrecordedExternalSuccess
+) -> _RecoveredRun:
+    """Recover the canonical result reference for a CONFIRMED external run whose
+    first recording attempt failed.
+
+    1. Retry the canonical get-or-create recording once on a healthy transaction:
+       the provider handle is authoritative, so a partially committed attempt is
+       COMPLETED (missing links/edges) rather than duplicated.
+    2. If that also fails, read the canonical identity back: the failed attempt may
+       already have committed the RunReference (the canonical recording commits the
+       identity card before its provenance edges). The read-back is the
+       authoritative answer — never a reason string claiming nothing was recorded
+       when something was.
+
+    Returns the reference when it exists (with a bounded note when its input
+    provenance could not be completed), or `run_id=None` when the canonical
+    identity genuinely does not exist."""
+    try:
+        return _RecoveredRun(run_id=_record_confirmed_run(ctx, action, exc.handle, exc.bindings))
+    except _UnrecordedExternalSuccess:
+        ctx.session.rollback()
+    except SQLAlchemyError:
+        ctx.session.rollback()
+    existing = provenance.find_run_reference(
+        ctx.session, exc.handle.authority, exc.handle.native_id
+    )
+    if existing is None:
+        return _RecoveredRun(run_id=None)
+    return _RecoveredRun(
+        run_id=existing.run_id,
+        reason="canonical run reference recorded; input provenance could not be completed",
+    )
 
 
 def _execute_remote_compute(
@@ -609,32 +656,31 @@ def execute_action_request(
             run_resource_id = _execute_remote_compute(ctx, action, descriptor, arguments)
     except _UnrecordedExternalSuccess as exc:
         # The external side effect is CONFIRMED (we hold the provider handle), but
-        # the local canonical recording failed. Roll back first, then retry the
-        # recording once on a healthy transaction (get-or-create completes a
-        # partially committed attempt); otherwise report honest ambiguity.
+        # the local canonical recording failed. Roll back first, then RECOVER the
+        # canonical truth on a healthy transaction: retry the recording once, and
+        # fall back to reading the reference back by its provider identity (the
+        # failed attempt may already have committed it). The outcome is never
+        # reported as "nothing recorded" when something was.
         session.rollback()
-        try:
-            run_resource_id = _record_confirmed_run(
-                ctx, action, exc.handle, exc.bindings
-            )
-        except Exception:
-            run_resource_id = None
-        if run_resource_id is not None:
+        recovered = _recover_confirmed_run(ctx, action, exc)
+        if recovered.run_id is not None:
             _settle(
                 session,
                 action_request_id,
                 ActionRequestStatus.SUCCEEDED,
-                run_resource_id=run_resource_id,
+                run_resource_id=recovered.run_id,
+                reason=recovered.reason,
             )
         else:
+            session.rollback()
             _settle(
                 session,
                 action_request_id,
                 ActionRequestStatus.AMBIGUOUS,
                 reason=(
                     "the provider accepted the submission "
-                    f"({exc.handle.authority}/{exc.handle.native_id}) but the canonical "
-                    f"run reference could not be recorded: {exc}"
+                    f"({exc.handle.authority}/{exc.handle.native_id}) but no canonical "
+                    f"run reference could be recorded: {exc}"
                 ),
             )
     except (DomainError, CapabilityError) as exc:
@@ -649,13 +695,35 @@ def execute_action_request(
             reason=f"unexpected execution failure: {type(exc).__name__}",
         )
     else:
-        _settle(
-            session,
-            action_request_id,
-            ActionRequestStatus.SUCCEEDED,
-            run_resource_id=run_resource_id,
-            decision_id=decision_id,
-        )
+        if descriptor.execution_class is ToolExecutionClass.LOCAL and decision_id is None:
+            # The canonical local command reported success but named no canonical
+            # result reference. The local side effect DID happen, but `succeeded`
+            # requires a reference (durable CHECK), so ambiguity about the RESULT
+            # identity is the only honest state.
+            _settle(
+                session,
+                action_request_id,
+                ActionRequestStatus.AMBIGUOUS,
+                reason=(
+                    "the local explicit action completed but produced no canonical "
+                    "result reference"
+                ),
+            )
+        elif descriptor.execution_class is ToolExecutionClass.REMOTE and run_resource_id is None:
+            _settle(
+                session,
+                action_request_id,
+                ActionRequestStatus.AMBIGUOUS,
+                reason="the canonical run reference is unknown after a confirmed submission",
+            )
+        else:
+            _settle(
+                session,
+                action_request_id,
+                ActionRequestStatus.SUCCEEDED,
+                run_resource_id=run_resource_id,
+                decision_id=decision_id,
+            )
     session.refresh(action)
     return action
 

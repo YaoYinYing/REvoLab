@@ -221,14 +221,24 @@ After a confirmed handle, the canonical RunReference (identity card) and the
 `record_compute_run` path. Action Request stores only that stable reference — never
 REvoCompute's mutable run state, artifacts publication state or scheduler state.
 
-If the canonical recording fails after a confirmed handle, the recording is retried
-ONCE on a healthy transaction through the same get-or-create path (so a partially
-committed attempt is completed rather than duplicated). Only if that also fails does
-the action settle `ambiguous`, and then the bounded `status_reason` retains the
-confirmed provider identity (`authority/native_id`) so a human can reconcile. That
-is the ONE place an external identity appears outside a RunReference — deliberately,
-because the canonical card could not be created — and it is not authority and not
-copied mutable state.
+If the canonical recording fails after a confirmed handle, the failure path rolls
+back and then RECOVERS the canonical truth on a healthy transaction:
+
+1. the recording is retried once through the same get-or-create path, so a
+   partially committed attempt is COMPLETED (missing links/edges) rather than
+   duplicated (the external submission is never repeated);
+2. if that also fails, the canonical RunReference is read back by the confirmed
+   provider identity — the failed attempt commits the identity card before its
+   provenance edges, so it may already exist. The read-back is authoritative: the
+   action then settles `succeeded` with the REAL reference plus a bounded note that
+   its input provenance could not be completed. It is never reported as
+   "nothing was recorded" when something was.
+
+Only if no canonical identity exists does the action settle `ambiguous`, and then the
+bounded `status_reason` retains the confirmed provider identity
+(`authority/native_id`) so a human can reconcile. That is the ONE place an external
+identity appears outside a RunReference — deliberately, because the canonical card
+could not be created — and it is not authority and not copied mutable state.
 
 Failure paths roll back before writing the terminal outcome, and the terminal write
 itself tolerates a session left in a failed transaction (the one-shot claim is
@@ -237,6 +247,12 @@ side effect would be a lie). The canonical commands this path reuses own their o
 commit (`commit_decision_row`, `_persist_run_reference_trusted`), so a SAVEPOINT
 cannot wrap them; the rollback-first discipline is what prevents an uncommitted
 partial local write from being persisted by the terminal write.
+
+A terminal outcome that cannot be written at all (the DB rejects it twice) and a
+read-back of the settled row that fails after the outcome was committed both surface
+as an explicit error while the durable state stays whatever was actually committed.
+The system never converts such a case into a success, and never auto-retries the
+external call.
 
 ## 9. Authoritative surfaces
 
@@ -307,7 +323,8 @@ Phase 11 is exactly one explicit handoff boundary.
   the action in `executing`. This is reported honestly as an in-progress claim with
   its claim time; the system never auto-retries it, and a further execute request
   fails closed. It is not silently converted into success or failure. (A failure the
-  process DOES observe is always settled terminally — see §8.)
+  process DOES observe is settled terminally or surfaced as an explicit error while
+  the durable state stays whatever was actually committed — see §8.)
 - If the provider accepted a submission but the local canonical RunReference could
   not be recorded, the action is marked `ambiguous` rather than pretending either
   outcome.

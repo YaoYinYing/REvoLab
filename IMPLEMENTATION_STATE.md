@@ -1870,7 +1870,7 @@ Commands run on this branch head (2026-09-15):
 ```text
 ruff check backend                                  All checks passed
 mypy (strict, 53 source files)                      Success: no issues found
-pytest (SQLite)                                     430 passed, 17 skipped
+pytest (SQLite)                                     435 passed, 18 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
 pytest backend/tests/test_postgres_integration.py   18 passed (migrated PostgreSQL)
@@ -2019,6 +2019,43 @@ contracts reviewer returned APPROVE WITH FINDINGS, all reconciled:
 - **P2 — stale ledger wording / dead test scaffolding.** The concurrency description
   now matches the barrier-before-`_claim` implementation, and the unused
   provider-blocking hook was removed from both test doubles.
+
+### Delta review round 3 (security / failure semantics) — reconciliation
+
+The security delta reviewer returned REQUEST CHANGES on the fix delta; all findings
+were reconciled (the reviewer count stays within the 3..5 budget: 3 first-round + 2
+delta reviewers):
+
+- **P1 — the confirmed-but-unrecorded recovery could leave committed rows behind a
+  FALSE "nothing recorded" ambiguity.** `record_compute_run` commits the
+  RunReference before its per-input provenance edges, so a persistent edge failure
+  left a committed reference while the action reported `ambiguous /
+  result_run_id=NULL`, and the failed retry's pending state could be committed by
+  the terminal write. Fixed: the failure path rolls back, retries the canonical
+  recording once (get-or-create completes a partial attempt, never repeating the
+  external submission), then READS THE REFERENCE BACK by the confirmed provider
+  identity and settles `succeeded` with the real reference plus a bounded
+  provenance-incomplete note; only a genuinely absent identity settles
+  `ambiguous`. Regression
+  `test_persistent_provenance_failure_still_reports_the_real_run_reference`
+  (mutation-verified: it fails if the read-back fallback is removed) and
+  `test_no_canonical_reference_at_all_is_ambiguous_with_a_truthful_reason`.
+- **P2 — `_settle` could raise after its retry, and a local action returning no
+  result reference could strand the row.** Fixed: a local execution with no typed
+  result settles `ambiguous` with a precise reason (never `succeeded`, which the
+  durable CHECK forbids, and never a silent success), and the remote branch guards a
+  missing reference the same way.
+- **P2 — `_settle`'s "transition won" return value was dead.** The conditional
+  transition is now enforced: losing it raises a typed conflict instead of being
+  ignored.
+- **P2 — the provider-agreement predicate was fail-open when the payload omitted
+  `provider_key`.** It is now strict: a remote action's payload must name its
+  provider, and an omission fails closed.
+- **P2 — `ck_action_succeeded_has_result` was incompatible with the
+  `result_decision_id` FK's `ondelete='SET NULL'`.** The FK is now `RESTRICT`,
+  consistent with the deletion invariant (a referenced Decision is never
+  hard-deleted, so the action's canonical result is never silently nulled); the
+  global-resource run FK stays `SET NULL` because global resources are only revoked.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

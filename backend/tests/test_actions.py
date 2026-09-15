@@ -1260,3 +1260,97 @@ def test_succeeded_requires_a_canonical_result_reference(session: Session) -> No
     with pytest.raises(IntegrityError):
         session.flush()
     session.rollback()
+
+
+def test_persistent_provenance_failure_still_reports_the_real_run_reference(
+    session: Session, monkeypatch: Any
+) -> None:
+    """`record_compute_run` commits the RunReference before its provenance edges.
+    When the edges persist in failing, the canonical identity ALREADY EXISTS: the
+    action must settle `succeeded` with that real reference (plus a bounded note),
+    never `ambiguous` claiming nothing was recorded, and never left orphaned behind
+    an ambiguous action."""
+    scenario = _scenario(session)
+    action = _propose(session, scenario, f"{PROVIDER}.compute.submit", _compute_arguments(scenario))
+
+    def always_explode(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("provenance edge backend down")
+
+    monkeypatch.setattr(services, "add_consumed_input", always_explode)
+    executed = actions.execute_action_request(
+        _execution(session, scenario), scenario["actor"], scenario["project"].id, action.id
+    )
+
+    assert executed.status == ActionRequestStatus.SUCCEEDED.value
+    assert executed.result_run_id is not None
+    # The reported reference is the committed canonical card, not a fabrication.
+    run = session.get(RunReference, executed.result_run_id)
+    assert run is not None and run.native_id == "native-1"
+    assert "provenance" in (executed.status_reason or "")
+    assert scenario["state"].submit_calls == 1
+
+
+def test_no_canonical_reference_at_all_is_ambiguous_with_a_truthful_reason(
+    session: Session, monkeypatch: Any
+) -> None:
+    """When the recording failed BEFORE committing any canonical identity, the
+    action settles `ambiguous` (never `succeeded`), the reason names the provider
+    identity, and no orphaned reference exists."""
+    scenario = _scenario(session)
+    action = _propose(session, scenario, f"{PROVIDER}.compute.submit", _compute_arguments(scenario))
+
+    def never_record(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("recording unavailable")
+
+    monkeypatch.setattr(services, "record_compute_run", never_record)
+    executed = actions.execute_action_request(
+        _execution(session, scenario), scenario["actor"], scenario["project"].id, action.id
+    )
+
+    assert executed.status == ActionRequestStatus.AMBIGUOUS.value
+    assert executed.result_run_id is None
+    assert session.scalar(select(func.count()).select_from(RunReference)) == 0
+    assert f"{AUTHORITY}/native-1" in (executed.status_reason or "")
+    assert "no canonical" in (executed.status_reason or "")
+
+
+def test_local_action_without_a_result_reference_is_ambiguous(
+    session: Session, monkeypatch: Any
+) -> None:
+    """A canonical local command that returns no result reference cannot be
+    reported `succeeded` (the durable CHECK forbids it): the honest state is
+    ambiguity about the RESULT identity, not a stranded `executing` and not a
+    silent success."""
+    scenario = _scenario(session)
+    decision = _draft_decision(session, scenario)
+    action = _propose(session, scenario, "decision.commit", {"decision_id": str(decision.id)})
+
+    monkeypatch.setattr(actions, "_execute_local", lambda *args, **kwargs: None)
+    executed = actions.execute_action_request(
+        _execution(session, scenario), scenario["actor"], scenario["project"].id, action.id
+    )
+    assert executed.status == ActionRequestStatus.AMBIGUOUS.value
+    assert "no canonical result reference" in (executed.status_reason or "")
+
+
+def test_settle_surfaces_a_lost_terminal_transition(session: Session) -> None:
+    """The conditional `executing -> terminal` transition is the durability
+    contract: losing it is surfaced, never silently ignored."""
+    scenario = _scenario(session)
+    action = _propose(session, scenario, f"{PROVIDER}.compute.submit", _compute_arguments(scenario))
+    assert actions._claim(session, action.id) is True
+    actions._settle(session, action.id, ActionRequestStatus.REJECTED)
+
+    with pytest.raises(ConflictError):
+        actions._settle(session, action.id, ActionRequestStatus.REJECTED)
+
+
+def test_provider_agreement_fails_closed_when_the_payload_omits_the_provider() -> None:
+    from revolab.tools.explicit_actions import explicit_arguments_match_provider
+
+    assert explicit_arguments_match_provider(None, {}) is True  # local action
+    assert explicit_arguments_match_provider("prov", {"provider_key": "prov"}) is True
+    assert explicit_arguments_match_provider("prov", {"provider_key": "other"}) is False
+    # Fails CLOSED when a remote payload omits the provider identity entirely.
+    assert explicit_arguments_match_provider("prov", {}) is False
+    assert explicit_arguments_match_provider("prov", {"provider_key": None}) is False

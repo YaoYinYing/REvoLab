@@ -106,11 +106,16 @@ reference to the canonical `RunReference` (created by the existing Phase-4
 `record_compute_run` path, with its `consumed_as_input_by` edges). Action Request
 never duplicates scheduler/task/Runner/artifact-publication state. A confirmed
 handle whose canonical recording fails is retried once through the same
-get-or-create path; only a second failure settles `ambiguous`, retaining the bounded
+get-or-create path, and if that fails the committed RunReference is read back by the
+provider identity (the recording commits the identity card before its provenance
+edges), so a partially recorded run is reported `succeeded` with its REAL reference
+rather than orphaned behind a false "nothing recorded" ambiguity. Only when no
+canonical identity exists does the action settle `ambiguous`, retaining the bounded
 provider identity for human reconciliation. Failure paths roll back before writing
-the terminal outcome, and the terminal write tolerates a failed transaction — a
-durably claimed action can never be stranded in `executing` after a confirmed
-external side effect.
+the terminal outcome and the terminal write tolerates a failed transaction, so an
+observed failure cannot leave a durably claimed action stranded in `executing`. A
+terminal write that itself fails twice, or a post-outcome read failure, surfaces as
+an explicit error while the durable state stays whatever was actually committed.
 
 ### One canonical execution path per execution class
 
