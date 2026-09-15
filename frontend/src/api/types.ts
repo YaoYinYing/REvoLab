@@ -28,6 +28,14 @@ export type DecisionRead =
 export type ReferenceRead =
   paths['/api/projects/{project_id}/resources']['get']['responses']['200']['content']['application/json'][number]
 
+/** One canonical-target search hit (Phase 12) — a read projection, never truth. */
+export type SearchHitRead = NonNullable<
+  paths['/api/projects/{project_id}/search']['get']['responses']['200']['content']['application/json']['hits']
+>[number]
+
+export type ProjectSearchResultsRead =
+  paths['/api/projects/{project_id}/search']['get']['responses']['200']['content']['application/json']
+
 // Backend-owned enum value unions, straight from the generated contract.
 export type ObjectType = components['schemas']['ObjectType']
 export type EvidenceKind = components['schemas']['EvidenceKind']
@@ -152,3 +160,10 @@ export type ActionRequestStatus = components['schemas']['ActionRequestStatus']
 
 export type ActionRequestRead =
   paths['/api/projects/{project_id}/action-requests/{action_request_id}']['get']['responses']['200']['content']['application/json']
+
+// Phase-12 Project Search. The scope and target-kind vocabularies are
+// backend-owned generated enums (never a hand-written copy), and a hit is a
+// read projection that points back at a canonical identity.
+export type SearchScope = components['schemas']['SearchScope']
+export type SearchTargetKind = components['schemas']['SearchTargetKind']
+export type SearchMatchedField = components['schemas']['SearchMatchedField']

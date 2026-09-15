@@ -1015,6 +1015,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search Project */
+        get: operations["search_project_api_projects__project_id__search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/sessions": {
         parameters: {
             query?: never;
@@ -1608,6 +1625,10 @@ export interface components {
         ContextSelectionCreate: {
             /** Artifact Ids */
             artifact_ids?: string[] | null;
+            /** Decision Ids */
+            decision_ids?: string[] | null;
+            /** Evidence Ids */
+            evidence_ids?: string[] | null;
             /**
              * Graph Depth
              * @default 1
@@ -1682,6 +1703,8 @@ export interface components {
             note_ids?: string[] | null;
             /** Note Revision Ids */
             note_revision_ids?: string[] | null;
+            /** Reference Ids */
+            reference_ids?: string[] | null;
             /** Revision Ids */
             revision_ids?: string[] | null;
             /** Series Ids */
@@ -2701,6 +2724,29 @@ export interface components {
             visibility: components["schemas"]["ProjectVisibility"];
         };
         /**
+         * ProjectSearchResultsRead
+         * @description The bounded envelope of one Project search: ordered hits plus an explicit
+         *     truncation flag. Never paginated (top-N retrieval only) and never a
+         *     `total_count` (a count over authorized rows is itself an existence oracle).
+         */
+        ProjectSearchResultsRead: {
+            /** Hits */
+            hits?: components["schemas"]["SearchHitRead"][];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Query */
+            query: string;
+            scope: components["schemas"]["SearchScope"];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
          * ProjectVisibility
          * @enum {string}
          */
@@ -2928,6 +2974,82 @@ export interface components {
             /** Task Type */
             task_type?: string | null;
         };
+        /**
+         * SearchHitRead
+         * @description One canonical-target reference discovered by Project search (Phase 12).
+         *
+         *     A SearchHit is a READ PROJECTION: it points back at a canonical identity an
+         *     existing domain owns and carries only what is needed to identify the target,
+         *     say what matched, preview it safely, and navigate/select it. It is never
+         *     truth, never authority, never a context inclusion, and never Agent memory.
+         *
+         *     `snippet` is bounded PLAIN TEXT (no HTML, no active Markdown) copied from
+         *     current authorized canonical data; it is untrusted Project data wherever it
+         *     is rendered or returned to a model. `private` is true only for a
+         *     conversation hit and makes "this is Actor-private working memory, not shared
+         *     Project knowledge" a contract fact rather than a UI convention. There is
+         *     deliberately no numeric score: the ORDER of hits is the contract, and a
+         *     score would invite reading relevance as scientific confidence.
+         */
+        SearchHitRead: {
+            matched_field?: components["schemas"]["SearchMatchedField"] | null;
+            /**
+             * Private
+             * @default false
+             */
+            private: boolean;
+            /** Snippet */
+            snippet?: string | null;
+            /**
+             * Target Id
+             * Format: uuid
+             */
+            target_id: string;
+            target_kind: components["schemas"]["SearchTargetKind"];
+            /** Title */
+            title: string;
+        };
+        /**
+         * SearchMatchedField
+         * @description Which canonical field produced the hit's snippet (presentation metadata).
+         *
+         *     Purely descriptive: it is never a relevance score, a confidence, or an
+         *     authorization property. It lets the workspace say *why* a result matched
+         *     without inventing a second scientific vocabulary.
+         * @enum {string}
+         */
+        SearchMatchedField: "name" | "title" | "description" | "body" | "label" | "interpretation" | "scope" | "statement" | "next_action" | "identifier" | "checksum" | "type" | "message";
+        /**
+         * SearchScope
+         * @description Which authorization-scoped corpus a Project search reads (Phase 12).
+         *
+         *     `PROJECT_SHARED` is Project-shared context readable by every member through
+         *     the ordinary Project read lens. `MY_CONVERSATIONS` is the calling Actor's OWN
+         *     durable working memory (never another member's). `ALL` is the explicit union
+         *     of the two, offered only to the human workspace; there is deliberately no
+         *     "everyone's conversations" scope.
+         *
+         *     The Agent-facing `project.search` Tool never accepts a scope at all: it is
+         *     fixed to `PROJECT_SHARED`, so private working memory can never be requested
+         *     through the Agent boundary.
+         * @enum {string}
+         */
+        SearchScope: "project_shared" | "my_conversations" | "all";
+        /**
+         * SearchTargetKind
+         * @description The retrieval/presentation classifier of one SearchHit (Phase 12).
+         *
+         *     This is deliberately NOT `ResourceKind`: it also names Project-local,
+         *     non-global targets (Note, Conversation), while `ResourceKind` stays the
+         *     global-resource registry vocabulary. It is a read-projection label pointing
+         *     at a canonical identity that an EXISTING domain already owns — it grants no
+         *     ownership and creates no second scientific model.
+         *
+         *     Only kinds that actually have searchable canonical fields and a workspace
+         *     navigation target exist here.
+         * @enum {string}
+         */
+        SearchTargetKind: "scientific_object_series" | "evidence" | "decision" | "note" | "run_reference" | "artifact_reference" | "literature_reference" | "external_reference" | "conversation";
         /** SelectTargetCreate */
         SelectTargetCreate: {
             /**
@@ -5827,6 +5949,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComputeRunStatusRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_project_api_projects__project_id__search_get: {
+        parameters: {
+            query: {
+                q: string;
+                scope?: components["schemas"]["SearchScope"];
+                target_kinds?: components["schemas"]["SearchTargetKind"][] | null;
+                limit?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectSearchResultsRead"];
                 };
             };
             /** @description Validation Error */

@@ -45,6 +45,15 @@ type NoteRevisionCreate = NonNullable<
   >['content']['application/json']
 >
 
+/**
+ * The typed wire query of the Project search endpoint. `target_kinds` is derived
+ * from the generated contract (never a hand-written enum copy) so a backend
+ * target-kind change is a compile error here.
+ */
+export type SearchQuery = NonNullable<
+  paths['/api/projects/{project_id}/search']['get']['parameters']['query']
+>
+
 export type {
   ComputeSubmissionCreate,
   ContextSelectionCreate,
@@ -135,6 +144,17 @@ export function projectApi(actorId: string) {
 
     listObjects: (projectId: string, query: { limit?: number; offset?: number } = {}) =>
       api.GET('/api/projects/{project_id}/objects', {
+        headers,
+        params: { path: { project_id: projectId }, query },
+      }),
+
+    /**
+     * Authorization-aware, bounded Project search (Phase 12). A hit is a
+     * candidate reference only: it never enters Agent context until it is
+     * explicitly selected into a `ContextSelectionCreate`.
+     */
+    searchProject: (projectId: string, query: SearchQuery) =>
+      api.GET('/api/projects/{project_id}/search', {
         headers,
         params: { path: { project_id: projectId }, query },
       }),

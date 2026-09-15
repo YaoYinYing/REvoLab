@@ -37,6 +37,9 @@ const enumNames = [
   'AgentToolCallStatus',
   'ConversationRole',
   'ActionRequestStatus',
+  'SearchScope',
+  'SearchTargetKind',
+  'SearchMatchedField',
 ]
 
 const constName = (name) =>
@@ -65,6 +68,9 @@ const constName = (name) =>
     AgentToolCallStatus: 'AGENT_TOOL_CALL_STATUSES',
     ConversationRole: 'CONVERSATION_ROLES',
     ActionRequestStatus: 'ACTION_REQUEST_STATUSES',
+    SearchScope: 'SEARCH_SCOPES',
+    SearchTargetKind: 'SEARCH_TARGET_KINDS',
+    SearchMatchedField: 'SEARCH_MATCHED_FIELDS',
   })[name]
 
 const lines = [

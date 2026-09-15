@@ -10,6 +10,7 @@ bounded artifact-inspection boundary.
 from __future__ import annotations
 
 from revolab import queries, services
+from revolab import search as search_service
 from revolab.enums import ToolResultKind
 from revolab.schemas import (
     ArtifactInspectCreate,
@@ -18,9 +19,30 @@ from revolab.schemas import (
     DecisionRead,
     EvidenceCreate,
     EvidenceRead,
+    ProjectSearchToolInput,
 )
 from revolab.tools.artifact_inspection import inspect_artifact
 from revolab.tools.types import HandlerOutput, InvocationContext
+
+
+def handle_project_search(ctx: InvocationContext, parsed: ProjectSearchToolInput) -> HandlerOutput:
+    """The read-only `project.search` Tool: the SAME bounded search application
+    service the human workspace calls, fixed to the PROJECT_SHARED corpus.
+
+    It never persists, never changes a ContextSelection, never promotes
+    Evidence/Decision, never executes an Action Request, and never resolves
+    provider content or artifact bytes. The hits it returns stay untrusted
+    Project data when they reach the model.
+    """
+    result = search_service.search_project_shared(
+        ctx.session,
+        ctx.actor_id,
+        ctx.project_id,
+        query=parsed.query,
+        target_kinds=list(parsed.target_kinds) if parsed.target_kinds else None,
+        limit=parsed.limit,
+    )
+    return HandlerOutput(kind=ToolResultKind.EPHEMERAL, value=result)
 
 
 def handle_artifact_inspect(ctx: InvocationContext, parsed: ArtifactInspectCreate) -> HandlerOutput:
@@ -87,4 +109,5 @@ __all__ = [
     "handle_decision_commit",
     "handle_decision_record_draft",
     "handle_evidence_create",
+    "handle_project_search",
 ]

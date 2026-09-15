@@ -50,3 +50,9 @@ export const AGENT_TOOL_CALL_STATUSES: readonly components['schemas']['AgentTool
 export const CONVERSATION_ROLES: readonly components['schemas']['ConversationRole'][] = ["user","assistant"] as const
 
 export const ACTION_REQUEST_STATUSES: readonly components['schemas']['ActionRequestStatus'][] = ["pending","executing","succeeded","failed","ambiguous","rejected"] as const
+
+export const SEARCH_SCOPES: readonly components['schemas']['SearchScope'][] = ["project_shared","my_conversations","all"] as const
+
+export const SEARCH_TARGET_KINDS: readonly components['schemas']['SearchTargetKind'][] = ["scientific_object_series","evidence","decision","note","run_reference","artifact_reference","literature_reference","external_reference","conversation"] as const
+
+export const SEARCH_MATCHED_FIELDS: readonly components['schemas']['SearchMatchedField'][] = ["name","title","description","body","label","interpretation","scope","statement","next_action","identifier","checksum","type","message"] as const

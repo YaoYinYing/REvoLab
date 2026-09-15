@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Database } from 'lucide-react'
 
 import { useResources } from '../api/hooks'
@@ -17,11 +17,26 @@ const KIND_LABELS: Record<string, string> = {
   external_reference: 'External',
 }
 
-export function RunsAndArtifactsView({ actorId, projectId }: { actorId: string; projectId: string }) {
+export function RunsAndArtifactsView({
+  actorId,
+  projectId,
+  focusId = null,
+}: {
+  actorId: string
+  projectId: string
+  /** A search-hit target to select/highlight in this existing surface. */
+  focusId?: string | null
+}) {
   const [kind, setKind] = useState<ResourceKind | ''>('')
   const [limit, setLimit] = useState(PAGE_SIZE)
   const { data, loading, error } = useResources(actorId, projectId, kind || null, { limit })
   const hasMore = (data?.length ?? 0) === limit
+  // Search navigation highlights the canonical reference row in this existing
+  // surface rather than building a second detail page.
+  const focusRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (focusId) focusRef.current?.scrollIntoView({ block: 'center' })
+  }, [focusId, data])
 
   const kinds = useMemo(
     () => Array.from(new Set((data ?? []).map((item) => item.resource_kind))).sort() as ResourceKind[],
@@ -58,7 +73,11 @@ export function RunsAndArtifactsView({ actorId, projectId }: { actorId: string; 
         {visible.length === 0 ? <Empty label="No references of this kind visible through this project." /> : null}
         <div className="list">
           {visible.map((item) => (
-            <div className="list-row" key={item.resource_id}>
+            <div
+              className={`list-row${item.resource_id === focusId ? ' focused' : ''}`}
+              key={item.resource_id}
+              ref={item.resource_id === focusId ? focusRef : undefined}
+            >
               <div className="list-row-head">
                 <Database size={15} />
                 <strong>{item.native_id}</strong>

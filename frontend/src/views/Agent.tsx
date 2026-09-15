@@ -19,6 +19,7 @@ import type {
 } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
+import { contextItemsToSelection, targetKindLabel, type AgentContextItem } from './agentContext'
 import {
   ACTION_REQUEST_STATUS_AMBIGUOUS,
   ACTION_REQUEST_STATUS_EXECUTING,
@@ -87,10 +88,18 @@ export function AgentView({
   actorId,
   projectId,
   initialNoteIds = [],
+  initialContextItems = [],
 }: {
   actorId: string
   projectId: string
   initialNoteIds?: string[]
+  /**
+   * Phase-12 explicit search -> Agent-context handoff. Each item is projected
+   * into the canonical `ContextSelectionCreate` at send time; nothing is added
+   * to context implicitly by searching, and private conversation hits can never
+   * appear here.
+   */
+  initialContextItems?: AgentContextItem[]
 }) {
   const { data: objects } = useObjects(actorId, projectId)
   const { data: artifacts } = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
@@ -102,6 +111,7 @@ export function AgentView({
   const [selectedSeriesId, setSelectedSeriesId] = useState('')
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
   const [selectedNoteId, setSelectedNoteId] = useState(initialNoteIds[0] ?? '')
+  const [contextItems, setContextItems] = useState<AgentContextItem[]>(initialContextItems)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -185,6 +195,7 @@ export function AgentView({
     setSelectedSeriesId('')
     setSelectedArtifactId('')
     setSelectedNoteId(initialNoteIds[0] ?? '')
+    setContextItems(initialContextItems)
     setSavedMessageId(null)
     setHandoffNote(null)
     setActionBusyId(null)
@@ -300,12 +311,25 @@ export function AgentView({
     }
 
     const requestConversationId = conversationId
+    // The ONE canonical ContextSelection: the single selectors plus the explicit
+    // search hand-off items, projected into typed id lists. This is not a second
+    // context model, and nothing here was added by searching alone.
+    const handoff = contextItemsToSelection(contextItems)
+    const union = (...groups: (string[] | null | undefined)[]) => [
+      ...new Set(groups.flatMap((group) => group ?? [])),
+    ]
+    const seriesIds = union(selectedSeriesId ? [selectedSeriesId] : [], handoff.series_ids)
+    const artifactIds = union(selectedArtifactId ? [selectedArtifactId] : [], handoff.artifact_ids)
+    const noteIds = union(effectiveNoteId ? [effectiveNoteId] : [], handoff.note_ids)
     const res = await projectApi(actorId).createConversationTurn(projectId, conversationId, {
       message: userMessage,
       selection: {
-        ...(selectedSeriesId ? { series_ids: [selectedSeriesId] } : {}),
-        ...(selectedArtifactId ? { artifact_ids: [selectedArtifactId] } : {}),
-        ...(effectiveNoteId ? { note_ids: [effectiveNoteId] } : {}),
+        ...(seriesIds.length ? { series_ids: seriesIds } : {}),
+        ...(artifactIds.length ? { artifact_ids: artifactIds } : {}),
+        ...(noteIds.length ? { note_ids: noteIds } : {}),
+        ...(handoff.evidence_ids?.length ? { evidence_ids: handoff.evidence_ids } : {}),
+        ...(handoff.decision_ids?.length ? { decision_ids: handoff.decision_ids } : {}),
+        ...(handoff.reference_ids?.length ? { reference_ids: handoff.reference_ids } : {}),
         include_relations: true,
         include_evidence: true,
         include_decisions: true,
@@ -494,6 +518,37 @@ export function AgentView({
             </select>
           </Field>
         </div>
+        {contextItems.length > 0 ? (
+          <div className="context-selection" aria-label="Selected for agent context">
+            <span className="field-label">Added from search (visible before sending)</span>
+            <div className="chip-row">
+              {contextItems.map((item) => (
+                <span className="chip" key={`${item.target_kind}:${item.target_id}`}>
+                  <span className="chip-kind">{targetKindLabel(item.target_kind)}</span>
+                  {item.title}
+                  <button
+                    type="button"
+                    className="chip-remove"
+                    aria-label={`Remove ${item.title} from agent context`}
+                    onClick={() =>
+                      setContextItems((current) =>
+                        current.filter(
+                          (candidate) =>
+                            !(
+                              candidate.target_kind === item.target_kind &&
+                              candidate.target_id === item.target_id
+                            ),
+                        ),
+                      )
+                    }
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </Section>
 
       {loading && conversations.length === 0 && messages.length === 0 ? (

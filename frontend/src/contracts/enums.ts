@@ -6,6 +6,8 @@ export * from './enums.generated'
 
 import {
   ACTION_REQUEST_STATUSES,
+  SEARCH_SCOPES,
+  SEARCH_TARGET_KINDS,
   AGENT_TOOL_AUTONOMIES,
   AGENT_TOOL_CALL_STATUSES,
   AGENT_TERMINATION_REASONS,
@@ -109,3 +111,10 @@ export const ACTION_REQUEST_STATUS_SUCCEEDED = pick(ACTION_REQUEST_STATUSES, 'su
 export const ACTION_REQUEST_STATUS_FAILED = pick(ACTION_REQUEST_STATUSES, 'failed')
 export const ACTION_REQUEST_STATUS_AMBIGUOUS = pick(ACTION_REQUEST_STATUSES, 'ambiguous')
 export const ACTION_REQUEST_STATUS_REJECTED = pick(ACTION_REQUEST_STATUSES, 'rejected')
+
+// Project Search aliases (Phase 12): the search scope, target-kind and
+// matched-field vocabularies come from the generated contract, never a bare
+// literal or a hand-written copy in the view layer.
+export const SEARCH_SCOPE_PROJECT_SHARED = pick(SEARCH_SCOPES, 'project_shared')
+export const SEARCH_SCOPE_MY_CONVERSATIONS = pick(SEARCH_SCOPES, 'my_conversations')
+export const SEARCH_SCOPE_ALL = pick(SEARCH_SCOPES, 'all')

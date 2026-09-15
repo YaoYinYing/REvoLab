@@ -321,6 +321,80 @@ _ACTION_TERMINAL_STATUSES = frozenset(
 )
 
 
+class SearchScope(StrEnum):
+    """Which authorization-scoped corpus a Project search reads (Phase 12).
+
+    `PROJECT_SHARED` is Project-shared context readable by every member through
+    the ordinary Project read lens. `MY_CONVERSATIONS` is the calling Actor's OWN
+    durable working memory (never another member's). `ALL` is the explicit union
+    of the two, offered only to the human workspace; there is deliberately no
+    "everyone's conversations" scope.
+
+    The Agent-facing `project.search` Tool never accepts a scope at all: it is
+    fixed to `PROJECT_SHARED`, so private working memory can never be requested
+    through the Agent boundary.
+    """
+
+    PROJECT_SHARED = "project_shared"
+    MY_CONVERSATIONS = "my_conversations"
+    ALL = "all"
+
+
+class SearchTargetKind(StrEnum):
+    """The retrieval/presentation classifier of one SearchHit (Phase 12).
+
+    This is deliberately NOT `ResourceKind`: it also names Project-local,
+    non-global targets (Note, Conversation), while `ResourceKind` stays the
+    global-resource registry vocabulary. It is a read-projection label pointing
+    at a canonical identity that an EXISTING domain already owns — it grants no
+    ownership and creates no second scientific model.
+
+    Only kinds that actually have searchable canonical fields and a workspace
+    navigation target exist here.
+    """
+
+    SCIENTIFIC_OBJECT_SERIES = "scientific_object_series"
+    EVIDENCE = "evidence"
+    DECISION = "decision"
+    NOTE = "note"
+    RUN_REFERENCE = "run_reference"
+    ARTIFACT_REFERENCE = "artifact_reference"
+    LITERATURE_REFERENCE = "literature_reference"
+    EXTERNAL_REFERENCE = "external_reference"
+    CONVERSATION = "conversation"
+
+
+# Which target kinds belong to which scope. `CONVERSATION` is the ONLY
+# Actor-private kind and is therefore never part of the Project-shared corpus.
+PROJECT_SHARED_TARGET_KINDS = frozenset(
+    kind for kind in SearchTargetKind if kind is not SearchTargetKind.CONVERSATION
+)
+MY_CONVERSATION_TARGET_KINDS = frozenset({SearchTargetKind.CONVERSATION})
+
+
+class SearchMatchedField(StrEnum):
+    """Which canonical field produced the hit's snippet (presentation metadata).
+
+    Purely descriptive: it is never a relevance score, a confidence, or an
+    authorization property. It lets the workspace say *why* a result matched
+    without inventing a second scientific vocabulary.
+    """
+
+    NAME = "name"
+    TITLE = "title"
+    DESCRIPTION = "description"
+    BODY = "body"
+    LABEL = "label"
+    INTERPRETATION = "interpretation"
+    SCOPE = "scope"
+    STATEMENT = "statement"
+    NEXT_ACTION = "next_action"
+    IDENTIFIER = "identifier"
+    CHECKSUM = "checksum"
+    TYPE = "type"
+    MESSAGE = "message"
+
+
 class ConversationRole(StrEnum):
     """The only two durable roles of a persisted conversation message. A stored
     transcript is conversational working memory: `user` text and `assistant`
