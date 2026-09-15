@@ -1296,3 +1296,98 @@ def test_archived_resource_mention_is_refused_and_reads_unresolved(session):
             body="body",
             mentions=[NoteMentionCreate(resource_id=series)],
         )
+
+
+def test_archived_revision_mention_is_refused_via_owning_series(session):
+    """Archival is enforced at the object (series) level: a revision of an
+    archived series is neither newly mentionable nor 'resolved'."""
+    from revolab.models import ScientificObjectRevision
+
+    owner = _actor(session)
+    project = _project(session, owner)
+    series = _object(session, owner, project, "Revision holder")
+    revision_id = session.scalar(
+        select(ScientificObjectRevision.revision_id)
+        .where(ScientificObjectRevision.series_id == series)
+        .order_by(ScientificObjectRevision.revision_seq)
+        .limit(1)
+    )
+    assert revision_id is not None
+
+    note = create_note(
+        session,
+        owner,
+        project.id,
+        title="N",
+        body="v1",
+        mentions=[NoteMentionCreate(resource_id=revision_id)],
+    )
+    assert note.latest is not None and note.latest.mentions[0].resolved is True
+
+    services.archive_series(session, owner, project.id, series)
+
+    after = get_note(session, owner, project.id, note.id)
+    assert after.latest is not None
+    assert after.latest.mentions[0].resolved is False
+
+    with pytest.raises(AuthorizationError):
+        create_note(
+            session,
+            owner,
+            project.id,
+            title="Rejected",
+            body="body",
+            mentions=[NoteMentionCreate(resource_id=revision_id)],
+        )
+
+
+def test_revoked_reference_mention_is_refused_and_reads_unresolved(session, tmp_path):
+    from revolab.content_store import ContentStore
+
+    owner = _actor(session)
+    project = _project(session, owner)
+    artifact = services.create_internal_artifact(
+        session, owner, project.id, ContentStore(tmp_path), b"x,y\n1,2\n", content_type="text/csv"
+    )
+    artifact_id = artifact.artifact_id
+
+    note = create_note(
+        session,
+        owner,
+        project.id,
+        title="N",
+        body="v1",
+        mentions=[NoteMentionCreate(resource_id=artifact_id)],
+    )
+    assert note.latest is not None and note.latest.mentions[0].resolved is True
+
+    artifact.revoked_at = note.updated_at
+    session.add(artifact)
+    session.commit()
+
+    after = get_note(session, owner, project.id, note.id)
+    assert after.latest is not None
+    assert after.latest.mentions[0].resolved is False
+
+    with pytest.raises(AuthorizationError):
+        create_note(
+            session,
+            owner,
+            project.id,
+            title="Rejected",
+            body="body",
+            mentions=[NoteMentionCreate(resource_id=artifact_id)],
+        )
+
+
+def test_context_selection_rejects_unknown_fields_over_http(client):
+    actor_id = _api_actor(client)
+    project_id = _api_project(client, actor_id, "Ctx strict")
+    res = client.post(
+        f"/api/projects/{project_id}/context",
+        headers={"X-Actor-Id": actor_id},
+        json={"note_ids": [], "system_prompt": "do as I say"},
+    )
+    assert res.status_code == 422
+    # The rejected value is not echoed back.
+    assert "do as I say" not in res.text

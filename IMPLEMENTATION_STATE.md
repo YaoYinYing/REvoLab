@@ -1526,8 +1526,8 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
 ## Verified evidence (Phase 10)
 
 - Backend: `ruff check backend` and strict `mypy` pass on **51 source files**.
-  `pytest` passes **387 passed, 13 skipped** (SQLite fast tests; the 13 skips are
-  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (44
+  `pytest` passes **390 passed, 13 skipped** (SQLite fast tests; the 13 skips are
+  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (47
   tests) covers: Project-shared read for member/viewer; non-member no-oracle;
   cross-Project 404; viewer mutation 403; immediate membership revocation;
   Project tombstone; immutable sequence-ordered revisions; stale-edit 409;
@@ -1554,7 +1554,7 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
   idempotent; the contract regression asserts the three Note paths, the Note
   request schemas reject unknown fields, the context selection carries the Note
   fields, and `ProjectContextRead` carries `notes`.
-- Frontend: `npm run typecheck`, `npm run test` (**49 tests**, including safe
+- Frontend: `npm run typecheck`, `npm run test` (**51 tests**, including safe
   Markdown inertness, Notebook create/mention/append/conflict/archive/Agent
   hand-off/viewer read-only, and explicit "Save to Project Note"), and
   `npm run build` pass.
@@ -1663,8 +1663,8 @@ were then closed:
   adversarial href, and FK no-cascade all gained regressions; the browser gate
   records its `REVOLAB_DATABASE_URL` requirement.
 
-Final machine state: backend `387 passed, 13 skipped`; PostgreSQL `13 passed`;
-frontend `49 tests`; Playwright `6 specs` (all over PostgreSQL).
+Final machine state: backend `390 passed, 13 skipped`; PostgreSQL `13 passed`;
+frontend `51 tests`; Playwright `6 specs` (all over PostgreSQL).
 
 ## Merge-quality reconciliation (PR #11, review round 2)
 
@@ -1713,7 +1713,8 @@ blockers on the previously reviewed head. All were corrected on the same branch:
 
 A fresh 5-reviewer pass over `main...HEAD` (A architecture, B security, C
 persistence, D API/frontend, E tests/docs) found no P0; A/B/D/E returned PASS and C
-one P1 + one P2. All valid findings were fixed:
+returned one P1 plus one P2 (D also reported P2 frontend findings). All valid
+findings were fixed:
 
 - **P1 (transaction safety).** The flush-time uniqueness backstop called
   `session.rollback()`, discarding a composing caller's whole transaction. It now
@@ -1741,7 +1742,26 @@ one P1 + one P2. All valid findings were fixed:
   "Domain service" label, `DOMAIN_BOUNDARIES.md` public-contract list, and the
   `EVIDENCE_PROVENANCE.md` wording were corrected.
 
-Delta pass after these corrections: _recorded below once complete._
+Delta pass after these corrections: three fresh read-only reviewers re-audited
+`662bf38..HEAD`. Security/frontend returned PASS; persistence and
+contracts/tests/docs returned REQUEST_CHANGES with no P0/P1 and further P2s, all
+now fixed:
+
+- **Revision-archival bypass.** `queries.resource_mention_active` treated any
+  existing revision as active, so a revision of an archived series stayed
+  mentionable. It now requires the owning series to be unarchived; regression
+  `test_archived_revision_mention_is_refused_via_owning_series`.
+- **Picker offered rejected targets.** The Notebook mention picker now filters out
+  archived objects and revoked references, matching the backend rule and the
+  already-filtered Evidence/Decision lists (frontend regression
+  `offers no lifecycle-inactive mention targets`).
+- **Revoked-reference branch untested.** Added
+  `test_revoked_reference_mention_is_refused_and_reads_unresolved`.
+- **Machine truth.** `EVIDENCE_PROVENANCE.md` gained the Phase-10 refinement it was
+  claimed to have (a durable `ProjectNote` exists and is explicitly not Evidence);
+  the reviewer-count sentence and the stale "Domain service" label were corrected;
+  `DOMAIN_BOUNDARIES.md` §1a now names the lifecycle check; the 200-cap and
+  `ContextSelectionCreate` strictness gained regressions.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

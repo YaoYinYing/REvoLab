@@ -144,10 +144,12 @@ describe('generated API contract boundary', () => {
   it('Note selection is part of the bounded ContextSelection contract', () => {
     const selection = spec.components.schemas.ContextSelectionCreate as {
       properties?: Record<string, unknown>
+      additionalProperties?: unknown
     }
     expect(Object.keys(selection.properties ?? {})).toEqual(
       expect.arrayContaining(['note_ids', 'note_revision_ids', 'max_notes', 'max_note_chars']),
     )
+    expect(selection.additionalProperties, 'ContextSelectionCreate should forbid extra fields').toBe(false)
     const context = spec.components.schemas.ProjectContextRead as {
       properties?: Record<string, unknown>
     }

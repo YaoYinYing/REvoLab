@@ -121,11 +121,14 @@ A `NoteMention` means only:
   read projection reports `resolved=false`; history is never rewritten.
 - Availability is consistent across target classes: a target is mentionable iff it
   is in the Project read lens (`ProjectResourceLink`) **and** its own lifecycle
-  flag is active (a ScientificObjectSeries is `archived_at IS NULL`, a reference is
-  `revoked_at IS NULL`; Evidence/Decision additionally require `project_id` match
-  and `archived_at IS NULL`). `queries.resource_mention_active` is the shared
-  resource-side check, so a newly supplied mention to an archived series or a
-  revoked reference is refused exactly like an archived Evidence/Decision, and an
+  flag is active (a ScientificObjectSeries is `archived_at IS NULL`; a
+  ScientificObjectRevision requires its owning series to be unarchived; a
+  run/session/artifact reference is `revoked_at IS NULL`; literature/external
+  references have no revoke flag and are active while the row exists;
+  Evidence/Decision additionally require `project_id` match and
+  `archived_at IS NULL`). `queries.resource_mention_active` is the shared
+  resource-side check, so a newly supplied mention to an archived series/object or
+  a revoked reference is refused exactly like an archived Evidence/Decision, and an
   existing one resolves `resolved=false`.
 - The read projection always returns the opaque target UUID (`resource_id` /
   `evidence_id` / `decision_id`) but withholds `label` when `resolved=false`; the

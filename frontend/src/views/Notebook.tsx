@@ -104,14 +104,20 @@ export function NotebookView({
   )
 
   useEffect(() => {
-    // Clear the editor and any transient outcome on selection change so the form
-    // can never briefly hold the previous Note's body/notice/error.
+    // Clear the editor on selection change so the form can never briefly hold the
+    // previous Note's body. Transient notice/error are cleared by the explicit
+    // open action below, so a notice produced by the action that CHANGED the
+    // selection (e.g. "Note created.") is not wiped in the same commit.
     setEditBody('')
     setClearMentions(false)
-    setNotice(null)
-    setActionError(null)
     setRevisionLimit(REVISION_PAGE_SIZE)
   }, [selectedNoteId])
+
+  function openNote(noteId: string) {
+    setNotice(null)
+    setActionError(null)
+    setSelectedNoteId(noteId)
+  }
 
   useEffect(() => {
     const latest = detail.data?.latest
@@ -131,11 +137,15 @@ export function NotebookView({
     setActionError(null)
   }, [actorId, projectId])
 
+  // Only lifecycle-active targets are offered: the backend refuses archived
+  // series / revoked references, so the picker must not propose them.
   const mentionOptions = [
-    ...(objects ?? []).map((object) => ({
-      value: `series:${object.series_id}`,
-      label: `Object · ${object.name}`,
-    })),
+    ...(objects ?? [])
+      .filter((object) => !object.archived_at)
+      .map((object) => ({
+        value: `series:${object.series_id}`,
+        label: `Object · ${object.name}`,
+      })),
     ...(evidence ?? []).map((item) => ({
       value: `evidence:${item.id}`,
       label: `Evidence · ${item.label ?? item.kind}`,
@@ -144,10 +154,12 @@ export function NotebookView({
       value: `decision:${item.id}`,
       label: `Decision · ${item.title}`,
     })),
-    ...(resources ?? []).map((item) => ({
-      value: `resource:${item.resource_id}`,
-      label: `Reference · ${item.native_id ?? item.resource_id.slice(0, 8)}`,
-    })),
+    ...(resources ?? [])
+      .filter((item) => !item.revoked_at)
+      .map((item) => ({
+        value: `resource:${item.resource_id}`,
+        label: `Reference · ${item.native_id ?? item.resource_id.slice(0, 8)}`,
+      })),
   ]
 
   function addPendingMention() {
@@ -337,7 +349,7 @@ export function NotebookView({
         <div className="list">
           {(notes.data ?? []).map((note) => (
             <div className={`list-row note-row ${note.id === selectedNoteId ? 'active' : ''}`} key={note.id}>
-              <button type="button" className="conversation-link" onClick={() => setSelectedNoteId(note.id)}>
+              <button type="button" className="conversation-link" onClick={() => openNote(note.id)}>
                 <strong>{note.title}</strong>
                 <small>
                   rev {note.latest_revision_seq} · {note.revision_count} revision(s) ·{' '}

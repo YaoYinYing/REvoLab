@@ -180,6 +180,48 @@ describe('Notebook view (Phase 10)', () => {
       body: 'thinking',
       mentions: [{ resource_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }],
     })
+    // The success confirmation survives the selection change it caused.
+    expect(await screen.findByText('Note created.')).toBeInTheDocument()
+  })
+
+  it('offers no lifecycle-inactive mention targets', async () => {
+    mockedUseObjects.mockReturnValue({
+      data: [
+        {
+          series_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          object_type: 'protein',
+          name: 'Archived object',
+          description: null,
+          archived_at: '2026-09-14T00:00:00Z',
+          preferred_revision_id: null,
+          revision_count: 1,
+          created_at: '2026-09-14T00:00:00Z',
+        },
+      ],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    } as never)
+    mockedUseResources.mockReturnValue({
+      data: [
+        {
+          resource_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          resource_kind: 'artifact_reference',
+          native_id: 'revoked-artifact',
+          revoked_at: '2026-09-14T00:00:00Z',
+        },
+      ],
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    } as never)
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await user.click(await screen.findByRole('button', { name: /New note/ }))
+    const select = screen.getByLabelText('Mention target')
+    expect(select).not.toHaveTextContent('Archived object')
+    expect(select).not.toHaveTextContent('revoked-artifact')
   })
 
   it('appends a revision against the current base revision and surfaces a conflict', async () => {
@@ -335,5 +377,32 @@ describe('Notebook pagination and link retention (Phase 10 review)', () => {
     await user.click(screen.getByLabelText('Clear context links on next revision'))
     await user.click(screen.getByRole('button', { name: /Save revision/ }))
     expect(appendNoteRevision.mock.calls[1][2]).toMatchObject({ mentions: [] })
+  })
+
+  it('stops offering load-more at the server cap', async () => {
+    mockedUseNotes.mockImplementation((_actor, _project, query) => ({
+      data: Array.from({ length: query?.limit ?? 50 }, (_, index) => ({
+        ...note,
+        id: `cap-note-${index}`,
+        title: `Cap note ${index}`,
+      })),
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    }))
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await screen.findByText('Cap note 0')
+    // 50 -> 100 -> 150 -> 200; at the cap the control must disappear.
+    for (let index = 0; index < 3; index += 1) {
+      await user.click(screen.getByRole('button', { name: 'Load more' }))
+    }
+    expect(mockedUseNotes).toHaveBeenLastCalledWith(
+      'actor-1',
+      'project-1',
+      expect.objectContaining({ limit: 200 }),
+    )
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
   })
 })

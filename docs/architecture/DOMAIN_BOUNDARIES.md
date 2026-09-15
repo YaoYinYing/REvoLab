@@ -86,7 +86,8 @@ layer.
   is derived from `max(revision_seq)` (no mutable current pointer); a stale
   `base_revision_seq` append fails closed (typed 409); a mention is a reference,
   never a `RelationType` or provenance edge, and is validated through the current
-  Project read lens at write time.
+  Project read lens AND the target's own lifecycle flag (archived series / revoked
+  reference / archived Evidence or Decision) at write time.
 - **Public contracts:** the `/api/projects/{project_id}/notes` surface, the
   `resolve_selected_notes` read projection (consumed by Agent Context through
   `agent/builder.py`), and bounded Note selection in `ContextSelection`.

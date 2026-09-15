@@ -61,7 +61,14 @@ def resource_mention_active(session: Session, resource_id: UUID, kind: ResourceK
         series = session.get(ScientificObjectSeries, resource_id)
         return series is not None and series.archived_at is None
     if kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
-        return session.get(ScientificObjectRevision, resource_id) is not None
+        revision = session.get(ScientificObjectRevision, resource_id)
+        if revision is None:
+            return False
+        # Archival is enforced at the OBJECT (series) level: a revision of an
+        # archived series must not stay mentionable just because the revision row
+        # itself carries no lifecycle flag.
+        series = session.get(ScientificObjectSeries, revision.series_id)
+        return series is not None and series.archived_at is None
     if kind is ResourceKind.RUN_REFERENCE:
         run = session.get(RunReference, resource_id)
         return run is not None and run.revoked_at is None
