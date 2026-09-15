@@ -15,7 +15,7 @@ from types import MappingProxyType
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Engine, create_engine, func, inspect, select, text
+from sqlalchemy import CheckConstraint, Engine, create_engine, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1048,7 +1048,6 @@ class _Phase11State:
     def __init__(self) -> None:
         self.submit_calls = 0
         self.error = None
-        self.before_submit = None
         # A per-state tag keeps native ids unique across runs against a shared,
         # non-truncated acceptance database.
         self.tag = uuid4().hex[:8]
@@ -1084,8 +1083,6 @@ class _Phase11Compute:
         from revolab.capabilities import RunHandle
 
         self._state.submit_calls += 1
-        if self._state.before_submit is not None:
-            self._state.before_submit()
         if self._state.error is not None:
             raise self._state.error
         return RunHandle(
@@ -1217,15 +1214,26 @@ def test_phase11_schema_has_no_authority_or_secret_columns(pg_session: Session) 
         "created_at",
     } <= columns
     # The migrated schema carries the durable state-machine invariant: a
-    # `succeeded` action always names the canonical result it produced.
-    checks = {constraint["name"] for constraint in inspector.get_check_constraints("action_requests")}
-    assert "ck_action_succeeded_has_result" in checks
-    assert "action_request_status" in {
-        constraint["name"] for constraint in inspector.get_check_constraints("action_requests")
-    } or "action_request_status" in " ".join(
-        str(constraint.get("sqltext", ""))
+    # `succeeded` action always names the canonical result it produced. Alembic's
+    # `check` does not compare CHECK constraints, so the model/migration agreement
+    # is asserted explicitly here (and in the SQLite raw-insert regression).
+    from revolab.models import ActionRequest as _ActionRequestModel
+
+    model_checks = {
+        constraint.name: str(constraint.sqltext)
+        for constraint in _ActionRequestModel.__table__.constraints
+        if isinstance(constraint, CheckConstraint)
+    }
+    assert "ck_action_succeeded_has_result" in model_checks
+    db_checks = {
+        constraint["name"]: str(constraint.get("sqltext", ""))
         for constraint in inspector.get_check_constraints("action_requests")
-    )
+    }
+    assert "ck_action_succeeded_has_result" in db_checks
+    migrated_sql = db_checks["ck_action_succeeded_has_result"].lower()
+    for token in ("succeeded", "result_run_id", "result_decision_id", "is not null"):
+        assert token in migrated_sql, migrated_sql
+        assert token in model_checks["ck_action_succeeded_has_result"].lower()
     # Persist intent, never authority: no credential/authorization/health snapshot.
     assert not {
         "secret_ref",
@@ -1278,6 +1286,40 @@ def test_phase11_lifecycle_and_ambiguity_on_postgres(pg_session: Session, tmp_pa
     )
     assert ambiguous.status == ActionRequestStatus.AMBIGUOUS.value
     assert state2.submit_calls == 1
+
+
+def test_phase11_post_claim_failure_settles_terminally_on_postgres(
+    pg_session: Session, tmp_path, monkeypatch
+) -> None:
+    """A DB-level failure after the durable claim aborts the PostgreSQL transaction.
+    The terminal write must still land (`_settle` rolls back and retries), so a
+    confirmed external submission can never be stranded in `executing`.
+
+    SQLite does not abort a transaction on a failed statement, so this path is only
+    genuinely exercised here, on the acceptance substrate."""
+    from sqlalchemy import text
+
+    state = _Phase11State()
+    ctx = _phase11_setup(pg_session, state, tmp_path)
+    actions_mod = ctx["actions"]
+
+    def explode(*args, **kwargs):  # type: ignore[no-untyped-def]
+        pg_session.execute(text("SELECT * FROM table_that_does_not_exist_phase11"))
+
+    monkeypatch.setattr(services, "record_compute_run", explode)
+
+    executed = actions_mod.execute_action_request(
+        _phase11_execution(pg_session, ctx), ctx["actor"], ctx["project"].id, ctx["action_id"]
+    )
+    assert executed.status == ActionRequestStatus.AMBIGUOUS.value
+    assert executed.resolved_at is not None
+    assert state.submit_calls == 1
+    # Not stranded: a further execute fails closed instead of re-submitting.
+    with pytest.raises(Exception):
+        actions_mod.execute_action_request(
+            _phase11_execution(pg_session, ctx), ctx["actor"], ctx["project"].id, ctx["action_id"]
+        )
+    assert state.submit_calls == 1
 
 
 def test_phase11_actor_and_project_isolation_on_postgres(pg_session: Session, tmp_path) -> None:

@@ -83,12 +83,9 @@ class _ProviderState:
     def __init__(self) -> None:
         self.submit_calls = 0
         self.error: CapabilityError | None = None
-        self.before_submit: Any = None
 
     def submit(self, kind_id: str) -> str:
         self.submit_calls += 1
-        if self.before_submit is not None:
-            self.before_submit()
         if self.error is not None:
             raise self.error
         return f"native-{self.submit_calls}"

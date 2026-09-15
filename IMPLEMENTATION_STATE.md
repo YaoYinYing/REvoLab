@@ -1873,7 +1873,7 @@ mypy (strict, 53 source files)                      Success: no issues found
 pytest (SQLite)                                     430 passed, 17 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
-pytest backend/tests/test_postgres_integration.py   17 passed (migrated PostgreSQL)
+pytest backend/tests/test_postgres_integration.py   18 passed (migrated PostgreSQL)
 python -m revolab.export_openapi  -> openapi.json   byte-identical (no drift)
 frontend: npm run typecheck                         clean
 frontend: npm run test                              56 passed
@@ -1892,8 +1892,9 @@ before any existence check; Project tombstone, membership/role revocation, input
 visibility revocation, credential revocation, unavailable provider, removed Tool,
 changed autonomy, stale schema and a tampered payload all block execution; no
 credential/`secret_ref`/executable argument reaches the durable row or the transcript; rejection has no side effect and is terminal; concurrent execution
-submits at most once (SQLite threads and PostgreSQL connections with a blocking
-provider); success creates the canonical `RunReference` and a second execute never
+submits at most once (SQLite threads and PostgreSQL connections, both forcing the
+workers to reach the one-shot claim concurrently via a barrier immediately before
+`_claim`); success creates the canonical `RunReference` and a second execute never
 resubmits; the provider boundary classification is `failed` vs `ambiguous`; an
 ambiguous outcome is never retried; execute/reject are absent from the Agent
 catalog; hostile Note text cannot authorize or execute; an over-bound payload is
@@ -1901,7 +1902,17 @@ refused rather than truncated by BOTH the Agent loop and the persistence boundar
 Post-claim failure honesty is covered too: a plain recording failure, a DB-level
 recording failure that leaves the session in a failed transaction, and a partially
 recorded run whose retry completes the canonical recording (no orphaned
-`RunReference`, no action stranded in `executing`).
+`RunReference`, no action stranded in `executing`). The DB-level case is asserted on
+PostgreSQL as well, because SQLite does not abort a transaction on a failed
+statement; that PostgreSQL regression FAILS if `_settle`'s rollback-retry is
+removed, so the fix is machine-guarded on the substrate where it is load-bearing.
+
+Note on drift coverage: `alembic check` does not compare CHECK constraints, so the
+`ck_action_succeeded_has_result` model/migration agreement is asserted explicitly
+by the migrated-PostgreSQL schema regression (constraint name + predicate tokens)
+and by the SQLite raw-insert regression. A development database that applied an
+earlier revision of the Phase-11 migration must be recreated or
+`alembic downgrade 8822524ef06f && alembic upgrade head`-ed to pick it up.
 
 ## Independent review (Phase 11)
 
@@ -1985,6 +1996,29 @@ Findings recorded as intentional / informational (no change):
   runs each spec once (8/8 green); the NEW Phase-11 spec is deliberately
   counter-independent and is stable at 2x and 4x repeats. Recorded, not a Phase-11
   regression.
+
+### Delta review (round 2 — fix delta, 2 fresh reviewers)
+
+Two additional FRESH read-only reviewers examined only the fix delta
+(`f495df9..d834210`), the previously affected invariants and their regression
+coverage. One (security / failure semantics) is reported below; the persistence /
+contracts reviewer returned APPROVE WITH FINDINGS, all reconciled:
+
+- **P1 — the transaction-boundary fix was not machine-guarded on the substrate
+  where it is load-bearing.** SQLite does not abort a transaction on a failed
+  statement, so the SQLite "DB-level failure" regression never reproduced its own
+  premise; reverting `_settle`'s rollback-retry left the whole suite green. Fixed by
+  adding `test_phase11_post_claim_failure_settles_terminally_on_postgres`, which
+  aborts a real PostgreSQL transaction and FAILS when the retry is removed (verified
+  by mutation).
+- **P2 — `alembic check` does not compare CHECK constraints.** The
+  model/migration agreement for `ck_action_succeeded_has_result` is now asserted
+  explicitly by the migrated-schema regression (name + predicate tokens); the
+  drift-gate caveat and the required downgrade/upgrade for an already-migrated dev
+  database are recorded above.
+- **P2 — stale ledger wording / dead test scaffolding.** The concurrency description
+  now matches the barrier-before-`_claim` implementation, and the unused
+  provider-blocking hook was removed from both test doubles.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
