@@ -98,7 +98,13 @@ Explicit 4xx rejections and pre-side-effect local provider checks are `failed`
 After a confirmed handle, the action marks `succeeded` and retains only the stable
 reference to the canonical `RunReference` (created by the existing Phase-4
 `record_compute_run` path, with its `consumed_as_input_by` edges). Action Request
-never duplicates scheduler/task/Runner/artifact-publication state.
+never duplicates scheduler/task/Runner/artifact-publication state. A confirmed
+handle whose canonical recording fails is retried once through the same
+get-or-create path; only a second failure settles `ambiguous`, retaining the bounded
+provider identity for human reconciliation. Failure paths roll back before writing
+the terminal outcome, and the terminal write tolerates a failed transaction — a
+durably claimed action can never be stranded in `executing` after a confirmed
+external side effect.
 
 ### One canonical execution path per execution class
 
@@ -106,7 +112,9 @@ never duplicates scheduler/task/Runner/artifact-publication state.
 local  explicit action -> the SAME closed LocalToolRuntime the human workspace
                           uses (decision.commit)
 remote explicit action -> the SAME capability path the human compute endpoint
-                          uses (services.compute_submit)
+                          uses (services.compute_submit_handle +
+                          record_compute_run; `compute_submit` wraps the same two
+                          primitives for the human endpoint)
 ```
 
 No second compute-submission implementation and no second Decision-promotion

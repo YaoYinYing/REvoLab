@@ -43,14 +43,15 @@ from uuid import UUID
 
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from revolab import services
 from revolab.agent.conversations import owned_conversation
-from revolab.capabilities import CapabilityError, InputBinding
+from revolab.capabilities import CapabilityError, InputBinding, RunHandle
 from revolab.content_store import ContentStore
 from revolab.domain import persistence
-from revolab.domain.errors import ConflictError, DomainError, NotFoundError
+from revolab.domain.errors import ConflictError, DomainError, NotFoundError, ValidationError
 from revolab.domain.identity import mutation_capable_membership, readable_membership
 from revolab.drivers import DriverRegistry
 from revolab.enums import (
@@ -65,17 +66,16 @@ from revolab.models import ActionRequest
 from revolab.schemas import ComputeSubmissionCreate, ToolInvocationCreate, ToolResultRead
 from revolab.secret_store import SecretStore
 from revolab.tools.catalog import build_tool_catalog
-from revolab.tools.explicit_actions import explicit_action_input_model
+from revolab.tools.explicit_actions import (
+    COMPUTE_SUBMIT_SUFFIX,
+    MAX_ACTION_ARGUMENT_CHARS,
+    remote_explicit_action_input_model,
+)
 from revolab.tools.registry import LocalToolRegistry
 from revolab.tools.runtime import LocalToolRuntime
 from revolab.tools.types import InvocationContext
 
 MAX_STATUS_REASON_CHARS = 500
-
-# The one task-submission tool suffix Core recognizes as an external compute
-# action; the provider key prefix is dynamic provider data and is taken from the
-# current catalog descriptor, never parsed out of the id.
-_COMPUTE_SUBMIT_SUFFIX = ".compute.submit"
 
 # Provider failure kinds that are a definite, pre-side-effect rejection when they
 # arrive WITHOUT an upstream response (driver readiness/health/missing credential
@@ -100,8 +100,21 @@ def _rowcount(result: Any) -> int:
 
 
 def _digest(arguments: dict[str, Any]) -> str:
+    """An UNKEYED content digest of the canonical argument payload.
+
+    It detects accidental corruption / an out-of-band edit of the stored payload;
+    it is deliberately NOT an authentication tag (anyone who can rewrite the row
+    can recompute it). Authority is never derived from it — execution revalidates
+    the payload against the CURRENT canonical schema."""
     payload = json.dumps(arguments, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _argument_size(arguments: dict[str, Any]) -> int:
+    try:
+        return len(json.dumps(arguments, sort_keys=True, default=str))
+    except (TypeError, ValueError):
+        return MAX_ACTION_ARGUMENT_CHARS + 1
 
 
 def _bounded_reason(reason: str | None) -> str | None:
@@ -149,7 +162,13 @@ def propose_action_request(
     the tool's canonical input model (the Agent loop validates before calling).
     The row is flushed, never committed here: it belongs to the caller's turn
     transaction so the proposal and the transcript that describes it are atomic.
+
+    The persistence boundary enforces its OWN size bound: a payload over
+    `MAX_ACTION_ARGUMENT_CHARS` is refused rather than truncated, so a durable row
+    can never hold incomplete executable state even if a caller forgets to check.
     """
+    if _argument_size(arguments) > MAX_ACTION_ARGUMENT_CHARS:
+        raise ValidationError("explicit action arguments exceed the durable action bound")
     action = ActionRequest(
         project_id=project_id,
         actor_id=actor_id,
@@ -295,13 +314,19 @@ def _current_descriptor(
     return descriptor
 
 
-def _revalidate_arguments(action: ActionRequest) -> dict[str, Any]:
-    """Revalidate the persisted payload against the CURRENT canonical input model.
-    A schema change (or a payload that no longer validates) fails closed; old
-    arguments are never silently reinterpreted."""
+def _revalidate_arguments(ctx: ActionExecution, action: ActionRequest) -> dict[str, Any]:
+    """Revalidate the persisted payload against the CURRENT canonical input model,
+    resolved from the same owner the proposal boundary used: a LOCAL explicit
+    action from its registered `LocalToolSpec`, a REMOTE one from the ONE
+    capability-suffix mapping. A schema change (or a payload that no longer
+    validates) fails closed; old arguments are never silently reinterpreted."""
     if _digest(action.arguments) != action.arguments_digest:
-        raise ConflictError("stored action arguments failed their integrity check")
-    model = explicit_action_input_model(action.tool_id)
+        raise ConflictError(
+            "stored action arguments no longer match their recorded digest"
+        )
+    model = ctx.local_registry.explicit_action_input_model(
+        action.tool_id
+    ) or remote_explicit_action_input_model(action.tool_id)
     if model is None:
         raise ConflictError(f"tool {action.tool_id!r} has no canonical input model")
     try:
@@ -340,8 +365,16 @@ def _settle(
     reason: str | None = None,
     run_resource_id: UUID | None = None,
     decision_id: UUID | None = None,
-) -> None:
-    session.execute(
+) -> bool:
+    """Write the terminal outcome of a claimed action.
+
+    The one-shot claim is already durably committed, so a terminal write MUST land:
+    leaving the row in `executing` while the external side effect happened would be
+    a lie. The write therefore tolerates a session left in a failed transaction by
+    the execution attempt — it rolls back first and retries once. Returns whether
+    the conditional `executing -> <terminal>` transition actually won.
+    """
+    statement = (
         update(ActionRequest)
         .where(
             ActionRequest.id == action_request_id,
@@ -355,7 +388,17 @@ def _settle(
             result_decision_id=decision_id,
         )
     )
-    session.commit()
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            result = session.execute(statement)
+            session.commit()
+            return _rowcount(result) == 1
+        except SQLAlchemyError as exc:  # a failed transaction must not strand the row
+            last_error = exc
+            session.rollback()
+    assert last_error is not None
+    raise last_error
 
 
 def classify_provider_failure(exc: BaseException) -> ActionRequestStatus:
@@ -385,7 +428,13 @@ def classify_provider_failure(exc: BaseException) -> ActionRequestStatus:
 
 def _execute_local(ctx: ActionExecution, action: ActionRequest, arguments: dict[str, Any]) -> UUID | None:
     """Local explicit action: the SAME closed LocalToolRuntime the human workspace
-    uses. No second Decision-promotion implementation exists."""
+    uses. No second Decision-promotion implementation exists.
+
+    The returned resource id is stored in `result_decision_id`, which is correct
+    only while `decision.commit` is the ONLY local `explicit_action` tool (the
+    Phase-11 concrete use case). Adding a second local explicit action whose result
+    is not a Decision requires a new typed result reference — never a renamed FK
+    (no speculative abstraction is added for a second use case that does not exist)."""
     runtime = LocalToolRuntime(ctx.local_registry)
     result: ToolResultRead = runtime.invoke(
         InvocationContext(
@@ -401,6 +450,53 @@ def _execute_local(ctx: ActionExecution, action: ActionRequest, arguments: dict[
     return result.resource_id
 
 
+class _UnrecordedExternalSuccess(Exception):
+    """The provider CONFIRMED a run, but the canonical RunReference could not be
+    recorded locally in that attempt.
+
+    Carries the confirmed provider handle and the input bindings so the canonical
+    recording can be retried once on a healthy transaction — `record_compute_run`
+    is get-or-create, so a retry after a partially committed attempt completes the
+    missing links instead of duplicating the run. If it still cannot be recorded
+    the action settles `ambiguous` with the provider identity retained for
+    reconciliation (the ONLY place an external identity appears outside a
+    RunReference, precisely because the canonical card could not be created)."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        handle: RunHandle,
+        bindings: list[InputBinding],
+    ) -> None:
+        super().__init__(message)
+        self.handle = handle
+        self.bindings = bindings
+
+
+def _record_confirmed_run(
+    ctx: ActionExecution,
+    action: ActionRequest,
+    handle: RunHandle,
+    bindings: list[InputBinding],
+) -> UUID:
+    """Create/reuse the canonical RunReference (+ input provenance) for a run the
+    provider just confirmed. Raises `_UnrecordedExternalSuccess` on failure."""
+    try:
+        recorded = services.record_compute_run(
+            ctx.session,
+            action.actor_id,
+            action.project_id,
+            handle,
+            inputs=[binding.resource_id for binding in bindings],
+        )
+    except Exception as exc:
+        raise _UnrecordedExternalSuccess(
+            str(exc), handle=handle, bindings=bindings
+        ) from exc
+    return cast(UUID, recorded["run_resource_id"])
+
+
 def _execute_remote_compute(
     ctx: ActionExecution,
     action: ActionRequest,
@@ -411,12 +507,10 @@ def _execute_remote_compute(
     endpoint uses (`services.compute_submit_handle` + `record_compute_run`).
 
     The provider handle is a CONFIRMED external side effect; only then is the
-    canonical RunReference created/reused. If the local recording fails after a
-    confirmed handle the outcome is reported as ambiguous rather than pretending
-    either result."""
+    canonical RunReference created/reused."""
     session = ctx.session
     provider_key = descriptor.provider_key
-    if not provider_key or not action.tool_id.endswith(_COMPUTE_SUBMIT_SUFFIX):
+    if not provider_key or not action.tool_id.endswith(COMPUTE_SUBMIT_SUFFIX):
         raise ConflictError("remote explicit action is not a supported compute submission")
     if descriptor.capability_kind is not CapabilityKind.COMPUTE:
         raise ConflictError("provider capability is no longer compute")
@@ -436,22 +530,7 @@ def _execute_remote_compute(
         bindings,
         arguments.get("params") or {},
     )
-    try:
-        recorded = services.record_compute_run(
-            session,
-            action.actor_id,
-            action.project_id,
-            handle,
-            inputs=[binding.resource_id for binding in bindings],
-        )
-    except Exception as exc:
-        raise _UnrecordedExternalSuccess(str(exc)) from exc
-    return cast(UUID, recorded["run_resource_id"])
-
-
-class _UnrecordedExternalSuccess(Exception):
-    """The provider confirmed a run, but the canonical RunReference could not be
-    recorded locally. The action is settled as `ambiguous`."""
+    return _record_confirmed_run(ctx, action, handle, bindings)
 
 
 def _preflight_referenced_resources(
@@ -501,7 +580,7 @@ def execute_action_request(
     # --- preflight: no side effect, no claim consumed ------------------------
     mutation_capable_membership(session, actor_id, project_id)
     descriptor = _current_descriptor(ctx, actor_id, project_id, action)
-    arguments = _revalidate_arguments(action)
+    arguments = _revalidate_arguments(ctx, action)
     _preflight_referenced_resources(ctx, project_id, descriptor, arguments)
 
     # --- durable one-shot claim ----------------------------------------------
@@ -509,41 +588,68 @@ def execute_action_request(
         raise ConflictError("action request is no longer pending")
 
     # --- canonical execution -------------------------------------------------
+    # Transaction discipline: the canonical commands this path reuses own their own
+    # commit (`commit_decision_row`, `_persist_run_reference_trusted`), so a SAVEPOINT
+    # cannot wrap them (an inner commit closes the outer transaction). Instead every
+    # failure path ROLLS BACK before writing the outcome, which discards any
+    # uncommitted partial local write, and `_settle` tolerates a session left in a
+    # failed transaction. A confirmed-but-unrecorded external run is retried through
+    # the canonical get-or-create recording below.
+    decision_id: UUID | None = None
+    run_resource_id: UUID | None = None
     try:
         if descriptor.execution_class is ToolExecutionClass.LOCAL:
             decision_id = _execute_local(ctx, action, arguments)
-            _settle(
-                session,
-                action_request_id,
-                ActionRequestStatus.SUCCEEDED,
-                decision_id=decision_id,
-            )
         else:
             run_resource_id = _execute_remote_compute(ctx, action, descriptor, arguments)
+    except _UnrecordedExternalSuccess as exc:
+        # The external side effect is CONFIRMED (we hold the provider handle), but
+        # the local canonical recording failed. Roll back first, then retry the
+        # recording once on a healthy transaction (get-or-create completes a
+        # partially committed attempt); otherwise report honest ambiguity.
+        session.rollback()
+        try:
+            run_resource_id = _record_confirmed_run(
+                ctx, action, exc.handle, exc.bindings
+            )
+        except Exception:
+            run_resource_id = None
+        if run_resource_id is not None:
             _settle(
                 session,
                 action_request_id,
                 ActionRequestStatus.SUCCEEDED,
                 run_resource_id=run_resource_id,
             )
-    except _UnrecordedExternalSuccess as exc:
-        _settle(
-            session,
-            action_request_id,
-            ActionRequestStatus.AMBIGUOUS,
-            reason=(
-                "the provider accepted the submission but the canonical run reference "
-                f"could not be recorded: {exc}"
-            ),
-        )
+        else:
+            _settle(
+                session,
+                action_request_id,
+                ActionRequestStatus.AMBIGUOUS,
+                reason=(
+                    "the provider accepted the submission "
+                    f"({exc.handle.authority}/{exc.handle.native_id}) but the canonical "
+                    f"run reference could not be recorded: {exc}"
+                ),
+            )
     except (DomainError, CapabilityError) as exc:
+        session.rollback()
         _settle(session, action_request_id, classify_provider_failure(exc), reason=str(exc))
     except Exception as exc:
+        session.rollback()
         _settle(
             session,
             action_request_id,
             ActionRequestStatus.AMBIGUOUS,
             reason=f"unexpected execution failure: {type(exc).__name__}",
+        )
+    else:
+        _settle(
+            session,
+            action_request_id,
+            ActionRequestStatus.SUCCEEDED,
+            run_resource_id=run_resource_id,
+            decision_id=decision_id,
         )
     session.refresh(action)
     return action

@@ -689,7 +689,10 @@ class ActionRequest(Base, TimestampMixin):
     GlobalResourceRegistry entry, conversation message, Agent memory, ToolResult,
     or provider execution truth: it never enters the scientific graph and never
     duplicates REvoCompute's mutable run state. `result_run_id` / `result_decision_id`
-    are the canonical RESULT references the action produced, when one exists.
+    are the canonical RESULT references the action produced, when one exists
+    (`result_decision_id` is the Decision produced by the sole local explicit
+    action, `decision.commit`; a future local explicit action with a different
+    result kind needs its own typed reference rather than a renamed FK).
 
     Ownership is the Phase-9 conversation lens: one owning Actor inside one Project.
     Another member of the same Project can never read, execute, or reject it, and a

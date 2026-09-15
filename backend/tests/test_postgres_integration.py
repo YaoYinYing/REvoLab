@@ -1308,14 +1308,17 @@ def test_phase11_concurrent_execute_claims_once_on_postgres(pg_engine: Engine, t
         content_store = ctx["content_store"]
         local_registry = ctx["local_registry"]
 
-    started = threading.Event()
-    release = threading.Event()
+    # Force BOTH workers to be about to take the one-shot claim at the same
+    # instant: this exercises the atomic conditional UPDATE itself (PostgreSQL
+    # row-lock semantics under READ COMMITTED), not just the stale-`pending` guard.
+    original_claim = actions._claim
+    claim_barrier = threading.Barrier(2, timeout=30)
 
-    def block() -> None:
-        started.set()
-        release.wait(timeout=20)
+    def racing_claim(worker_session, action_request_id):  # type: ignore[no-untyped-def]
+        claim_barrier.wait()
+        return original_claim(worker_session, action_request_id)
 
-    state.before_submit = block
+    actions._claim = racing_claim  # type: ignore[assignment]
     outcomes: list[str] = []
     errors: list[Exception] = []
     lock = threading.Lock()
@@ -1343,12 +1346,13 @@ def test_phase11_concurrent_execute_claims_once_on_postgres(pg_engine: Engine, t
 
     first = threading.Thread(target=worker)
     second = threading.Thread(target=worker)
-    first.start()
-    assert started.wait(timeout=20), "the first execution never reached the provider"
-    second.start()
-    release.set()
-    first.join(timeout=30)
-    second.join(timeout=30)
+    try:
+        first.start()
+        second.start()
+        first.join(timeout=45)
+        second.join(timeout=45)
+    finally:
+        actions._claim = original_claim  # type: ignore[assignment]
 
     assert state.submit_calls == 1
     assert outcomes == [ActionRequestStatus.SUCCEEDED.value]

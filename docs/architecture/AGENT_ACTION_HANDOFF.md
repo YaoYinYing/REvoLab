@@ -22,6 +22,8 @@ review. An Action Request is **never** permission to execute:
 
 - it stores no authorization decision, no membership result, no provider-health
   snapshot, no credential material, and no reference to credential material;
+- `arguments_digest` is an UNKEYED content digest for corruption/out-of-band-edit
+  detection, never an authentication tag and never authority;
 - it is re-validated against **current** truth at execution time;
 - the Agent can never read, execute, or reject it through a tool.
 
@@ -100,8 +102,8 @@ scheduler/task/Runner/artifact-publication state owned by REvoCompute
 The complete executable argument payload must be present and schema-valid. A
 truncated display preview is **not** executable state: the durable row stores the
 full validated payload or the proposal fails closed. Argument size is bounded
-explicitly; an over-bound validated action is refused instead of being stored
-partially. Conversation transcript rows continue to hold only inert summaries —
+explicitly (the persistence boundary enforces its own bound, not only the Agent
+loop); an over-bound validated action is refused instead of being stored partially. Conversation transcript rows continue to hold only inert summaries —
 arguments live only in the Action Request persistence boundary.
 
 ## 5. Proposal path
@@ -139,7 +141,8 @@ explicit human/API request (X-Actor-Id is a development scoping seam, not auth)
          local  explicit action -> the SAME closed LocalToolRuntime the human
                                    workspace uses (e.g. decision.commit)
          remote explicit action -> the SAME capability path the human compute
-                                   endpoint uses (services.compute_submit)
+                                   endpoint uses (services.compute_submit_handle
+                                   + record_compute_run)
     -> post-execution truth
          success      -> create/reuse the canonical RunReference (+ provenance
                          edges) and mark succeeded with the result reference
@@ -188,15 +191,34 @@ upstream payload, or a 2xx that carried no task identity
     -> ambiguous: the submission may have succeeded
 ```
 
-An ambiguous action is **never** automatically retried, and never resubmitted by
-the system. Its durable state is the honest answer; recovery is an explicit human
-decision (a new Action Request, or reconciliation with the provider). Exactly-once
-limitations are never hidden behind retries.
+An ambiguous action is **never** automatically retried and the external submission
+is never repeated by the system. (The LOCAL canonical recording may be retried once
+— that is not a provider call and cannot duplicate the side effect.) Its durable
+state is the honest answer; recovery is an explicit human decision (a new Action
+Request, or reconciliation with the provider). Exactly-once limitations are never
+hidden behind retries.
 
 After a confirmed handle, the canonical RunReference (identity card) and the
 `consumed_as_input_by` provenance edges are created through the **existing**
 `record_compute_run` path. Action Request stores only that stable reference — never
 REvoCompute's mutable run state, artifacts publication state or scheduler state.
+
+If the canonical recording fails after a confirmed handle, the recording is retried
+ONCE on a healthy transaction through the same get-or-create path (so a partially
+committed attempt is completed rather than duplicated). Only if that also fails does
+the action settle `ambiguous`, and then the bounded `status_reason` retains the
+confirmed provider identity (`authority/native_id`) so a human can reconcile. That
+is the ONE place an external identity appears outside a RunReference — deliberately,
+because the canonical card could not be created — and it is not authority and not
+copied mutable state.
+
+Failure paths roll back before writing the terminal outcome, and the terminal write
+itself tolerates a session left in a failed transaction (the one-shot claim is
+already durably committed, so leaving the row `executing` after a confirmed external
+side effect would be a lie). The canonical commands this path reuses own their own
+commit (`commit_decision_row`, `_persist_run_reference_trusted`), so a SAVEPOINT
+cannot wrap them; the rollback-first discipline is what prevents an uncommitted
+partial local write from being persisted by the terminal write.
 
 ## 9. Authoritative surfaces
 
@@ -266,7 +288,8 @@ Phase 11 is exactly one explicit handoff boundary.
 - A process hard-killed after the durable claim and before the outcome write leaves
   the action in `executing`. This is reported honestly as an in-progress claim with
   its claim time; the system never auto-retries it, and a further execute request
-  fails closed. It is not silently converted into success or failure.
+  fails closed. It is not silently converted into success or failure. (A failure the
+  process DOES observe is always settled terminally — see §8.)
 - If the provider accepted a submission but the local canonical RunReference could
   not be recorded, the action is marked `ambiguous` rather than pretending either
   outcome.

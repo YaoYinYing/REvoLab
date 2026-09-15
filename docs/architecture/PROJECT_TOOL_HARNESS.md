@@ -133,9 +133,12 @@ An `explicit_action` proposal and its human execution are governed by
 `docs/architecture/AGENT_ACTION_HANDOFF.md` (ADR-0017). The Tool Harness side of
 the contract is:
 
-- the canonical input model for each explicit action is resolved from ONE mapping
-  (`revolab/tools/explicit_actions.py`) by BOTH the proposal boundary and the
-  execution boundary, so a schema change takes effect immediately;
+- the canonical input model for each explicit action is resolved from its single
+  authoritative owner by BOTH the proposal boundary and the execution boundary — a
+  LOCAL action from its registered `LocalToolSpec.input_model` (the same model the
+  closed runtime validates against), a REMOTE action from the ONE capability-suffix
+  mapping (`revolab/tools/explicit_actions.py`) — so a schema change takes effect
+  immediately;
 - execution re-resolves the Tool from the CURRENT catalog and fails closed if it
   disappeared, is unavailable, or is no longer `explicit_action`;
 - a local explicit action executes through this same closed `LocalToolRuntime`

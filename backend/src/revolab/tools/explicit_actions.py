@@ -1,37 +1,38 @@
 """Canonical explicit-action input models (Phase 11).
 
-ONE place maps a Project Tool's `explicit_action` identity to the canonical
-Pydantic input model that validates its arguments — for both the Agent proposal
-boundary and the human execution boundary. The Agent loop classifies a proposed
-tool call with it, and execution revalidates the persisted arguments against the
-CURRENT model resolved here, so a schema change takes effect immediately and no
-hand-copied duplicate schema exists.
+Every `explicit_action` Project Tool has exactly ONE authoritative input model,
+and each boundary resolves it from the owner of that fact — never from a
+hand-maintained copy:
 
-This module is a leaf: it imports only `revolab.schemas` (canonical wire models)
-and Pydantic, so it can be consumed by the Agent runtime, the Tool Harness and the
-application action service without an import cycle or provider vocabulary leaking
-into Core. A LOCAL tool's model lives on its registered `LocalToolSpec`; only
-REMOTE (provider-projected) explicit actions need a suffix mapping here, because
-the provider key is dynamic (`{provider_key}.compute.submit`).
+- a **local** explicit action resolves it from its registered
+  `LocalToolSpec.input_model` (`LocalToolRegistry.explicit_action_input_model`),
+  the same model the closed `LocalToolRuntime` validates against;
+- a **remote** (provider-projected) explicit action has no registry spec, so its
+  model is mapped here by the stable capability SUFFIX (the provider key prefix is
+  dynamic provider data). This module is the ONE place that linkage exists.
+
+Both the Agent proposal boundary and the human execution boundary call the same
+two owners, so a schema change takes effect immediately on both sides and no
+hand-copied duplicate schema exists. The module is a leaf: it imports only
+`revolab.schemas` (canonical wire models) and Pydantic, so it can be consumed by
+the Agent runtime, the Tool Harness and the application action service without an
+import cycle or provider vocabulary leaking into Core.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel
 
-from revolab.schemas import ComputeSubmissionCreate, DecisionCommitCreate
+from revolab.schemas import ComputeSubmissionCreate
 
-# Local explicit actions: stable tool id -> canonical input model. The registry
-# spec is authoritative for the *descriptor*; this map is authoritative for the
-# proposal/execution validation of a specific stable id.
-LOCAL_EXPLICIT_INPUT_MODELS: dict[str, type[BaseModel]] = {
-    "decision.commit": DecisionCommitCreate,
-}
+# The one task-submission capability suffix Core recognizes as an external compute
+# action. The provider key prefix is taken from the live catalog descriptor, never
+# parsed out of the tool id.
+COMPUTE_SUBMIT_SUFFIX = ".compute.submit"
 
-# Remote explicit actions: tool-id SUFFIX -> canonical input model. The provider
-# key prefix is dynamic, so only the capability-suffix is stable.
+# Remote explicit actions: tool-id SUFFIX -> canonical input model.
 REMOTE_EXPLICIT_INPUT_MODEL_SUFFIXES: dict[str, type[BaseModel]] = {
-    ".compute.submit": ComputeSubmissionCreate,
+    COMPUTE_SUBMIT_SUFFIX: ComputeSubmissionCreate,
 }
 
 # Bound on the persisted executable argument payload. The complete validated
@@ -40,12 +41,11 @@ REMOTE_EXPLICIT_INPUT_MODEL_SUFFIXES: dict[str, type[BaseModel]] = {
 MAX_ACTION_ARGUMENT_CHARS = 20_000
 
 
-def explicit_action_input_model(tool_id: str) -> type[BaseModel] | None:
-    """The canonical input model for a tool id, or None when the id is not a
-    known explicit action (in which case the boundary must fail closed)."""
-    local = LOCAL_EXPLICIT_INPUT_MODELS.get(tool_id)
-    if local is not None:
-        return local
+def remote_explicit_action_input_model(tool_id: str) -> type[BaseModel] | None:
+    """The canonical input model for a REMOTE explicit-action tool id, or None
+    when the id is not a known remote explicit action (in which case the boundary
+    must fail closed). A local explicit action resolves its model from its
+    registered `LocalToolSpec` instead."""
     for suffix, model in REMOTE_EXPLICIT_INPUT_MODEL_SUFFIXES.items():
         if tool_id.endswith(suffix):
             return model
@@ -53,8 +53,8 @@ def explicit_action_input_model(tool_id: str) -> type[BaseModel] | None:
 
 
 __all__ = [
-    "LOCAL_EXPLICIT_INPUT_MODELS",
+    "COMPUTE_SUBMIT_SUFFIX",
     "MAX_ACTION_ARGUMENT_CHARS",
     "REMOTE_EXPLICIT_INPUT_MODEL_SUFFIXES",
-    "explicit_action_input_model",
+    "remote_explicit_action_input_model",
 ]

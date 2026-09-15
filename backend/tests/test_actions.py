@@ -58,9 +58,14 @@ from revolab.models import (
     RunReference,
     ScientificObjectRevision,
 )
-from revolab.schemas import ComputeSubmissionCreate, ContextSelectionCreate
+from revolab.schemas import (
+    ComputeSubmissionCreate,
+    ContextSelectionCreate,
+    DecisionCommitCreate,
+)
 from revolab.secret_store import InMemorySecretStore
 from revolab.tools import build_tool_catalog
+from revolab.tools.explicit_actions import remote_explicit_action_input_model
 from revolab.tools.registry import ALL_LOCAL_TOOLS, LocalToolSpec, build_default_registry
 from revolab.tools.runtime import LocalToolRuntime
 
@@ -219,7 +224,9 @@ def _propose(
     actor_id: UUID | None = None,
     project_id: UUID | None = None,
 ) -> ActionRequest:
-    model = actions.explicit_action_input_model(tool_id)
+    model = build_default_registry().explicit_action_input_model(
+        tool_id
+    ) or remote_explicit_action_input_model(tool_id)
     assert model is not None
     validated = model.model_validate(arguments).model_dump(mode="json")
     action = actions.propose_action_request(
@@ -714,7 +721,7 @@ def test_human_rejection_has_no_side_effect(session: Session) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_concurrent_execute_submits_at_most_once(tmp_path: Any) -> None:
+def test_concurrent_execute_submits_at_most_once(tmp_path: Any, monkeypatch: Any) -> None:
     import threading
 
     from sqlalchemy import create_engine
@@ -739,14 +746,17 @@ def test_concurrent_execute_submits_at_most_once(tmp_path: Any) -> None:
         registry = scenario["registry"]
         store = scenario["store"]
 
-    started = threading.Event()
-    release = threading.Event()
+    # Force BOTH workers to be inside execute_action_request and about to take the
+    # one-shot claim at the same instant, so the test exercises the atomic
+    # conditional UPDATE itself rather than only the stale-`pending` guard.
+    original_claim = actions._claim
+    claim_barrier = threading.Barrier(2, timeout=20)
 
-    def block() -> None:
-        started.set()
-        release.wait(timeout=15)
+    def racing_claim(worker_session, action_request_id):  # type: ignore[no-untyped-def]
+        claim_barrier.wait()
+        return original_claim(worker_session, action_request_id)
 
-    state.before_submit = block
+    monkeypatch.setattr(actions, "_claim", racing_claim)
     outcomes: list[str] = []
     errors: list[Exception] = []
     lock = threading.Lock()
@@ -775,11 +785,9 @@ def test_concurrent_execute_submits_at_most_once(tmp_path: Any) -> None:
     first = threading.Thread(target=worker)
     second = threading.Thread(target=worker)
     first.start()
-    assert started.wait(timeout=15), "the first execution never reached the provider"
     second.start()
-    release.set()
-    first.join(timeout=20)
-    second.join(timeout=20)
+    first.join(timeout=30)
+    second.join(timeout=30)
 
     assert state.submit_calls == 1
     assert outcomes == [ActionRequestStatus.SUCCEEDED.value]
@@ -1025,17 +1033,154 @@ def test_over_bound_argument_payload_is_refused_not_truncated(session: Session) 
 
 
 def test_explicit_action_input_models_are_single_sourced() -> None:
-    """The canonical explicit-action model mapping is defined once and consumed by
-    both the Agent proposal boundary and the human execution boundary."""
+    """Each explicit-action model is resolved from its single authoritative owner:
+    the registered `LocalToolSpec` for a local action, the ONE provider-suffix
+    mapping for a remote one. Removing either linkage makes this fail."""
     from revolab.tools.explicit_actions import (
-        LOCAL_EXPLICIT_INPUT_MODELS,
         REMOTE_EXPLICIT_INPUT_MODEL_SUFFIXES,
-        explicit_action_input_model,
+        remote_explicit_action_input_model,
     )
+    from revolab.tools.registry import build_default_registry
 
-    assert LOCAL_EXPLICIT_INPUT_MODELS["decision.commit"] is explicit_action_input_model(
-        "decision.commit"
+    registry = build_default_registry()
+    # A local explicit action resolves to the EXACT model the closed runtime
+    # validates against — not to a second hand-maintained mapping.
+    assert registry.explicit_action_input_model("decision.commit") is DecisionCommitCreate
+    assert registry.explicit_action_input_model("decision.commit") is (
+        registry.get("decision.commit").input_model
     )
+    # A local tool that is not an explicit action, and an unknown id, resolve to
+    # nothing (the boundary then fails closed).
+    assert registry.explicit_action_input_model("table.describe") is None
+    assert registry.explicit_action_input_model("does.not.exist") is None
+    assert registry.get("table.describe").autonomy is not AgentToolAutonomy.EXPLICIT_ACTION
+
+    # A remote explicit action resolves from the one capability-suffix mapping.
     assert REMOTE_EXPLICIT_INPUT_MODEL_SUFFIXES[".compute.submit"] is ComputeSubmissionCreate
-    assert explicit_action_input_model(f"{PROVIDER}.compute.submit") is ComputeSubmissionCreate
-    assert explicit_action_input_model("table.describe") is None
+    assert remote_explicit_action_input_model(f"{PROVIDER}.compute.submit") is (
+        ComputeSubmissionCreate
+    )
+    assert remote_explicit_action_input_model("decision.commit") is None
+    assert remote_explicit_action_input_model("table.describe") is None
+
+
+# ---------------------------------------------------------------------------
+# Post-claim failure honesty: a confirmed external side effect is never hidden
+# ---------------------------------------------------------------------------
+
+
+def test_confirmed_but_unrecorded_run_is_terminal_and_never_stuck(
+    session: Session, monkeypatch: Any
+) -> None:
+    """A confirmed provider submission whose canonical RunReference cannot be
+    recorded must NOT leave the action `executing`, and must retain the provider
+    identity (bounded) so a human can reconcile. No RunReference may exist."""
+    scenario = _scenario(session)
+    action = _propose(session, scenario, f"{PROVIDER}.compute.submit", _compute_arguments(scenario))
+
+    def explode(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("recording backend unavailable")
+
+    monkeypatch.setattr(services, "record_compute_run", explode)
+
+    executed = actions.execute_action_request(
+        _execution(session, scenario), scenario["actor"], scenario["project"].id, action.id
+    )
+    assert executed.status == ActionRequestStatus.AMBIGUOUS.value
+    assert executed.resolved_at is not None
+    assert executed.result_run_id is None
+    # The confirmed provider identity is retained for reconciliation.
+    assert scenario["state"].submit_calls == 1
+    assert f"{AUTHORITY}/native-1" in (executed.status_reason or "")
+    assert session.scalar(select(func.count()).select_from(RunReference)) == 0
+    # Terminal: no retry, no re-submission.
+    with pytest.raises(ConflictError):
+        actions.execute_action_request(
+            _execution(session, scenario),
+            scenario["actor"],
+            scenario["project"].id,
+            action.id,
+        )
+    assert scenario["state"].submit_calls == 1
+
+
+def test_db_level_recording_failure_still_settles_the_action(
+    session: Session, monkeypatch: Any
+) -> None:
+    """A DB-level failure leaves the SQLAlchemy session in a failed transaction.
+    `_settle` must roll back first and still land a terminal outcome rather than
+    stranding the action in `executing` (which would misreport a confirmed
+    external submission as merely in progress forever)."""
+    from sqlalchemy import text
+
+    scenario = _scenario(session)
+    action = _propose(session, scenario, f"{PROVIDER}.compute.submit", _compute_arguments(scenario))
+
+    def explode(*args: Any, **kwargs: Any) -> Any:
+        # A real database error: it marks the current transaction as failed.
+        session.execute(text("SELECT * FROM table_that_does_not_exist_phase11"))
+
+    monkeypatch.setattr(services, "record_compute_run", explode)
+
+    executed = actions.execute_action_request(
+        _execution(session, scenario), scenario["actor"], scenario["project"].id, action.id
+    )
+    assert executed.status == ActionRequestStatus.AMBIGUOUS.value
+    session.refresh(executed)
+    assert executed.status == ActionRequestStatus.AMBIGUOUS.value
+    assert scenario["state"].submit_calls == 1
+    assert session.scalar(select(func.count()).select_from(RunReference)) == 0
+
+
+def test_partially_recorded_run_is_completed_not_orphaned(
+    session: Session, monkeypatch: Any
+) -> None:
+    """`record_compute_run` commits the RunReference before adding its input
+    provenance edges. If a later step fails, the retry must COMPLETE the canonical
+    recording (get-or-create) and settle `succeeded` with the real reference —
+    never leave an orphaned committed RunReference behind an `ambiguous` action."""
+    scenario = _scenario(session)
+    action = _propose(session, scenario, f"{PROVIDER}.compute.submit", _compute_arguments(scenario))
+
+    original = services.add_consumed_input
+    calls = {"count": 0}
+
+    def explode_once(*args: Any, **kwargs: Any) -> Any:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("provenance edge backend unavailable")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(services, "add_consumed_input", explode_once)
+    executed = actions.execute_action_request(
+        _execution(session, scenario), scenario["actor"], scenario["project"].id, action.id
+    )
+    assert calls["count"] >= 2
+
+    assert executed.status == ActionRequestStatus.SUCCEEDED.value
+    assert executed.result_run_id is not None
+    run = session.get(RunReference, executed.result_run_id)
+    assert run is not None and run.native_id == "native-1"
+    assert scenario["state"].submit_calls == 1
+
+
+def test_propose_refuses_an_over_bound_payload(session: Session) -> None:
+    """The PERSISTENCE boundary enforces its own size bound (defense in depth):
+    an over-bound payload is refused, never stored truncated."""
+    from revolab.domain.errors import ValidationError
+
+    scenario = _scenario(session)
+    with pytest.raises(ValidationError):
+        actions.propose_action_request(
+            session,
+            actor_id=scenario["actor"],
+            project_id=scenario["project"].id,
+            conversation_id=None,
+            tool_id=f"{PROVIDER}.compute.submit",
+            autonomy=AgentToolAutonomy.EXPLICIT_ACTION,
+            execution_class=ToolExecutionClass.REMOTE,
+            side_effect_class=ToolSideEffectClass.EXTERNAL_ACTION,
+            arguments=_compute_arguments(scenario, params={"blob": "x" * 30_000}),
+        )
+    session.rollback()
+    assert session.scalar(select(func.count()).select_from(ActionRequest)) == 0

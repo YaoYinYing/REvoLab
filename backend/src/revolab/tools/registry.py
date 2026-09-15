@@ -124,6 +124,18 @@ class LocalToolRegistry:
     def __contains__(self, tool_id: str) -> bool:
         return tool_id in self._tools
 
+    def explicit_action_input_model(self, tool_id: str) -> type[BaseModel] | None:
+        """The canonical input model of a registered LOCAL explicit action.
+
+        The registry spec is the single authoritative owner of that fact (it is
+        also what the closed `LocalToolRuntime` validates against); a tool that is
+        unknown or is not `explicit_action` resolves to None so the boundary fails
+        closed."""
+        spec = self._tools.get(tool_id)
+        if spec is None or spec.autonomy is not AgentToolAutonomy.EXPLICIT_ACTION:
+            return None
+        return spec.input_model
+
 
 ALL_LOCAL_TOOLS: tuple[LocalToolSpec, ...] = (
     LocalToolSpec(
