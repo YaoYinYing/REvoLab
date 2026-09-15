@@ -747,7 +747,8 @@
         "type": "string"
       },
       "ContextSelectionCreate": {
-        "description": "Declarative description of what one Agent turn may read.\n\nThe selection is a bounded, Project-scoped list of resource identities and\nexplicit category/budget switches. It contains no query syntax and never\nrequests material from another Project; the ContextBuilder validates every\nselected identity against this Project's read lens and fails closed.",
+        "additionalProperties": false,
+        "description": "Declarative description of what one Agent turn may read.\n\nThe selection is a bounded, Project-scoped list of resource identities and\nexplicit category/budget switches. It contains no query syntax and never\nrequests material from another Project; the ContextBuilder validates every\nselected identity against this Project's read lens and fails closed. Unknown\nfields fail closed like every other request model.",
         "properties": {
           "artifact_ids": {
             "anyOf": [

@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -138,6 +138,11 @@ const defaultApi = () => ({
   createNote: vi.fn().mockResolvedValue({
     data: { ...note, latest: null },
     error: undefined,
+    response: new Response(),
+  }),
+  getNote: vi.fn().mockResolvedValue({
+    data: undefined,
+    error: new Error('not found'),
     response: new Response(),
   }),
 })
@@ -535,5 +540,25 @@ describe('Agent view (Phase 9)', () => {
 
     const body = turnMock.mock.calls[0][2] as { selection: Record<string, unknown> }
     expect(body.selection.note_ids).toBeUndefined()
+  })
+  it('resolves a handed-off note that is outside the newest selector page', async () => {
+    const turnMock = vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() })
+    const getNote = vi.fn().mockResolvedValue({ data: { ...note, latest: null }, error: undefined, response: new Response() })
+    // The hand-off note is NOT in the (newest-page) list.
+    mockedUseNotes.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), getNote, createConversationTurn: turnMock } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" initialNoteIds={[note.id]} />)
+    const select = await screen.findByLabelText('Select note for agent context')
+    await waitFor(() => expect(select).toHaveValue(note.id))
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'summarize the handed-off note',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    const body = turnMock.mock.calls[0][2] as { selection: { note_ids?: string[] } }
+    expect(body.selection.note_ids).toEqual([note.id])
   })
 })

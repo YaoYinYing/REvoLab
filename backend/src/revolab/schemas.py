@@ -568,8 +568,11 @@ class ContextSelectionCreate(BaseModel):
     The selection is a bounded, Project-scoped list of resource identities and
     explicit category/budget switches. It contains no query syntax and never
     requests material from another Project; the ContextBuilder validates every
-    selected identity against this Project's read lens and fails closed.
+    selected identity against this Project's read lens and fails closed. Unknown
+    fields fail closed like every other request model.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     series_ids: list[UUID] | None = Field(default=None, max_length=200)
     revision_ids: list[UUID] | None = Field(default=None, max_length=400)

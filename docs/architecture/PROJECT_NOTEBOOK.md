@@ -2,11 +2,10 @@
 
 > **Status: Proposed — pending human acceptance** (Phase 10, PR #11). This is the
 > normative owner of the Project Note / working-knowledge boundary once accepted.
-> `PROJECT_CONVERSATIONS.md` (private working memory), `AGENT_CONTEXT.md` (the
-> consumer/authority lens), and `EVIDENCE_PROVENANCE.md` (the scientific-claim
-> boundary) consume this document; they never re-describe Note semantics. The
-> `Accepted` status is set only by a human after review; the patch does not
-> self-promote it.
+> `PROJECT_CONVERSATIONS.md` (private working memory) and `AGENT_CONTEXT.md` (the
+> consumer/authority lens) consume this document; they never re-describe Note
+> semantics. The `Accepted` status is set only by a human after review; the patch
+> does not self-promote it.
 
 ## Canonical principle
 
@@ -120,14 +119,19 @@ A `NoteMention` means only:
 - Mentions belong to an immutable revision. If a target is later unlinked,
   archived, or revoked, the revision text and mention row are preserved and the
   read projection reports `resolved=false`; history is never rewritten.
-- Availability is deliberately lens-based per target class. A global resource is
-  mentionable iff it is in the Project read lens (`ProjectResourceLink`); a
-  resource's own `archived_at`/`revoked_at` flag does not remove it from that lens
-  (the same rule the ContextBuilder uses for the visible series skeleton). A
-  Project-scoped Evidence/Decision is mentionable iff the aggregate is currently
-  active in this Project (`archived_at IS NULL`), because archiving is how those
-  aggregates leave the Project-visible set. This asymmetry is intentional, not a
-  second visibility model.
+- Availability is consistent across target classes: a target is mentionable iff it
+  is in the Project read lens (`ProjectResourceLink`) **and** its own lifecycle
+  flag is active (a ScientificObjectSeries is `archived_at IS NULL`, a reference is
+  `revoked_at IS NULL`; Evidence/Decision additionally require `project_id` match
+  and `archived_at IS NULL`). `queries.resource_mention_active` is the shared
+  resource-side check, so a newly supplied mention to an archived series or a
+  revoked reference is refused exactly like an archived Evidence/Decision, and an
+  existing one resolves `resolved=false`.
+- The read projection always returns the opaque target UUID (`resource_id` /
+  `evidence_id` / `decision_id`) but withholds `label` when `resolved=false`; the
+  id is the stable identity of a reference that was already disclosed in this
+  Project's immutable revision, and the workspace renders it as an unresolved
+  reference.
 - Cross-domain composition is an application-layer concern: the Notebook service
   resolves Evidence/Decision targets through the owning domains' public contracts
   (`domain.provenance.evidence_mention_target`,

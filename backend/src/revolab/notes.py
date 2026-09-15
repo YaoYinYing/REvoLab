@@ -65,7 +65,6 @@ from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundErr
 from revolab.domain.identity import mutation_capable_membership, readable_membership
 from revolab.enums import ResourceKind
 from revolab.models import (
-    GlobalResourceRegistry,
     NoteMention,
     ProjectNote,
     ProjectNoteRevision,
@@ -84,6 +83,10 @@ from revolab.schemas import (
 
 DEFAULT_NOTES_PAGE_LIMIT = 50
 DEFAULT_REVISIONS_PAGE_LIMIT = 100
+# Defense-in-depth hard ceilings for a non-HTTP caller: the wire schema already
+# bounds these, but the resolver must not trust its inputs.
+MAX_NOTES_SELECTION = 50
+MAX_NOTE_SELECTION_CHARS = MAX_NOTE_BODY_CHARS
 
 # Process-level per-note mutation locks for the SQLite substrate. PostgreSQL uses
 # the note row lock (`SELECT ... FOR UPDATE`), which orders appends AND archive
@@ -218,15 +221,12 @@ def _resolve_mentions(
     specs: list[_MentionSpec] = []
     for mention in mentions:
         if mention.resource_id is not None:
-            registry = session.get(GlobalResourceRegistry, mention.resource_id)
-            if registry is None or mention.resource_id not in visible:
+            kind = visible.get(mention.resource_id)
+            if kind is None or not queries.resource_mention_active(
+                session, mention.resource_id, kind
+            ):
                 raise AuthorizationError("mentioned resource is not visible in this project")
-            specs.append(
-                _MentionSpec(
-                    resource_id=registry.resource_id,
-                    resource_kind=registry.resource_kind,
-                )
-            )
+            specs.append(_MentionSpec(resource_id=mention.resource_id, resource_kind=kind.value))
         elif mention.evidence_id is not None:
             target = provenance_domain.evidence_mention_target(
                 session, project_id, mention.evidence_id
@@ -389,13 +389,17 @@ def append_revision(
             body=body,
             created_by_actor_id=actor_id,
         )
-        session.add(revision)
         try:
-            session.flush()
+            # SAVEPOINT, not `session.rollback()`: a uniqueness collision must
+            # discard ONLY this command's own insert, never a composing caller's
+            # pending work. The row lock above normally prevents the collision;
+            # this is the backend-independent backstop (SQLite ignores FOR UPDATE).
+            with session.begin_nested():
+                session.add(revision)
+                session.flush()
         except IntegrityError as exc:
-            # Backend-independent backstop: SQLite ignores SELECT ... FOR UPDATE, so
-            # the uniqueness constraint is what actually prevents a lost update there.
-            session.rollback()
+            if revision in session:
+                session.expunge(revision)
             if not _is_revision_uniqueness_conflict(exc):
                 raise
             raise ConflictError(
@@ -539,8 +543,10 @@ def _mention_read(
     rewritten."""
     if row.target_resource_id is not None:
         kind = visible.get(row.target_resource_id)
+        resolved = kind is not None and queries.resource_mention_active(
+            session, row.target_resource_id, kind
+        )
         label: str | None = None
-        resolved = kind is not None
         if resolved and kind is not None:
             label = _resource_label(session, row.target_resource_id, kind)
         return NoteMentionRead(
@@ -623,6 +629,8 @@ def resolve_selected_notes(
     Returns the refs plus a `truncated` flag: exceeding `max_notes` or clipping a
     body to `max_note_chars` is reported explicitly, never silently."""
     readable_membership(session, actor_id, project_id)
+    max_notes = max(0, min(max_notes, MAX_NOTES_SELECTION))
+    max_note_chars = max(0, min(max_note_chars, MAX_NOTE_SELECTION_CHARS))
     seen: set[UUID] = set()
 
     def _build(note: ProjectNote, revision: ProjectNoteRevision) -> NoteRefRead:

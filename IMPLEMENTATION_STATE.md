@@ -1462,7 +1462,7 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
   `target_evidence_id`/`target_decision_id`, CHECK exactly-one-target, unique
   `(revision_id, ordinal)`). No new enum; a Note is not a `GlobalResourceRegistry`
   entry, ScientificObject, Evidence, Decision, or provenance node.
-- **Domain service** (`revolab/notes.py`): create / list / get / patch
+- **Application service** (`revolab/notes.py`): create / list / get / patch
   (rename-archive) / append-revision / list-revisions plus
   `resolve_selected_notes` for bounded Agent-context selection. Read uses
   `readable_membership` (owner/member/viewer); mutate uses
@@ -1526,8 +1526,8 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
 ## Verified evidence (Phase 10)
 
 - Backend: `ruff check backend` and strict `mypy` pass on **51 source files**.
-  `pytest` passes **385 passed, 13 skipped** (SQLite fast tests; the 13 skips are
-  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (42
+  `pytest` passes **387 passed, 13 skipped** (SQLite fast tests; the 13 skips are
+  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (44
   tests) covers: Project-shared read for member/viewer; non-member no-oracle;
   cross-Project 404; viewer mutation 403; immediate membership revocation;
   Project tombstone; immutable sequence-ordered revisions; stale-edit 409;
@@ -1554,7 +1554,7 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
   idempotent; the contract regression asserts the three Note paths, the Note
   request schemas reject unknown fields, the context selection carries the Note
   fields, and `ProjectContextRead` carries `notes`.
-- Frontend: `npm run typecheck`, `npm run test` (**48 tests**, including safe
+- Frontend: `npm run typecheck`, `npm run test` (**49 tests**, including safe
   Markdown inertness, Notebook create/mention/append/conflict/archive/Agent
   hand-off/viewer read-only, and explicit "Save to Project Note"), and
   `npm run build` pass.
@@ -1663,8 +1663,8 @@ were then closed:
   adversarial href, and FK no-cascade all gained regressions; the browser gate
   records its `REVOLAB_DATABASE_URL` requirement.
 
-Final machine state: backend `385 passed, 13 skipped`; PostgreSQL `13 passed`;
-frontend `48 tests`; Playwright `6 specs` (all over PostgreSQL).
+Final machine state: backend `387 passed, 13 skipped`; PostgreSQL `13 passed`;
+frontend `49 tests`; Playwright `6 specs` (all over PostgreSQL).
 
 ## Merge-quality reconciliation (PR #11, review round 2)
 
@@ -1708,6 +1708,40 @@ blockers on the previously reviewed head. All were corrected on the same branch:
 - **Machine truth.** The top-level Status now states Phase 10 is implemented and
   under human review (Phases 1–9 accepted on `main`), and this ledger reflects the
   current reviewed head only.
+
+### Final independent review (5 reviewers) — reconciliation
+
+A fresh 5-reviewer pass over `main...HEAD` (A architecture, B security, C
+persistence, D API/frontend, E tests/docs) found no P0; A/B/D/E returned PASS and C
+one P1 + one P2. All valid findings were fixed:
+
+- **P1 (transaction safety).** The flush-time uniqueness backstop called
+  `session.rollback()`, discarding a composing caller's whole transaction. It now
+  uses a SAVEPOINT around the revision insert (and expunges the failed revision),
+  so only this command's own write is discarded; the stale-base path is unchanged.
+  Regression `test_uniqueness_backstop_preserves_a_composing_callers_transaction`
+  pre-flushes a caller row, forces the collision, and proves the caller row and the
+  true revision history survive.
+- **P2 (mention lifecycle consistency).** Resource mentions resolved/validated from
+  link visibility alone, ignoring `archived_at`/`revoked_at`, unlike
+  Evidence/Decision. `queries.resource_mention_active` is now the shared resource-side
+  lifecycle check; `_resolve_mentions` refuses an archived series/revoked reference
+  and `_mention_read` derives `resolved` from it. Regression
+  `test_archived_resource_mention_is_refused_and_reads_unresolved`.
+- **P2 (frontend).** Transient notice/error now clear on Note switch; load-more is
+  clamped to the server's 200 cap (and `revisionLimit` resets per Note); an Agent
+  hand-off of a valid current-Project Note outside the newest selector page is
+  resolved by id (`getNote`) instead of being silently dropped
+  (`Agent.test.tsx` hand-off-resolution regression).
+- **P3 hardening.** `ContextSelectionCreate` gained `extra="forbid"`;
+  `resolve_selected_notes` clamps `max_notes`/`max_note_chars` internally (defense in
+  depth); the cap-ordering regression is deterministic regardless of UUID sort
+  order; the PostgreSQL lock test now also asserts `patch_note` emits `FOR UPDATE`
+  and the lifecycle test asserts the rejected create left no ghost; the stale
+  "Domain service" label, `DOMAIN_BOUNDARIES.md` public-contract list, and the
+  `EVIDENCE_PROVENANCE.md` wording were corrected.
+
+Delta pass after these corrections: _recorded below once complete._
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

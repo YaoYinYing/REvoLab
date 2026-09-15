@@ -49,6 +49,35 @@ def visible_resources(session: Session, project_id: UUID) -> dict[UUID, Resource
     return {resource_id: ResourceKind(kind) for resource_id, kind in rows}
 
 
+def resource_mention_active(session: Session, resource_id: UUID, kind: ResourceKind) -> bool:
+    """Whether a linked global resource is still an ACTIVE mention target.
+
+    Visibility through the Project lens (`visible_resources`) is not the same as
+    lifecycle availability: a ScientificObjectSeries can be archived and a
+    reference can be revoked while its link still exists. Note mentions treat that
+    the same way Evidence/Decision archiving is treated, so `resolved` is derived
+    from the target's own lifecycle flag rather than link presence alone."""
+    if kind is ResourceKind.SCIENTIFIC_OBJECT_SERIES:
+        series = session.get(ScientificObjectSeries, resource_id)
+        return series is not None and series.archived_at is None
+    if kind is ResourceKind.SCIENTIFIC_OBJECT_REVISION:
+        return session.get(ScientificObjectRevision, resource_id) is not None
+    if kind is ResourceKind.RUN_REFERENCE:
+        run = session.get(RunReference, resource_id)
+        return run is not None and run.revoked_at is None
+    if kind is ResourceKind.SESSION_REFERENCE:
+        reference = session.get(SessionReference, resource_id)
+        return reference is not None and reference.revoked_at is None
+    if kind is ResourceKind.ARTIFACT_REFERENCE:
+        artifact = session.get(ArtifactReference, resource_id)
+        return artifact is not None and artifact.revoked_at is None
+    if kind is ResourceKind.LITERATURE_REFERENCE:
+        return session.get(LiteratureReference, resource_id) is not None
+    if kind is ResourceKind.EXTERNAL_REFERENCE:
+        return session.get(ExternalReference, resource_id) is not None
+    return False
+
+
 def is_edge_visible(
     session: Session, project_id: UUID, source_id: UUID, target_id: UUID, visible: dict[UUID, ResourceKind]
 ) -> bool:

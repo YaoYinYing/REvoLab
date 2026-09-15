@@ -851,6 +851,15 @@ def test_phase10_notes_schema_and_lifecycle_on_postgres(pg_session: Session) -> 
             body="bad",
             mentions=[NoteMentionCreate(resource_id=hidden)],
         )
+    # The rejected create left no ghost Note behind (atomic command).
+    assert (
+        pg_session.scalar(
+            select(ProjectNote.id).where(
+                ProjectNote.project_id == project.id, ProjectNote.title == "bad"
+            )
+        )
+        is None
+    )
 
     # Archiving is non-destructive but blocks new revisions.
     patch_note(pg_session, actor_a, project.id, note.id, archive=True)
@@ -994,12 +1003,12 @@ def test_phase10_concurrent_append_conflicts_on_postgres(pg_session: Session) ->
 
 
 def test_phase10_append_takes_note_row_lock_on_postgres(pg_session: Session) -> None:
-    """The append path really requests the PostgreSQL row lock. Removing
-    `with_for_update` from `notes._mutable_note` makes this fail, so the ordering
-    claim in notes.py/ADR-0016 is executable, not just asserted."""
+    """BOTH mutators request the PostgreSQL row lock: removing `with_for_update`
+    from `notes._mutable_note` (or dropping it from `patch_note`) makes this fail,
+    so the ordering claim in notes.py/ADR-0016 is executable, not just asserted."""
     from sqlalchemy import event
 
-    from revolab.notes import append_revision, create_note
+    from revolab.notes import append_revision, create_note, patch_note
 
     actor = services.create_actor(pg_session)
     project = services.create_project(pg_session, actor, "PG Note Lock")
@@ -1010,10 +1019,18 @@ def test_phase10_append_takes_note_row_lock_on_postgres(pg_session: Session) -> 
     def recorder(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
         statements.append(statement)
 
-    event.listen(engine, "before_cursor_execute", recorder)
-    try:
-        append_revision(pg_session, actor, project.id, note.id, base_revision_seq=1, body="v2")
-    finally:
-        event.remove(engine, "before_cursor_execute", recorder)
+    def recording(call):  # type: ignore[no-untyped-def]
+        event.listen(engine, "before_cursor_execute", recorder)
+        try:
+            call()
+        finally:
+            event.remove(engine, "before_cursor_execute", recorder)
 
-    assert any("FOR UPDATE" in statement.upper() for statement in statements), statements
+    recording(lambda: append_revision(pg_session, actor, project.id, note.id, base_revision_seq=1, body="v2"))
+    append_statements = list(statements)
+    statements.clear()
+    recording(lambda: patch_note(pg_session, actor, project.id, note.id, title="Lock renamed"))
+    patch_statements = list(statements)
+
+    assert any("FOR UPDATE" in statement.upper() for statement in append_statements), append_statements
+    assert any("FOR UPDATE" in statement.upper() for statement in patch_statements), patch_statements

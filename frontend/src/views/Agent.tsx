@@ -8,6 +8,7 @@ import type {
   AgentTurnRead,
   ConversationMessageRead,
   ConversationRead,
+  NoteRead,
 } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
@@ -59,10 +60,39 @@ export function AgentView({
   const [totalMessages, setTotalMessages] = useState(0)
   const [turn, setTurn] = useState<AgentTurnRead | null>(null)
   const [savedMessageId, setSavedMessageId] = useState<string | null>(null)
+  // A handed-off Note that is a valid current-Project note but falls outside the
+  // newest selector page is resolved by id rather than silently dropped.
+  const [handoffNote, setHandoffNote] = useState<NoteRead | null>(null)
 
+  const noteInList = notes?.some((note) => note.id === selectedNoteId) ?? false
   // Only a Note that actually belongs to the current Project may be selected: a
   // Project switch clears the hand-off and a stale id is never sent.
-  const effectiveNoteId = notes?.some((note) => note.id === selectedNoteId) ? selectedNoteId : ''
+  const effectiveNoteId =
+    noteInList || handoffNote?.id === selectedNoteId ? selectedNoteId : ''
+
+  useEffect(() => {
+    if (!actorId || !projectId || !selectedNoteId) return
+    if (noteInList || handoffNote?.id === selectedNoteId) return
+    if (!notes) return // wait for the page load before resolving a hand-off
+    let cancelled = false
+    projectApi(actorId)
+      .getNote(projectId, selectedNoteId)
+      .then((res) => {
+        if (cancelled) return
+        if (res.error || !res.data) {
+          // Foreign/stale/unreadable id: fail closed, never send it.
+          setSelectedNoteId('')
+          return
+        }
+        setHandoffNote(res.data as NoteRead)
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedNoteId('')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [actorId, projectId, selectedNoteId, noteInList, notes, handoffNote?.id])
 
   // Synchronous view scope: updated on every render so an in-flight turn from a
   // previous Actor x Project can be discarded even before the reset effect runs.
@@ -90,6 +120,7 @@ export function AgentView({
     setSelectedArtifactId('')
     setSelectedNoteId(initialNoteIds[0] ?? '')
     setSavedMessageId(null)
+    setHandoffNote(null)
     projectApi(actorId)
       .listConversations(projectId)
       .then((res) => {
@@ -330,6 +361,11 @@ export function AgentView({
                   {note.title} (rev {note.latest_revision_seq})
                 </option>
               ))}
+              {handoffNote && !noteInList ? (
+                <option key={handoffNote.id} value={handoffNote.id}>
+                  {handoffNote.title} (rev {handoffNote.latest_revision_seq})
+                </option>
+              ) : null}
             </select>
           </Field>
         </div>

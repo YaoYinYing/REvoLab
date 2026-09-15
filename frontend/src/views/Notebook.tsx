@@ -21,6 +21,9 @@ import { ROLE_MEMBER, ROLE_OWNER } from '../contracts/enums'
 
 const PAGE_SIZE = 50
 const REVISION_PAGE_SIZE = 100
+// Server-side hard caps (`le=200` on both endpoints): never request beyond them.
+const NOTES_MAX = 200
+const REVISIONS_MAX = 200
 
 /** Encode a mention target as a stable option value. */
 function mentionOptionToPayload(value: string): NoteMentionCreate {
@@ -101,10 +104,13 @@ export function NotebookView({
   )
 
   useEffect(() => {
-    // Clear the editor on selection change so the form can never briefly hold the
-    // previous Note's body.
+    // Clear the editor and any transient outcome on selection change so the form
+    // can never briefly hold the previous Note's body/notice/error.
     setEditBody('')
     setClearMentions(false)
+    setNotice(null)
+    setActionError(null)
+    setRevisionLimit(REVISION_PAGE_SIZE)
   }, [selectedNoteId])
 
   useEffect(() => {
@@ -343,8 +349,8 @@ export function NotebookView({
           ))}
         </div>
         <LoadMore
-          visible={(notes.data?.length ?? 0) === limit}
-          onLoad={() => setLimit((value) => value + PAGE_SIZE)}
+          visible={(notes.data?.length ?? 0) === limit && limit < NOTES_MAX}
+          onLoad={() => setLimit((value) => Math.min(value + PAGE_SIZE, NOTES_MAX))}
         />
       </Section>
 
@@ -478,8 +484,10 @@ export function NotebookView({
               </div>
             ))}
             <LoadMore
-              visible={(revisions.data?.length ?? 0) === revisionLimit}
-              onLoad={() => setRevisionLimit((value) => value + REVISION_PAGE_SIZE)}
+              visible={
+                (revisions.data?.length ?? 0) === revisionLimit && revisionLimit < REVISIONS_MAX
+              }
+              onLoad={() => setRevisionLimit((value) => Math.min(value + REVISION_PAGE_SIZE, REVISIONS_MAX))}
             />
           </Section>
         </Section>

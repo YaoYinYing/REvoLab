@@ -1187,14 +1187,18 @@ def test_note_context_selection_authorizes_all_ids_before_the_cap(session):
             _registry(),
             ContextSelectionCreate(note_ids=[uuid4()], max_notes=0),
         )
-    # An invalid id sorted AFTER the cap is still authorized/validated.
+    # An invalid id at/after the cap is still authorized/validated. `max_notes`
+    # is set to the foreign id's position so the ordering is deterministic
+    # regardless of how the UUIDs sort.
+    ordered = sorted([own.id, foreign.id])
+    cap = ordered.index(foreign.id)
     with pytest.raises(AuthorizationError):
         build_context(
             session,
             owner,
             project.id,
             _registry(),
-            ContextSelectionCreate(note_ids=[own.id, foreign.id], max_notes=1),
+            ContextSelectionCreate(note_ids=[own.id, foreign.id], max_notes=cap),
         )
 
 
@@ -1233,3 +1237,62 @@ def test_note_http_append_without_mentions_inherits_links(client):
     ).json()["latest"]
     assert latest["revision_seq"] == 2
     assert latest["mentions"][0]["resource_id"] == series_id
+
+
+def test_uniqueness_backstop_preserves_a_composing_callers_transaction(session, monkeypatch):
+    """The flush-time uniqueness backstop must discard ONLY this command's insert
+    (SAVEPOINT), never a composing caller's already-flushed work."""
+    import revolab.notes as notes_module
+
+    owner = _actor(session)
+    project = _project(session, owner)
+    note = create_note(session, owner, project.id, title="N", body="v1")
+    append_revision(session, owner, project.id, note.id, base_revision_seq=1, body="v2")
+
+    caller_row = ProjectNote(project_id=project.id, created_by_actor_id=owner, title="Caller work")
+    session.add(caller_row)
+    session.flush()
+
+    # Force the backstop: report the latest as 1 while seq 2 already exists.
+    monkeypatch.setattr(notes_module, "_latest_revision_seq", lambda _session, _note_id: 1)
+    with pytest.raises(ConflictError):
+        append_revision(session, owner, project.id, note.id, base_revision_seq=1, body="dup")
+
+    session.commit()
+    assert "Caller work" in {row.title for row in session.scalars(select(ProjectNote))}
+    assert [revision.revision_seq for revision in list_revisions(session, owner, project.id, note.id)] == [1, 2]
+
+
+def test_archived_resource_mention_is_refused_and_reads_unresolved(session):
+    owner = _actor(session)
+    project = _project(session, owner)
+    series = _object(session, owner, project, "Archivable")
+
+    note = create_note(
+        session,
+        owner,
+        project.id,
+        title="N",
+        body="v1",
+        mentions=[NoteMentionCreate(resource_id=series)],
+    )
+    assert note.latest is not None and note.latest.mentions[0].resolved is True
+
+    services.archive_series(session, owner, project.id, series)
+
+    after = get_note(session, owner, project.id, note.id)
+    assert after.latest is not None
+    assert after.latest.mentions[0].resolved is False
+    assert after.latest.mentions[0].label is None
+
+    # A NEW mention of an archived resource is refused, consistently with an
+    # archived Evidence/Decision.
+    with pytest.raises(AuthorizationError):
+        create_note(
+            session,
+            owner,
+            project.id,
+            title="Rejected",
+            body="body",
+            mentions=[NoteMentionCreate(resource_id=series)],
+        )

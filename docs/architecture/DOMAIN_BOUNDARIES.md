@@ -87,8 +87,9 @@ layer.
   `base_revision_seq` append fails closed (typed 409); a mention is a reference,
   never a `RelationType` or provenance edge, and is validated through the current
   Project read lens at write time.
-- **Public contracts:** the `/api/projects/{project_id}/notes` surface and bounded
-  Note selection in `ContextSelection`.
+- **Public contracts:** the `/api/projects/{project_id}/notes` surface, the
+  `resolve_selected_notes` read projection (consumed by Agent Context through
+  `agent/builder.py`), and bounded Note selection in `ContextSelection`.
 - **Dependencies:** Project (read lens/lifecycle) and Identity/Collaboration
   (membership authority); the cross-domain mention contracts are consumed by the
   application orchestration layer, not by the Project domain.
