@@ -18,17 +18,19 @@ The governing invariant is unchanged:
 
 **Phase 10 (Project Notebook / structured working notes) is merged into `main`**
 (PR #11, commit `135a591`); its architectural decision is **Accepted**
-(`PROJECT_NOTEBOOK.md`, ADR-0016). Phases 1–10 are the accepted `main` state.
+(`PROJECT_NOTEBOOK.md`, ADR-0016).
 
-**Phase 11 (durable explicit-action handoff / human-authorized execution) is
-implemented on `feat/phase-11-human-authorized-actions` and machine-verified**; its
-architectural decision is **Proposed — pending human acceptance**
-(`docs/architecture/AGENT_ACTION_HANDOFF.md`, ADR-0017). The governing invariant is:
+**Phase 11 (durable explicit-action handoff / human-authorized execution) is merged
+into `main`** (PR #12, squash commit `83f1827`,
+`feat(phase 11): add human-authorized action handoff`); its architectural decision is
+**Accepted** (`docs/architecture/AGENT_ACTION_HANDOFF.md`, ADR-0017) — the PR #12
+merge itself is the explicit human acceptance. The governing invariant is:
 
 > **Persist intent, never authority. Re-derive authority at execution time.**
 
-The Phase-11 section below records the machine-verified state of the current head of
-that branch.
+**Phases 1–11 are the accepted `main` state.** The Phase-11 section below records the
+machine-verified state at the merge head (the two human-review P1 fixes are included in
+`83f1827`).
 
 ## Implemented (Phase 1)
 
@@ -2121,10 +2123,11 @@ canonical immutable identity contract must be re-applied. Fixed:
 - Frontend: `openapi-fetch` (typed client), `openapi-typescript` (contract
   generation, dev), `@playwright/test` (browser smoke, dev), `@types/node` (dev).
 
-### Human-review hold: two P1 fixes
+### Post-merge record: two human-review P1 fixes
 
-A human review put the PR on HOLD for two substantive P1s, both now fixed with
-mutation-verified regressions:
+A human review put PR #12 on HOLD for two substantive P1s; both were fixed with
+mutation-verified regressions and are included in the squash-merged commit
+`83f1827`:
 
 - **Failed policy tool could leave a ghost/partial write.** Phase 9 made Agent-loop tool
   mutations `commit=False`, and `decision.record_draft` flushes its Decision before citation

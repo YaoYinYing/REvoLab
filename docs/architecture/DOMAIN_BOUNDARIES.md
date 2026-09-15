@@ -75,8 +75,8 @@ Project -> Evidence / Knowledge edge to the Core DAG and never consumes those
 domains' ORM internals; application orchestration is the sanctioned composition
 layer.
 
-- **Normative owner:** `PROJECT_NOTEBOOK.md` (ADR-0016; status `Proposed — pending
-  human acceptance`).
+- **Normative owner:** `PROJECT_NOTEBOOK.md` (ADR-0016; status `Accepted`,
+  human-accepted during PR #11 review).
 - **Owned concepts:** `ProjectNote`, immutable `ProjectNoteRevision`, and typed,
   non-semantic `NoteMention`.
 - **Owned mutable state:** the Note title and `archived_at` (non-destructive);
