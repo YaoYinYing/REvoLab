@@ -1,0 +1,560 @@
+"""Phase 11 — Durable explicit-action requests and human-authorized execution.
+
+The authority gap this closes (ADR-0017, `docs/architecture/AGENT_ACTION_HANDOFF.md`):
+
+```text
+Agent -> typed explicit-action proposal -> durable Action Request
+      -> explicit human execute/reject -> current-truth revalidation
+      -> canonical Tool/domain/provider path -> Run / Decision reference
+```
+
+The invariant is **persist intent, never authority**:
+
+- This module records WHAT an Actor proposed (canonical tool id + the complete,
+  schema-validated, bounded argument payload) so the proposal survives a reload.
+- It stores no authorization decision, membership result, provider-health
+  snapshot, capability availability, credential material or `secret_ref`.
+- Execution is a separate explicit human/API action that rebuilds all relevant
+  current truth (membership, role, ToolCatalog, autonomy, input schema, resource
+  visibility, provider availability, credentials, project policy) before any side
+  effect, then crosses the boundary exactly once through the SAME canonical path
+  the human workspace already uses.
+
+Action Request is durable OPERATIONAL INTENT: it is not a ScientificObject,
+Evidence, Decision, ProjectResourceLink, GlobalResourceRegistry entry, conversation
+message, Agent memory, ToolResult, or provider execution truth. Ownership is the
+Phase-9 conversation lens: one owning Actor inside one Project.
+
+Lifecycle: `pending -> executing -> {succeeded|failed|ambiguous}`, or
+`pending -> rejected`. A pre-claim revalidation refusal leaves the action `pending`
+(no side effect happened and no claim is consumed, so the human may retry once the
+precondition returns); once the one-shot claim is taken, every outcome is terminal.
+`ambiguous` is never auto-retried.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, cast
+from uuid import UUID
+
+from pydantic import ValidationError as PydanticValidationError
+from sqlalchemy import select, update
+from sqlalchemy.orm import Session
+
+from revolab import services
+from revolab.agent.conversations import owned_conversation
+from revolab.capabilities import CapabilityError, InputBinding
+from revolab.content_store import ContentStore
+from revolab.domain import persistence
+from revolab.domain.errors import ConflictError, DomainError, NotFoundError
+from revolab.domain.identity import mutation_capable_membership, readable_membership
+from revolab.drivers import DriverRegistry
+from revolab.enums import (
+    ActionRequestStatus,
+    AgentToolAutonomy,
+    CapabilityErrorKind,
+    CapabilityKind,
+    ToolExecutionClass,
+    ToolSideEffectClass,
+)
+from revolab.models import ActionRequest
+from revolab.schemas import ComputeSubmissionCreate, ToolInvocationCreate, ToolResultRead
+from revolab.secret_store import SecretStore
+from revolab.tools.catalog import build_tool_catalog
+from revolab.tools.explicit_actions import explicit_action_input_model
+from revolab.tools.registry import LocalToolRegistry
+from revolab.tools.runtime import LocalToolRuntime
+from revolab.tools.types import InvocationContext
+
+MAX_STATUS_REASON_CHARS = 500
+
+# The one task-submission tool suffix Core recognizes as an external compute
+# action; the provider key prefix is dynamic provider data and is taken from the
+# current catalog descriptor, never parsed out of the id.
+_COMPUTE_SUBMIT_SUFFIX = ".compute.submit"
+
+# Provider failure kinds that are a definite, pre-side-effect rejection when they
+# arrive WITHOUT an upstream response (driver readiness/health/missing credential
+# checks performed before the request is sent). With a response they mean the
+# provider explicitly rejected the request.
+_DEFINITE_PROVIDER_REJECTION_KINDS = frozenset(
+    {
+        CapabilityErrorKind.AUTH,
+        CapabilityErrorKind.INVALID_PARAM,
+        CapabilityErrorKind.NOT_FOUND,
+    }
+)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _rowcount(result: Any) -> int:
+    """`rowcount` of a conditional UPDATE: the cross-backend atomicity signal."""
+    return int(getattr(result, "rowcount", 0))
+
+
+def _digest(arguments: dict[str, Any]) -> str:
+    payload = json.dumps(arguments, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _bounded_reason(reason: str | None) -> str | None:
+    """Status reasons are sanitized provider/domain messages by construction
+    (`CapabilityError` never carries secrets or raw upstream bodies). Bound them
+    so a durable row can never grow unbounded."""
+    if reason is None:
+        return None
+    return reason[:MAX_STATUS_REASON_CHARS]
+
+
+@dataclass(frozen=True)
+class ActionExecution:
+    """Everything one human execution may touch. All inputs are typed boundaries
+    (session, driver registry, secret store, content store, closed tool registry)
+    — never arbitrary filesystem/network handles."""
+
+    session: Session
+    registry: DriverRegistry
+    secret_store: SecretStore
+    content_store: ContentStore
+    local_registry: LocalToolRegistry
+
+
+# ---------------------------------------------------------------------------
+# Proposal (Agent boundary)
+# ---------------------------------------------------------------------------
+
+
+def propose_action_request(
+    session: Session,
+    *,
+    actor_id: UUID,
+    project_id: UUID,
+    conversation_id: UUID | None,
+    tool_id: str,
+    autonomy: AgentToolAutonomy,
+    execution_class: ToolExecutionClass,
+    side_effect_class: ToolSideEffectClass,
+    arguments: dict[str, Any],
+) -> ActionRequest:
+    """Persist ONE validated explicit-action proposal.
+
+    `arguments` must already be the complete canonical model dump validated against
+    the tool's canonical input model (the Agent loop validates before calling).
+    The row is flushed, never committed here: it belongs to the caller's turn
+    transaction so the proposal and the transcript that describes it are atomic.
+    """
+    action = ActionRequest(
+        project_id=project_id,
+        actor_id=actor_id,
+        conversation_id=conversation_id,
+        tool_id=tool_id,
+        autonomy=autonomy.value,
+        execution_class=execution_class.value,
+        side_effect_class=side_effect_class.value,
+        arguments=arguments,
+        arguments_digest=_digest(arguments),
+        status=ActionRequestStatus.PENDING.value,
+    )
+    session.add(action)
+    session.flush()
+    return action
+
+
+# ---------------------------------------------------------------------------
+# Read / list (owning Actor only)
+# ---------------------------------------------------------------------------
+
+
+def _owned_action_request(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    action_request_id: UUID,
+) -> ActionRequest:
+    """Resolve an Action Request the current Actor owns, proving at the same time
+    that the Actor can currently read an active Project.
+
+    Fails closed: a non-member (or an inactive Project) raises before the row is
+    looked up; a guessed UUID or an action owned by another member raises 404 —
+    never an existence oracle."""
+    readable_membership(session, actor_id, project_id)
+    action = session.get(ActionRequest, action_request_id)
+    if (
+        action is None
+        or action.project_id != project_id
+        or action.actor_id != actor_id
+    ):
+        raise NotFoundError("action request not found")
+    return action
+
+
+def get_action_request(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    action_request_id: UUID,
+) -> ActionRequest:
+    return _owned_action_request(session, actor_id, project_id, action_request_id)
+
+
+def list_action_requests(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    conversation_id: UUID,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[ActionRequest]:
+    """List this Actor's own Action Requests for one conversation they own."""
+    owned_conversation(session, actor_id, project_id, conversation_id)
+    rows = session.scalars(
+        select(ActionRequest)
+        .where(
+            ActionRequest.project_id == project_id,
+            ActionRequest.actor_id == actor_id,
+            ActionRequest.conversation_id == conversation_id,
+        )
+        .order_by(ActionRequest.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(rows)
+
+
+# ---------------------------------------------------------------------------
+# Human rejection (terminal, no side effect)
+# ---------------------------------------------------------------------------
+
+
+def reject_action_request(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    action_request_id: UUID,
+) -> ActionRequest:
+    """Explicitly reject a pending Action Request. Rejection is terminal and has
+    no scientific or external side effect."""
+    action = _owned_action_request(session, actor_id, project_id, action_request_id)
+    if action.status != ActionRequestStatus.PENDING.value:
+        raise ConflictError(
+            f"action request is {action.status!r}; only a pending action can be rejected"
+        )
+    result = session.execute(
+        update(ActionRequest)
+        .where(
+            ActionRequest.id == action_request_id,
+            ActionRequest.status == ActionRequestStatus.PENDING.value,
+        )
+        .values(
+            status=ActionRequestStatus.REJECTED.value,
+            status_reason="rejected by the owning actor",
+            resolved_at=_now(),
+        )
+    )
+    session.commit()
+    if _rowcount(result) != 1:
+        # Lost a race against another terminal transition: report the truth
+        # instead of pretending the rejection won.
+        raise ConflictError("action request is no longer pending")
+    session.refresh(action)
+    return action
+
+
+# ---------------------------------------------------------------------------
+# Human execution (current-truth revalidation + one-shot claim + canonical path)
+# ---------------------------------------------------------------------------
+
+
+def _current_descriptor(
+    ctx: ActionExecution,
+    actor_id: UUID,
+    project_id: UUID,
+    action: ActionRequest,
+) -> Any:
+    """Resolve the action's Tool from the CURRENT canonical ToolCatalog and prove
+    it is still an explicit action. A removed tool, an unavailable provider
+    capability, or a changed autonomy class fails closed BEFORE any side effect."""
+    catalog = build_tool_catalog(
+        ctx.session, actor_id, project_id, ctx.registry, ctx.local_registry
+    )
+    descriptor = next((tool for tool in catalog.tools if tool.id == action.tool_id), None)
+    if descriptor is None:
+        raise ConflictError(f"tool {action.tool_id!r} is no longer available in this project")
+    if descriptor.autonomy is not AgentToolAutonomy.EXPLICIT_ACTION:
+        raise ConflictError(
+            f"tool {action.tool_id!r} is no longer an explicit action; refusing to execute"
+        )
+    return descriptor
+
+
+def _revalidate_arguments(action: ActionRequest) -> dict[str, Any]:
+    """Revalidate the persisted payload against the CURRENT canonical input model.
+    A schema change (or a payload that no longer validates) fails closed; old
+    arguments are never silently reinterpreted."""
+    if _digest(action.arguments) != action.arguments_digest:
+        raise ConflictError("stored action arguments failed their integrity check")
+    model = explicit_action_input_model(action.tool_id)
+    if model is None:
+        raise ConflictError(f"tool {action.tool_id!r} has no canonical input model")
+    try:
+        parsed = model.model_validate(action.arguments)
+    except (PydanticValidationError, ValueError) as exc:
+        raise ConflictError(
+            "stored action arguments no longer validate against the current schema "
+            f"for {action.tool_id!r}"
+        ) from exc
+    return dict(parsed.model_dump(mode="json"))
+
+
+def _claim(session: Session, action_request_id: UUID) -> bool:
+    """The durable, cross-backend one-shot claim.
+
+    A single conditional UPDATE is the atomic primitive: exactly one concurrent
+    execution can move `pending -> executing`. It is COMMITTED before any external
+    call so the claim (not a process-memory flag) is the production truth."""
+    result = session.execute(
+        update(ActionRequest)
+        .where(
+            ActionRequest.id == action_request_id,
+            ActionRequest.status == ActionRequestStatus.PENDING.value,
+        )
+        .values(status=ActionRequestStatus.EXECUTING.value, claimed_at=_now())
+    )
+    session.commit()
+    return _rowcount(result) == 1
+
+
+def _settle(
+    session: Session,
+    action_request_id: UUID,
+    status: ActionRequestStatus,
+    *,
+    reason: str | None = None,
+    run_resource_id: UUID | None = None,
+    decision_id: UUID | None = None,
+) -> None:
+    session.execute(
+        update(ActionRequest)
+        .where(
+            ActionRequest.id == action_request_id,
+            ActionRequest.status == ActionRequestStatus.EXECUTING.value,
+        )
+        .values(
+            status=status.value,
+            status_reason=_bounded_reason(reason),
+            resolved_at=_now(),
+            result_run_id=run_resource_id,
+            result_decision_id=decision_id,
+        )
+    )
+    session.commit()
+
+
+def classify_provider_failure(exc: BaseException) -> ActionRequestStatus:
+    """Classify a failure that happened at/after the external boundary.
+
+    Definite: the provider explicitly rejected the request (a 4xx response was
+    received) or a pre-side-effect local provider check refused it (driver not
+    READY, health, missing credential — no upstream response). The external side
+    effect did not take place.
+
+    Ambiguous: a transport failure, a 5xx/gateway response, an unexpected payload,
+    or a 2xx without a task identity. The submission MAY have succeeded, so the
+    action must never be auto-retried. REvoCompute exposes no client-usable
+    idempotency key, so one is not invented.
+    """
+    if isinstance(exc, DomainError):
+        # A local typed refusal (authorization/validation/visibility) raised at the
+        # capability boundary happens before the request leaves the process.
+        return ActionRequestStatus.FAILED
+    if isinstance(exc, CapabilityError):
+        if exc.kind in _DEFINITE_PROVIDER_REJECTION_KINDS:
+            return ActionRequestStatus.FAILED
+        if exc.kind is CapabilityErrorKind.PROVIDER_UNAVAILABLE and exc.upstream_status is None:
+            return ActionRequestStatus.FAILED
+    return ActionRequestStatus.AMBIGUOUS
+
+
+def _execute_local(ctx: ActionExecution, action: ActionRequest, arguments: dict[str, Any]) -> UUID | None:
+    """Local explicit action: the SAME closed LocalToolRuntime the human workspace
+    uses. No second Decision-promotion implementation exists."""
+    runtime = LocalToolRuntime(ctx.local_registry)
+    result: ToolResultRead = runtime.invoke(
+        InvocationContext(
+            session=ctx.session,
+            registry=ctx.registry,
+            secret_store=ctx.secret_store,
+            content_store=ctx.content_store,
+            actor_id=action.actor_id,
+            project_id=action.project_id,
+        ),
+        ToolInvocationCreate(tool_id=action.tool_id, input=arguments, persist=False),
+    )
+    return result.resource_id
+
+
+def _execute_remote_compute(
+    ctx: ActionExecution,
+    action: ActionRequest,
+    descriptor: Any,
+    arguments: dict[str, Any],
+) -> UUID:
+    """Remote explicit action: the SAME canonical capability path the human compute
+    endpoint uses (`services.compute_submit_handle` + `record_compute_run`).
+
+    The provider handle is a CONFIRMED external side effect; only then is the
+    canonical RunReference created/reused. If the local recording fails after a
+    confirmed handle the outcome is reported as ambiguous rather than pretending
+    either result."""
+    session = ctx.session
+    provider_key = descriptor.provider_key
+    if not provider_key or not action.tool_id.endswith(_COMPUTE_SUBMIT_SUFFIX):
+        raise ConflictError("remote explicit action is not a supported compute submission")
+    if descriptor.capability_kind is not CapabilityKind.COMPUTE:
+        raise ConflictError("provider capability is no longer compute")
+    bindings = [
+        InputBinding(kind=item.kind, resource_id=item.resource_id, role=item.role)
+        for item in ComputeSubmissionCreate.model_validate(arguments).inputs
+    ]
+    handle = services.compute_submit_handle(
+        session,
+        ctx.registry,
+        ctx.secret_store,
+        ctx.content_store,
+        action.actor_id,
+        action.project_id,
+        provider_key,
+        arguments["task_kind"],
+        bindings,
+        arguments.get("params") or {},
+    )
+    try:
+        recorded = services.record_compute_run(
+            session,
+            action.actor_id,
+            action.project_id,
+            handle,
+            inputs=[binding.resource_id for binding in bindings],
+        )
+    except Exception as exc:
+        raise _UnrecordedExternalSuccess(str(exc)) from exc
+    return cast(UUID, recorded["run_resource_id"])
+
+
+class _UnrecordedExternalSuccess(Exception):
+    """The provider confirmed a run, but the canonical RunReference could not be
+    recorded locally. The action is settled as `ambiguous`."""
+
+
+def _preflight_referenced_resources(
+    ctx: ActionExecution,
+    project_id: UUID,
+    descriptor: Any,
+    arguments: dict[str, Any],
+) -> None:
+    """Revalidate CURRENT visibility of every resource a remote action references,
+    BEFORE the durable claim. A resource unlinked after the proposal fails closed
+    with no side effect and leaves the action retryable once it is visible again.
+    (The canonical capability path independently re-checks this at the boundary.)"""
+    if descriptor.execution_class is not ToolExecutionClass.REMOTE:
+        return
+    if descriptor.capability_kind is not CapabilityKind.COMPUTE:
+        return
+    parsed = ComputeSubmissionCreate.model_validate(arguments)
+    for item in parsed.inputs:
+        persistence.require_visible(ctx.session, project_id, item.resource_id)
+
+
+def execute_action_request(
+    ctx: ActionExecution,
+    actor_id: UUID,
+    project_id: UUID,
+    action_request_id: UUID,
+) -> ActionRequest:
+    """Execute ONE pending Action Request through the canonical path.
+
+    1. Ownership + current Project readability (403 / 404, never an oracle).
+    2. Preflight against CURRENT truth: pending state, current ToolCatalog and
+       autonomy, current canonical input schema, current mutation-capable
+       membership, current resource visibility, current provider/credential
+       availability. Every refusal here leaves the action `pending` and performs
+       NO side effect.
+    3. Durable one-shot claim (`pending -> executing`, committed) so two
+       simultaneous human clicks cannot submit twice.
+    4. Canonical execution, then a terminal outcome.
+    """
+    session = ctx.session
+    action = _owned_action_request(session, actor_id, project_id, action_request_id)
+    if action.status != ActionRequestStatus.PENDING.value:
+        raise ConflictError(
+            f"action request is {action.status!r}; only a pending action can be executed"
+        )
+
+    # --- preflight: no side effect, no claim consumed ------------------------
+    mutation_capable_membership(session, actor_id, project_id)
+    descriptor = _current_descriptor(ctx, actor_id, project_id, action)
+    arguments = _revalidate_arguments(action)
+    _preflight_referenced_resources(ctx, project_id, descriptor, arguments)
+
+    # --- durable one-shot claim ----------------------------------------------
+    if not _claim(session, action_request_id):
+        raise ConflictError("action request is no longer pending")
+
+    # --- canonical execution -------------------------------------------------
+    try:
+        if descriptor.execution_class is ToolExecutionClass.LOCAL:
+            decision_id = _execute_local(ctx, action, arguments)
+            _settle(
+                session,
+                action_request_id,
+                ActionRequestStatus.SUCCEEDED,
+                decision_id=decision_id,
+            )
+        else:
+            run_resource_id = _execute_remote_compute(ctx, action, descriptor, arguments)
+            _settle(
+                session,
+                action_request_id,
+                ActionRequestStatus.SUCCEEDED,
+                run_resource_id=run_resource_id,
+            )
+    except _UnrecordedExternalSuccess as exc:
+        _settle(
+            session,
+            action_request_id,
+            ActionRequestStatus.AMBIGUOUS,
+            reason=(
+                "the provider accepted the submission but the canonical run reference "
+                f"could not be recorded: {exc}"
+            ),
+        )
+    except (DomainError, CapabilityError) as exc:
+        _settle(session, action_request_id, classify_provider_failure(exc), reason=str(exc))
+    except Exception as exc:
+        _settle(
+            session,
+            action_request_id,
+            ActionRequestStatus.AMBIGUOUS,
+            reason=f"unexpected execution failure: {type(exc).__name__}",
+        )
+    session.refresh(action)
+    return action
+
+
+__all__ = [
+    "ActionExecution",
+    "classify_provider_failure",
+    "execute_action_request",
+    "get_action_request",
+    "list_action_requests",
+    "propose_action_request",
+    "reject_action_request",
+]

@@ -1,6 +1,167 @@
 {
   "components": {
     "schemas": {
+      "ActionRequestRead": {
+        "description": "One durable Agent-proposed explicit action (Phase 11).\n\nPersist intent, never authority: this read model exposes WHAT was proposed and\nits current lifecycle state. It never exposes credential material, a\n`secret_ref`, a lease, a provider-health snapshot, or an authorization result.\n`result_run_id` is the canonical RunReference produced by a successful remote\nexecution; `result_decision_id` is the Decision produced by a successful local\npromotion. Provider execution state is never copied here.",
+        "properties": {
+          "actor_id": {
+            "format": "uuid",
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          },
+          "autonomy": {
+            "$ref": "#/components/schemas/AgentToolAutonomy"
+          },
+          "claimed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claimed At"
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "execution_class": {
+            "$ref": "#/components/schemas/ToolExecutionClass"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "result_decision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Decision Id"
+          },
+          "result_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Run Id"
+          },
+          "side_effect_class": {
+            "$ref": "#/components/schemas/ToolSideEffectClass"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ActionRequestStatus"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "actor_id",
+          "tool_id",
+          "autonomy",
+          "execution_class",
+          "side_effect_class",
+          "status"
+        ],
+        "title": "ActionRequestRead",
+        "type": "object"
+      },
+      "ActionRequestStatus": {
+        "description": "The durable lifecycle of one Agent-proposed explicit action (ADR-0017).\n\nAn Action Request records PROPOSED INTENT, never authority: `pending` is not\npermission, and every execution re-derives current authority from canonical\nstate. `executing` is a durable one-shot claim (not a process-memory flag);\n`succeeded` / `failed` / `ambiguous` / `rejected` are terminal. `ambiguous` is\nthe honest representation of an external side effect whose outcome cannot be\nconfirmed \u2014 it is never auto-retried.",
+        "enum": [
+          "pending",
+          "executing",
+          "succeeded",
+          "failed",
+          "ambiguous",
+          "rejected"
+        ],
+        "title": "ActionRequestStatus",
+        "type": "string"
+      },
       "ActorRead": {
         "properties": {
           "actor_id": {
@@ -3084,8 +3245,20 @@
         "type": "string"
       },
       "PendingActionRead": {
-        "description": "A PROPOSED action the Agent loop did NOT execute. It carries only the\nvalidated, bounded, non-secret information needed to understand the proposed\noperation; execution remains the existing human-authorized surface. When the\nvalidated argument payload is too large it is bounded to\n`{\"truncated\": true, \"preview\": \"<bounded json prefix>\"}`.",
+        "description": "A PROPOSED action the Agent loop did NOT execute. It carries only the\nvalidated, bounded, non-secret information needed to understand the proposed\noperation; execution remains the existing human-authorized surface. When the\nvalidated argument payload is too large it is bounded to\n`{\"truncated\": true, \"preview\": \"<bounded json prefix>\"}` \u2014 a DISPLAY preview,\nnever executable state.\n\n`action_request_id` names the durable Action Request that holds the complete\nvalidated payload and the human execute/reject surface. It is present whenever\nthe proposal was persisted; a proposal that could not be persisted (invalid or\nover-bound arguments) fails closed and never appears here.",
         "properties": {
+          "action_request_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Request Id"
+          },
           "arguments": {
             "additionalProperties": true,
             "title": "Arguments",
@@ -5176,6 +5349,206 @@
         "summary": "Patch Project"
       }
     },
+    "/api/projects/{project_id}/action-requests/{action_request_id}": {
+      "get": {
+        "operationId": "get_project_action_request_api_projects__project_id__action_requests__action_request_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action_request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Action Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionRequestRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Project Action Request"
+      }
+    },
+    "/api/projects/{project_id}/action-requests/{action_request_id}/execute": {
+      "post": {
+        "description": "Explicit human authorization: execute one pending Action Request.\n\nThe Action Request is NOT permission. Execution rebuilds current truth\n(membership, role, ToolCatalog, autonomy, input schema, resource visibility,\nprovider availability, credentials, policy) and crosses the external boundary\nat most once through the SAME canonical path the human workspace uses. The\nAgent has no tool that can call this operation.",
+        "operationId": "execute_project_action_request_api_projects__project_id__action_requests__action_request_id__execute_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action_request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Action Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionRequestRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Execute Project Action Request"
+      }
+    },
+    "/api/projects/{project_id}/action-requests/{action_request_id}/reject": {
+      "post": {
+        "description": "Explicit human rejection of a pending Action Request. Terminal, with no\nscientific or external side effect; a second attempt is a NEW Action Request.",
+        "operationId": "reject_project_action_request_api_projects__project_id__action_requests__action_request_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "action_request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Action Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionRequestRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Project Action Request"
+      }
+    },
     "/api/projects/{project_id}/agent/conversations": {
       "get": {
         "operationId": "list_project_conversations_api_projects__project_id__agent_conversations_get",
@@ -5514,6 +5887,100 @@
           }
         },
         "summary": "Patch Project Conversation"
+      }
+    },
+    "/api/projects/{project_id}/agent/conversations/{conversation_id}/action-requests": {
+      "get": {
+        "description": "Durable Agent-proposed explicit actions for ONE conversation the current\nActor owns. Ownership follows the Phase-9 conversation lens: another member of\nthe same Project can never read them, and a guessed id is not an oracle.",
+        "operationId": "list_conversation_action_requests_api_projects__project_id__agent_conversations__conversation_id__action_requests_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ActionRequestRead"
+                  },
+                  "title": "Response List Conversation Action Requests Api Projects  Project Id  Agent Conversations  Conversation Id  Action Requests Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Conversation Action Requests"
       }
     },
     "/api/projects/{project_id}/agent/conversations/{conversation_id}/turns": {

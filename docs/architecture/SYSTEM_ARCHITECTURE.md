@@ -149,7 +149,7 @@ The nine domains and their one-line purpose (detailed in
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
 | Provider / Capability | providers, drivers, capabilities, capability schemas |
 | Project Tool Harness | the first-class `Tool` abstraction: `ToolCatalog`, the closed `LocalToolRuntime`, the local tool registry, and the `ToolInvocation` reproducibility record |
-| Agent Context | project-scoped context, skill resolution, and the agent loop (the Agent **consumes** the Project Tool Harness's canonical ToolCatalog) |
+| Agent Context | project-scoped context, skill resolution, and the agent loop (the Agent **consumes** the Project Tool Harness's canonical ToolCatalog); **Action Handoff sub-boundary** (durable `ActionRequest` proposals + human-authorized execution — operational intent, never authority, see `AGENT_ACTION_HANDOFF.md`) |
 | Identity / Collaboration | actors, authentication identities, membership, roles, credential **bindings** (`ExternalProviderCredentialBinding`: actor + provider + kind + `secret_ref`; the secret **material** lives in the Secret store) |
 | Presentation / Workspace | API surface and the user workspace information architecture |
 
@@ -160,6 +160,14 @@ reach Notes through their existing Project edge (`DOMAIN_BOUNDARIES.md` §1a,
 Cross-domain Evidence/Decision mention composition happens in the application
 orchestration layer over those domains' public contracts, so no Project ->
 Evidence / Knowledge Core edge is introduced.
+
+**Action Handoff** is likewise an explicit sub-boundary of the Agent Context /
+application-orchestration layer (not a tenth domain): a durable `ActionRequest`
+row is operational intent — never a ScientificObject, Evidence, Decision,
+`ProjectResourceLink`, `GlobalResourceRegistry` entry, or provider execution
+truth — and both its proposal and its human-authorized execution reuse the
+existing Tool Harness and Provider/Capability paths (`AGENT_ACTION_HANDOFF.md`,
+ADR-0017). The nine-domain DAG is unchanged.
 
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
 Knowledge) never depend on the Agent Context domain or the Project Tool Harness
@@ -390,6 +398,7 @@ direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 | `AGENT_CONTEXT.md` | Context selection, tools, skills, safety/authority |
 | `PROJECT_AGENT_RUNTIME.md` | The bounded Project Agent turn loop, model boundary, prompt/trust separation, authority |
 | `PROJECT_CONVERSATIONS.md` | Persistent Actor × Project conversation working memory: ownership, server-owned history, trust model, API, lifecycle, bounds |
+| `AGENT_ACTION_HANDOFF.md` | Durable explicit-action requests: proposal vs authority, lifecycle, execution-time revalidation, concurrency, external-side-effect ambiguity, human surface |
 | `PROJECT_NOTEBOOK.md` | Project Note working documents: revision ownership, mention semantics, concurrency, trust and Agent-context boundary |
 | `COLLABORATION_IDENTITY.md` | Identity, sharing, persistence, lifecycle/deletion, event/audit |
 | `WORKSPACE_INFORMATION_ARCHITECTURE.md` | The product surface and API/frontend contract |

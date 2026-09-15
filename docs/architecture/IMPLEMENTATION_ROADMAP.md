@@ -320,6 +320,41 @@ collaboration/sharing and the agent.
 
 ---
 
+### Phase 11 — Durable Explicit-Action Handoff & Human-Authorized Execution
+
+- **Goal:** close the deliberate authority gap left by Phases 8–10 by making an
+  Agent `explicit_action` proposal durable and executable by a human **without ever
+  persisting authority**, and without becoming a generic approval/workflow system.
+- **Owned domains:** Agent Context + application orchestration (Action Handoff
+  sub-boundary; normative owner: `docs/architecture/AGENT_ACTION_HANDOFF.md`,
+  ADR-0017); Project Tool Harness and Provider/Capability are reused unchanged.
+- **Vertical slice:** `PendingActionRead` becomes an ephemeral VIEW of a durable
+  `ActionRequest` (canonical `tool_id`, complete schema-validated bounded payload,
+  lifecycle, canonical result reference); explicit human execute/reject endpoints;
+  execution-time revalidation of current membership/role/Project/ToolCatalog/
+  autonomy/input schema/resource visibility/provider/credentials/policy; a durable
+  one-shot claim that prevents double submission; classification of a failed
+  external submit as definite vs **ambiguous** (never auto-retried); the canonical
+  Phase-4 compute path produces the `RunReference` the existing Runs & Artifacts
+  surface observes; a local `decision.commit` proposal executes through the same
+  closed `LocalToolRuntime`.
+- **Acceptance evidence:** proposal is durable but never executed; reload returns
+  the same pending action; cross-Actor/Project isolation with no existence oracle;
+  tombstone/membership/role/visibility/credential/provider/Tool/schema changes take
+  effect at execution time; the transcript stores no executable arguments; rejection
+  has no side effect; concurrent execution submits at most once (PostgreSQL row
+  claim); the canonical `RunReference` is created/reused and provider state is never
+  copied; an uncertain external outcome is `ambiguous` and never retried;
+  execute/reject never appear in the Agent ToolCatalog; PostgreSQL migration,
+  OpenAPI/TS contracts, frontend tests/build, and the Playwright slice are green.
+- **Non-goals:** generic approval workflow, multi-party approval, organization
+  policy engine, background action worker, scheduled actions, retry scheduler,
+  workflow/DAG execution, recursive/background Agents, Agent self-approval,
+  auto-approval rules, notifications, OIDC/RBAC, public sharing, RAG/vector memory,
+  autonomous remote-provider Agent execution.
+
+---
+
 ## Final architecture invariants (enter CLAUDE.md)
 
 These are derived from the whole design; they are the concisely load-bearing rules:

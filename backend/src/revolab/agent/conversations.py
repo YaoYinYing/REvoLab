@@ -99,7 +99,7 @@ def _bounded(value: str | None, limit: int) -> str | None:
     return value[:limit] if len(value) <= limit else value[: max(limit - 3, 0)] + "..."
 
 
-def _owned_conversation(
+def owned_conversation(
     session: Session,
     actor_id: UUID,
     project_id: UUID,
@@ -183,7 +183,7 @@ def get_conversation(
     offset: int = 0,
     latest: bool = False,
 ) -> ConversationDetailRead:
-    conversation = _owned_conversation(session, actor_id, project_id, conversation_id)
+    conversation = owned_conversation(session, actor_id, project_id, conversation_id)
     total = session.scalar(
         select(func.count())
         .select_from(ConversationMessage)
@@ -218,7 +218,7 @@ def patch_conversation(
         raise ValidationError("no conversation fields to update")
     if title is not None and len(title) > MAX_CONVERSATION_TITLE_CHARS:
         raise ValidationError("conversation title exceeds the maximum length")
-    conversation = _owned_conversation(session, actor_id, project_id, conversation_id)
+    conversation = owned_conversation(session, actor_id, project_id, conversation_id)
     if title is not None:
         conversation.title = title
     if archive is True and conversation.archived_at is None:
@@ -283,7 +283,7 @@ def _execute_turn(
     # Row lock FIRST: the model loop may be slow, and conversational continuity
     # requires that two concurrent turns on one conversation serialize their
     # read->compute->write as a unit.
-    conversation = _owned_conversation(
+    conversation = owned_conversation(
         session, actor_id, project_id, conversation_id, with_for_update=True
     )
     if conversation.archived_at is not None:
@@ -307,7 +307,15 @@ def _execute_turn(
         if row.role in {ConversationRole.USER.value, ConversationRole.ASSISTANT.value}
     ]
 
-    result = runner.run(session, actor_id, project_id, message, selection, history)
+    result = runner.run(
+        session,
+        actor_id,
+        project_id,
+        message,
+        selection,
+        history,
+        conversation_id=conversation_id,
+    )
 
     last_seq = session.scalar(
         select(func.coalesce(func.max(ConversationMessage.seq), 0)).where(

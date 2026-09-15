@@ -29,7 +29,6 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.orm import Session
 
@@ -55,29 +54,25 @@ from revolab.enums import (
 from revolab.schemas import (
     AgentTurnBudgetRead,
     AgentTurnRead,
-    ComputeSubmissionCreate,
     ContextSelectionCreate,
-    DecisionCommitCreate,
     PendingActionRead,
     ToolCallTraceRead,
     ToolInvocationCreate,
 )
 from revolab.secret_store import SecretStore
 from revolab.tools.catalog import build_tool_catalog
+from revolab.tools.explicit_actions import (
+    MAX_ACTION_ARGUMENT_CHARS,
+    explicit_action_input_model,
+)
 from revolab.tools.registry import LocalToolRegistry
 from revolab.tools.runtime import LocalToolRuntime
 from revolab.tools.types import InvocationContext
 
 # Remote explicit-action tool ids whose arguments are canonical Pydantic models.
-# This maps a tool-id SUFFIX (provider key is dynamic) to the ONE canonical input
-# model already used by the typed compute endpoint — never a hand-copied schema.
-_REMOTE_EXPLICIT_INPUT_MODELS: dict[str, type[BaseModel]] = {
-    ".compute.submit": ComputeSubmissionCreate,
-}
-
-_LOCAL_EXPLICIT_INPUT_MODELS: dict[str, type[BaseModel]] = {
-    "decision.commit": DecisionCommitCreate,
-}
+# The ONE canonical mapping (including the local `decision.commit` model) lives in
+# `revolab.tools.explicit_actions`; the Agent runtime and the human execution
+# boundary both resolve it there rather than keeping a second copy.
 
 
 @dataclass(frozen=True)
@@ -161,14 +156,7 @@ def _validate_pending_input(tool_id: str, arguments: dict[str, Any]) -> dict[str
     """Validate a refused explicit-action tool call against its canonical input
     model so a PendingAction carries only validated, bounded argument data. Fail
     closed when the model forms invalid arguments."""
-    model: type[BaseModel] | None = None
-    if tool_id == "decision.commit":
-        model = _LOCAL_EXPLICIT_INPUT_MODELS["decision.commit"]
-    else:
-        for suffix, candidate in _REMOTE_EXPLICIT_INPUT_MODELS.items():
-            if tool_id.endswith(suffix):
-                model = candidate
-                break
+    model = explicit_action_input_model(tool_id)
     if model is None:
         return None
     try:
@@ -176,6 +164,16 @@ def _validate_pending_input(tool_id: str, arguments: dict[str, Any]) -> dict[str
         return parsed.model_dump(mode="json")
     except (PydanticValidationError, ValueError):
         return None
+
+
+def _is_executable_argument_payload(validated: dict[str, Any]) -> bool:
+    """The durable Action Request stores the COMPLETE validated payload or the
+    proposal fails closed. A payload over the bound is refused rather than
+    truncated: a preview is display data, never executable state."""
+    try:
+        return len(json.dumps(validated, sort_keys=True, default=str)) <= MAX_ACTION_ARGUMENT_CHARS
+    except (TypeError, ValueError):
+        return False
 
 
 def _bounded_pending_arguments(validated: dict[str, Any], limit: int) -> dict[str, Any]:
@@ -229,6 +227,8 @@ class AgentTurnRunner:
         message: str,
         selection: ContextSelectionCreate | None = None,
         history: list[Any] | None = None,
+        *,
+        conversation_id: UUID | None = None,
     ) -> AgentTurnRead:
         started = time.monotonic()
         context = build_context(session, actor_id, project_id, self._registry, selection)
@@ -340,7 +340,7 @@ class AgentTurnRunner:
                     break
                 tool_calls_total += 1
                 entry, pending_action, result_text = self._handle_tool_call(
-                    call, by_id, invocation_ctx
+                    call, by_id, invocation_ctx, conversation_id
                 )
                 trace.append(entry)
                 if pending_action is not None:
@@ -433,10 +433,16 @@ class AgentTurnRunner:
         call: ModelToolCall,
         by_id: dict[str, Any],
         ctx: InvocationContext,
+        conversation_id: UUID | None,
     ) -> tuple[ToolCallTraceRead, PendingActionRead | None, str | None]:
         """Validate and dispatch ONE model-emitted tool call. The model cannot
         bypass the canonical runtime: unknown/remote/never_agent/explicit tools
-        all fail closed or become PendingActions."""
+        all fail closed or become durable Action Requests.
+
+        An explicit action is PROPOSED and persisted as durable operational intent
+        in the caller's transaction (the complete validated payload, never a
+        truncated preview). The proposal grants no authority: the human execution
+        path re-derives every relevant fact from current canonical state."""
         descriptor = by_id.get(call.name)
         if descriptor is None:
             return (
@@ -487,12 +493,40 @@ class AgentTurnRunner:
                     None,
                     None,
                 )
+            if not _is_executable_argument_payload(validated):
+                # Fail closed: a truncated preview is display data, never durable
+                # executable state, so an over-bound action is refused entirely.
+                return (
+                    ToolCallTraceRead(
+                        tool_id=call.name,
+                        status=AgentToolCallStatus.FAILED,
+                        error="explicit action arguments exceed the durable action bound",
+                    ),
+                    None,
+                    None,
+                )
+            # Local import: the Agent layer persists through the application action
+            # service without forming an import cycle with it.
+            from revolab import actions
+
+            action = actions.propose_action_request(
+                ctx.session,
+                actor_id=ctx.actor_id,
+                project_id=ctx.project_id,
+                conversation_id=conversation_id,
+                tool_id=call.name,
+                autonomy=descriptor.autonomy,
+                execution_class=descriptor.execution_class,
+                side_effect_class=descriptor.side_effect_class,
+                arguments=validated,
+            )
             pending_action = PendingActionRead(
                 tool_id=call.name,
                 autonomy=descriptor.autonomy,
                 summary=f"The model proposed {call.name}; it was NOT executed.",
                 arguments=_bounded_pending_arguments(validated, self._bounds.max_tool_result_chars),
                 reason="explicit actions require an authorized human action",
+                action_request_id=action.id,
             )
             return (
                 ToolCallTraceRead(

@@ -78,7 +78,7 @@ credentials / CredentialLease / secret_ref
 ProjectContext serialization
 ToolCatalog serialization
 full ToolResult payloads
-PendingAction arguments
+executable Action Request arguments (only an inert pending summary is stored)
 hidden chain-of-thought
 ```
 
@@ -134,8 +134,19 @@ server-owned system instructions
 Authority comes exclusively from `ToolCatalog`, typed schemas, membership,
 project policy, domain validation, and `AgentToolAutonomy` — never from the
 transcript. Regression tests prove persisted hostile user/assistant text cannot
-widen tool authority, unlock `explicit_action`, expose `never_agent`, or become
-system instructions.
+widen tool authority, unlock `explicit_action`, authorize or execute a durable
+Action Request, expose `never_agent`, or become system instructions.
+
+## Conversation → Action Request ownership lens
+
+Phase 11 attaches durable **Action Requests** to the conversation that proposed
+them (`AGENT_ACTION_HANDOFF.md`, ADR-0017). They inherit this document's privacy
+rule exactly: an Action Request is owned by ONE Actor in ONE Project, another
+member of the same Project can never read/execute/reject it, and a guessed UUID is
+never an existence oracle. The attachment is descriptive provenance, not an
+authority grant: the owning Actor remains the access boundary, and the Action
+Request is a separate private record — never a second conversation transcript and
+never project truth.
 
 ## API
 

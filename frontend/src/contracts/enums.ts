@@ -5,6 +5,7 @@
 export * from './enums.generated'
 
 import {
+  ACTION_REQUEST_STATUSES,
   AGENT_TOOL_AUTONOMIES,
   AGENT_TOOL_CALL_STATUSES,
   AGENT_TERMINATION_REASONS,
@@ -99,3 +100,12 @@ export const AGENT_TOOL_CALL_STATUS_FAILED = pick(AGENT_TOOL_CALL_STATUSES, 'fai
 // generated contract, never a bare literal in the view layer.
 export const CONVERSATION_ROLE_USER = pick(CONVERSATION_ROLES, 'user')
 export const CONVERSATION_ROLE_ASSISTANT = pick(CONVERSATION_ROLES, 'assistant')
+
+// Action Handoff aliases (Phase 11): the durable Action Request lifecycle comes
+// from the generated contract, never a bare literal in the view layer.
+export const ACTION_REQUEST_STATUS_PENDING = pick(ACTION_REQUEST_STATUSES, 'pending')
+export const ACTION_REQUEST_STATUS_EXECUTING = pick(ACTION_REQUEST_STATUSES, 'executing')
+export const ACTION_REQUEST_STATUS_SUCCEEDED = pick(ACTION_REQUEST_STATUSES, 'succeeded')
+export const ACTION_REQUEST_STATUS_FAILED = pick(ACTION_REQUEST_STATUSES, 'failed')
+export const ACTION_REQUEST_STATUS_AMBIGUOUS = pick(ACTION_REQUEST_STATUSES, 'ambiguous')
+export const ACTION_REQUEST_STATUS_REJECTED = pick(ACTION_REQUEST_STATUSES, 'rejected')

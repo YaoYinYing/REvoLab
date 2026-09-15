@@ -12,13 +12,14 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import Engine, create_engine, inspect, select, text
+from sqlalchemy import Engine, create_engine, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from revolab import services
+from revolab import actions, services
 from revolab.agent import AgentTurnRunner, build_context
 from revolab.domain.provider import (
     build_credential_lease,
@@ -27,10 +28,12 @@ from revolab.domain.provider import (
 )
 from revolab.drivers import Capability, DriverContext, DriverRegistry
 from revolab.enums import (
+    ActionRequestStatus,
     CapabilityAvailability,
     CapabilityKind,
     DecisionStatus,
     ProviderRuntimeHealth,
+    Role,
 )
 from revolab.schemas import ContextSelectionCreate
 from revolab.secret_store import InMemorySecretStore
@@ -1034,3 +1037,328 @@ def test_phase10_append_takes_note_row_lock_on_postgres(pg_session: Session) -> 
 
     assert any("FOR UPDATE" in statement.upper() for statement in append_statements), append_statements
     assert any("FOR UPDATE" in statement.upper() for statement in patch_statements), patch_statements
+
+
+# ---------------------------------------------------------------------------
+# Phase 11 — durable explicit-action handoff (PostgreSQL acceptance truth)
+# ---------------------------------------------------------------------------
+
+
+class _Phase11State:
+    def __init__(self) -> None:
+        self.submit_calls = 0
+        self.error = None
+        self.before_submit = None
+        # A per-state tag keeps native ids unique across runs against a shared,
+        # non-truncated acceptance database.
+        self.tag = uuid4().hex[:8]
+
+    def native_id(self, ordinal: int) -> str:
+        return f"native-{self.tag}-{ordinal}"
+
+
+class _Phase11Compute:
+    provider_key = "phase11prov"
+    kind = CapabilityKind.COMPUTE
+
+    def __init__(self, state: _Phase11State) -> None:
+        self._state = state
+
+    def list_task_kinds(self, credentials):  # type: ignore[no-untyped-def]
+        from revolab.capabilities import TaskKindRef
+
+        return [TaskKindRef(kind_id="echo", display_name="Echo")]
+
+    def task_kind_schema(self, kind_id, credentials):  # type: ignore[no-untyped-def]
+        from revolab.capabilities import InputSpec, TaskKindSchema
+
+        return TaskKindSchema(
+            kind_id=kind_id,
+            display_name=kind_id,
+            description=None,
+            parameter_schema={},
+            input_spec=InputSpec(required=False, multiple=True),
+        )
+
+    def submit(self, kind_id, inputs, params, credentials):  # type: ignore[no-untyped-def]
+        from revolab.capabilities import RunHandle
+
+        self._state.submit_calls += 1
+        if self._state.before_submit is not None:
+            self._state.before_submit()
+        if self._state.error is not None:
+            raise self._state.error
+        return RunHandle(
+            authority="phase11prov",
+            native_id=self._state.native_id(self._state.submit_calls),
+            task_type=kind_id,
+        )
+
+    def get_run(self, native_id, credentials):  # type: ignore[no-untyped-def]
+        from revolab.capabilities import RunView
+
+        return RunView(authority="phase11prov", native_id=native_id, status="finished")
+
+    def list_artifacts(self, native_id, credentials):  # type: ignore[no-untyped-def]
+        return []
+
+
+class _Phase11Resolution:
+    provider_key = "phase11prov"
+    kind = CapabilityKind.ARTIFACT_RESOLUTION
+
+    def resolve(self, artifact, credentials):  # type: ignore[no-untyped-def]
+        from revolab.capabilities import ArtifactHandle
+
+        return ArtifactHandle(authority=artifact.authority, native_id=artifact.native_id, data=b"")
+
+
+class _Phase11Driver:
+    name = "phase11prov"
+    display_name = "Phase 11 Provider"
+    description = "postgres acceptance provider"
+    required_credential_kinds: tuple[str, ...] = ()
+    authorities = ("phase11prov",)
+
+    def __init__(self, state: _Phase11State) -> None:
+        self.capabilities = {
+            CapabilityKind.COMPUTE: _Phase11Compute(state),
+            CapabilityKind.ARTIFACT_RESOLUTION: _Phase11Resolution(),
+        }
+
+    def start(self, context: DriverContext) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+    def probe_health(self) -> ProviderRuntimeHealth:
+        return ProviderRuntimeHealth.READY
+
+
+def _phase11_registry(state: _Phase11State) -> DriverRegistry:
+    registry = DriverRegistry()
+    registry.register(_Phase11Driver(state))
+    registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
+    return registry
+
+
+def _phase11_setup(pg_session: Session, state: _Phase11State, tmp_path):  # type: ignore[no-untyped-def]
+    from revolab.content_store import ContentStore
+    from revolab.enums import AgentToolAutonomy, ToolExecutionClass, ToolSideEffectClass
+    from revolab.models import ScientificObjectRevision
+    from revolab.schemas import ComputeSubmissionCreate
+    from revolab.tools.registry import build_default_registry
+
+    registry = _phase11_registry(state)
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Phase11")
+    series_id = services.create_object(pg_session, actor, project.id, "protein", "Target")
+    revision_id = pg_session.scalar(
+        select(ScientificObjectRevision.revision_id)
+        .where(ScientificObjectRevision.series_id == series_id)
+        .order_by(ScientificObjectRevision.revision_seq)
+        .limit(1)
+    )
+    arguments = ComputeSubmissionCreate(
+        provider_key="phase11prov",
+        task_kind="echo",
+        inputs=[{"kind": "scientific_object_revision", "resource_id": revision_id}],
+        params={"message": "hello"},
+    ).model_dump(mode="json")
+    row = actions.propose_action_request(
+        pg_session,
+        actor_id=actor,
+        project_id=project.id,
+        conversation_id=None,
+        tool_id="phase11prov.compute.submit",
+        autonomy=AgentToolAutonomy.EXPLICIT_ACTION,
+        execution_class=ToolExecutionClass.REMOTE,
+        side_effect_class=ToolSideEffectClass.EXTERNAL_ACTION,
+        arguments=arguments,
+    )
+    pg_session.commit()
+    return {
+        "actions": actions,
+        "actor": actor,
+        "project": project,
+        "revision_id": revision_id,
+        "action_id": row.id,
+        "registry": registry,
+        "state": state,
+        "store": InMemorySecretStore(),
+        "content_store": ContentStore(tmp_path),
+        "local_registry": build_default_registry(),
+    }
+
+
+def _phase11_execution(pg_session: Session, ctx: dict):  # type: ignore[no-untyped-def]
+    return ctx["actions"].ActionExecution(
+        session=pg_session,
+        registry=ctx["registry"],
+        secret_store=ctx["store"],
+        content_store=ctx["content_store"],
+        local_registry=ctx["local_registry"],
+    )
+
+
+def test_phase11_schema_has_no_authority_or_secret_columns(pg_session: Session) -> None:
+    inspector = inspect(pg_session.get_bind())
+    assert "action_requests" in set(inspector.get_table_names())
+    columns = {column["name"] for column in inspector.get_columns("action_requests")}
+    assert {
+        "id",
+        "project_id",
+        "actor_id",
+        "conversation_id",
+        "tool_id",
+        "arguments",
+        "status",
+        "created_at",
+    } <= columns
+    # Persist intent, never authority: no credential/authorization/health snapshot.
+    assert not {
+        "secret_ref",
+        "credential",
+        "membership_role",
+        "authorized",
+        "provider_health",
+        "capability_availability",
+        "provider_status",
+        "run_status",
+        "native_id",
+    } & columns
+
+
+def test_phase11_lifecycle_and_ambiguity_on_postgres(pg_session: Session, tmp_path) -> None:
+    from revolab.capabilities import CapabilityError
+    from revolab.enums import ActionRequestStatus, CapabilityErrorKind
+    from revolab.models import RunReference
+
+    state = _Phase11State()
+    ctx = _phase11_setup(pg_session, state, tmp_path)
+    actions_mod = ctx["actions"]
+
+    executed = actions_mod.execute_action_request(
+        _phase11_execution(pg_session, ctx), ctx["actor"], ctx["project"].id, ctx["action_id"]
+    )
+    assert executed.status == ActionRequestStatus.SUCCEEDED.value
+    assert state.submit_calls == 1
+    run = pg_session.get(RunReference, executed.result_run_id)
+    assert run is not None and run.native_id == state.native_id(1)
+    # Terminal: no silent second execution.
+    with pytest.raises(Exception):
+        actions_mod.execute_action_request(
+            _phase11_execution(pg_session, ctx), ctx["actor"], ctx["project"].id, ctx["action_id"]
+        )
+    assert state.submit_calls == 1
+
+    # Ambiguous external outcome: represented honestly, never auto-retried.
+    state2 = _Phase11State()
+    ctx2 = _phase11_setup(pg_session, state2, tmp_path)
+    state2.error = CapabilityError(
+        CapabilityErrorKind.NETWORK,
+        "provider unreachable",
+        provider_key="phase11prov",
+        capability_kind=CapabilityKind.COMPUTE,
+        retryable=True,
+    )
+    ambiguous = actions_mod.execute_action_request(
+        _phase11_execution(pg_session, ctx2), ctx2["actor"], ctx2["project"].id, ctx2["action_id"]
+    )
+    assert ambiguous.status == ActionRequestStatus.AMBIGUOUS.value
+    assert state2.submit_calls == 1
+
+
+def test_phase11_actor_and_project_isolation_on_postgres(pg_session: Session, tmp_path) -> None:
+    from revolab.domain.errors import NotFoundError
+
+    state = _Phase11State()
+    ctx = _phase11_setup(pg_session, state, tmp_path)
+    actions_mod = ctx["actions"]
+    other = services.create_actor(pg_session)
+    services.add_membership(pg_session, ctx["actor"], ctx["project"].id, other, Role.MEMBER.value)
+
+    with pytest.raises(NotFoundError):
+        actions_mod.get_action_request(pg_session, other, ctx["project"].id, ctx["action_id"])
+    with pytest.raises(NotFoundError):
+        actions_mod.execute_action_request(
+            _phase11_execution(pg_session, ctx), other, ctx["project"].id, ctx["action_id"]
+        )
+    assert state.submit_calls == 0
+
+
+def test_phase11_concurrent_execute_claims_once_on_postgres(pg_engine: Engine, tmp_path) -> None:
+    """The durable one-shot claim is the concurrency truth: two simultaneous human
+    clicks produce at most ONE external submission and ONE canonical RunReference."""
+    import threading
+
+    from sqlalchemy.orm import Session as ORMSession
+
+    from revolab.models import RunReference
+
+    with ORMSession(pg_engine) as setup:
+        state = _Phase11State()
+        ctx = _phase11_setup(setup, state, tmp_path)
+        action_id = ctx["action_id"]
+        actor_id = ctx["actor"]
+        project_id = ctx["project"].id
+        registry = ctx["registry"]
+        store = ctx["store"]
+        content_store = ctx["content_store"]
+        local_registry = ctx["local_registry"]
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def block() -> None:
+        started.set()
+        release.wait(timeout=20)
+
+    state.before_submit = block
+    outcomes: list[str] = []
+    errors: list[Exception] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        try:
+            with ORMSession(pg_engine) as worker_session:
+                result = actions.execute_action_request(
+                    actions.ActionExecution(
+                        session=worker_session,
+                        registry=registry,
+                        secret_store=store,
+                        content_store=content_store,
+                        local_registry=local_registry,
+                    ),
+                    actor_id,
+                    project_id,
+                    action_id,
+                )
+                with lock:
+                    outcomes.append(result.status)
+        except Exception as exc:
+            with lock:
+                errors.append(exc)
+
+    first = threading.Thread(target=worker)
+    second = threading.Thread(target=worker)
+    first.start()
+    assert started.wait(timeout=20), "the first execution never reached the provider"
+    second.start()
+    release.set()
+    first.join(timeout=30)
+    second.join(timeout=30)
+
+    assert state.submit_calls == 1
+    assert outcomes == [ActionRequestStatus.SUCCEEDED.value]
+    assert len(errors) == 1
+    with ORMSession(pg_engine) as check:
+        assert (
+            check.scalar(
+                select(func.count())
+                .select_from(RunReference)
+                .where(RunReference.native_id == state.native_id(1))
+            )
+            == 1
+        )

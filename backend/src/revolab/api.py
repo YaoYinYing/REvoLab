@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from revolab import actions as action_service
 from revolab import queries, schemas, services
 from revolab.agent.builder import build_context
 from revolab.agent.conversations import (
@@ -50,12 +51,17 @@ from revolab.drivers import DriverRegistry
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
     PROVIDER_KEY_PATTERN,
+    ActionRequestStatus,
+    AgentToolAutonomy,
     CapabilityErrorKind,
     CapabilityKind,
     ResourceKind,
     Role,
+    ToolExecutionClass,
+    ToolSideEffectClass,
 )
 from revolab.models import (
+    ActionRequest,
     Actor,
     ArtifactReference,
     GlobalProvenanceEdge,
@@ -1307,6 +1313,114 @@ def create_agent_conversation_turn(
         message=payload.message,
         selection=payload.selection,
         history_limit=_agent_bounds().max_history_messages,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/agent/conversations/{conversation_id}/action-requests",
+    response_model=list[schemas.ActionRequestRead],
+)
+def list_conversation_action_requests(
+    project_id: UUID,
+    conversation_id: UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> list[schemas.ActionRequestRead]:
+    """Durable Agent-proposed explicit actions for ONE conversation the current
+    Actor owns. Ownership follows the Phase-9 conversation lens: another member of
+    the same Project can never read them, and a guessed id is not an oracle."""
+    rows = action_service.list_action_requests(
+        session, actor_id, project_id, conversation_id, limit=limit, offset=offset
+    )
+    return [action_request_read(row) for row in rows]
+
+
+@router.get(
+    "/projects/{project_id}/action-requests/{action_request_id}",
+    response_model=schemas.ActionRequestRead,
+)
+def get_project_action_request(
+    project_id: UUID,
+    action_request_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.ActionRequestRead:
+    return action_request_read(
+        action_service.get_action_request(session, actor_id, project_id, action_request_id)
+    )
+
+
+@router.post(
+    "/projects/{project_id}/action-requests/{action_request_id}/execute",
+    response_model=schemas.ActionRequestRead,
+)
+def execute_project_action_request(
+    project_id: UUID,
+    action_request_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.ActionRequestRead:
+    """Explicit human authorization: execute one pending Action Request.
+
+    The Action Request is NOT permission. Execution rebuilds current truth
+    (membership, role, ToolCatalog, autonomy, input schema, resource visibility,
+    provider availability, credentials, policy) and crosses the external boundary
+    at most once through the SAME canonical path the human workspace uses. The
+    Agent has no tool that can call this operation."""
+    action = action_service.execute_action_request(
+        action_service.ActionExecution(
+            session=session,
+            registry=registry,
+            secret_store=store,
+            content_store=_content_store(),
+            local_registry=_local_registry(),
+        ),
+        actor_id,
+        project_id,
+        action_request_id,
+    )
+    return action_request_read(action)
+
+
+@router.post(
+    "/projects/{project_id}/action-requests/{action_request_id}/reject",
+    response_model=schemas.ActionRequestRead,
+)
+def reject_project_action_request(
+    project_id: UUID,
+    action_request_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.ActionRequestRead:
+    """Explicit human rejection of a pending Action Request. Terminal, with no
+    scientific or external side effect; a second attempt is a NEW Action Request."""
+    action = action_service.reject_action_request(session, actor_id, project_id, action_request_id)
+    return action_request_read(action)
+
+
+def action_request_read(row: ActionRequest) -> schemas.ActionRequestRead:
+    return schemas.ActionRequestRead(
+        id=row.id,
+        project_id=row.project_id,
+        actor_id=row.actor_id,
+        conversation_id=row.conversation_id,
+        tool_id=row.tool_id,
+        autonomy=AgentToolAutonomy(row.autonomy),
+        execution_class=ToolExecutionClass(row.execution_class),
+        side_effect_class=ToolSideEffectClass(row.side_effect_class),
+        arguments=row.arguments or {},
+        status=ActionRequestStatus(row.status),
+        status_reason=row.status_reason,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        claimed_at=row.claimed_at,
+        resolved_at=row.resolved_at,
+        result_run_id=row.result_run_id,
+        result_decision_id=row.result_decision_id,
     )
 
 

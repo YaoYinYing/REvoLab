@@ -25,6 +25,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -35,7 +36,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from revolab.db import Base, JSONType
 from revolab.enums import (
+    ActionRequestStatus,
     AgentTerminationReason,
+    AgentToolAutonomy,
     CitedAs,
     Confidence,
     ConversationRole,
@@ -48,6 +51,8 @@ from revolab.enums import (
     RelationType,
     ResourceKind,
     Role,
+    ToolExecutionClass,
+    ToolSideEffectClass,
 )
 
 
@@ -84,6 +89,10 @@ _cited_as = _enum(CitedAs, "cited_as")
 _decision_status = _enum(DecisionStatus, "decision_status")
 _agent_termination = _enum(AgentTerminationReason, "agent_termination_reason", create_constraint=True)
 _conversation_role = _enum(ConversationRole, "conversation_role", create_constraint=True)
+_agent_tool_autonomy = _enum(AgentToolAutonomy, "agent_tool_autonomy", create_constraint=True)
+_tool_execution_class = _enum(ToolExecutionClass, "tool_execution_class", create_constraint=True)
+_tool_side_effect_class = _enum(ToolSideEffectClass, "tool_side_effect_class", create_constraint=True)
+_action_request_status = _enum(ActionRequestStatus, "action_request_status", create_constraint=True)
 
 
 class TimestampMixin:
@@ -663,6 +672,73 @@ class ConversationMessage(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     termination_reason: Mapped[str | None] = mapped_column(_agent_termination, nullable=True)
     tool_trace_summary: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONType)
+
+
+class ActionRequest(Base, TimestampMixin):
+    """Durable operational intent for ONE Agent-proposed explicit action (Phase 11).
+
+    Persist intent, never authority (ADR-0017). This row records WHAT an Actor
+    proposed — canonical `tool_id` plus the complete, schema-validated, bounded
+    argument payload — so the proposal survives a reload and later human review.
+    It is NOT permission to execute: it stores no authorization decision, no
+    membership result, no provider-health snapshot, no capability availability, no
+    credential material and no `secret_ref`, and execution re-derives all of that
+    from current canonical state.
+
+    It is also not a ScientificObject, Evidence, Decision, ProjectResourceLink,
+    GlobalResourceRegistry entry, conversation message, Agent memory, ToolResult,
+    or provider execution truth: it never enters the scientific graph and never
+    duplicates REvoCompute's mutable run state. `result_run_id` / `result_decision_id`
+    are the canonical RESULT references the action produced, when one exists.
+
+    Ownership is the Phase-9 conversation lens: one owning Actor inside one Project.
+    Another member of the same Project can never read, execute, or reject it, and a
+    guessed UUID is not an existence oracle. The proposal-time autonomy /
+    execution_class / side_effect_class columns are presentation metadata recorded
+    for truthful display after reload; they are never consulted as authority.
+    """
+
+    __tablename__ = "action_requests"
+    __table_args__ = (
+        Index("ix_action_requests_actor_project", "actor_id", "project_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    project_id: Mapped[UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    actor_id: Mapped[UUID] = mapped_column(
+        ForeignKey("actors.actor_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Descriptive provenance of the proposal (which conversation produced it).
+    # Never an authority grant: the owning Actor remains the access boundary.
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("project_conversations.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    tool_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    autonomy: Mapped[str] = mapped_column(_agent_tool_autonomy, nullable=False)
+    execution_class: Mapped[str] = mapped_column(_tool_execution_class, nullable=False)
+    side_effect_class: Mapped[str] = mapped_column(_tool_side_effect_class, nullable=False)
+    # The COMPLETE validated canonical input (never a truncated preview, never a
+    # secret). Size-bounded at proposal time; an over-bound payload fails closed.
+    arguments: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
+    arguments_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        _action_request_status, nullable=False, default=ActionRequestStatus.PENDING.value
+    )
+    # Bounded, sanitized, non-secret explanation of a non-pending outcome.
+    status_reason: Mapped[str | None] = mapped_column(String(500))
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("global_resource_registry.resource_id", ondelete="SET NULL"), nullable=True
+    )
+    result_decision_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("decisions.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class ProjectNote(Base, TimestampMixin):

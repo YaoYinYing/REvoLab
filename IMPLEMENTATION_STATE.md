@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-09-14
+Last verified: 2026-09-15
 
 This file records actual, machine-verified repository state — not future plans.
 
@@ -16,11 +16,19 @@ The governing invariant is unchanged:
 
 > **Persist working memory, never stale truth or authority.**
 
-**Phase 10 (Project Notebook / structured working notes) is implemented and
-human-accepted**, pending merge of PR #11 on `feat/phase-10-project-notebook`; its
-architectural decision is **Accepted** (`PROJECT_NOTEBOOK.md`, ADR-0016). The
-Phase-10 section below records the machine-verified state of the CURRENT reviewed
-head of that branch. Phases 1–9 are the accepted `main` state.
+**Phase 10 (Project Notebook / structured working notes) is merged into `main`**
+(PR #11, commit `135a591`); its architectural decision is **Accepted**
+(`PROJECT_NOTEBOOK.md`, ADR-0016). Phases 1–10 are the accepted `main` state.
+
+**Phase 11 (durable explicit-action handoff / human-authorized execution) is
+implemented on `feat/phase-11-human-authorized-actions` and machine-verified**; its
+architectural decision is **Proposed — pending human acceptance**
+(`docs/architecture/AGENT_ACTION_HANDOFF.md`, ADR-0017). The governing invariant is:
+
+> **Persist intent, never authority. Re-derive authority at execution time.**
+
+The Phase-11 section below records the machine-verified state of the current head of
+that branch.
 
 ## Implemented (Phase 1)
 
@@ -1783,13 +1791,126 @@ The human reviewer found one remaining P2: the Notebook list and revision histor
   references in `SYSTEM_ARCHITECTURE.md` / `EVIDENCE_PROVENANCE.md`) are now
   `Accepted`; this ledger states that Phase 10 is human-accepted pending merge.
 
+## Implemented (Phase 11)
+
+- **Durable Action Request** (`revolab/models.py:ActionRequest`, migration
+  `9e20ac68603b_phase11_action_requests.py`): Project + owning-Actor scoped durable
+  operational intent recording the canonical `tool_id`, the COMPLETE
+  schema-validated size-bounded argument payload (`arguments` +
+  `arguments_digest`), lifecycle `status`, bounded `status_reason`, timestamps, and
+  the canonical result reference (`result_run_id` / `result_decision_id`). It is
+  **not** a ScientificObject, Evidence, Decision, `ProjectResourceLink`,
+  `GlobalResourceRegistry` entry, conversation message, Agent memory, `ToolResult`,
+  or provider execution truth, and the nine-domain Core DAG is unchanged: Action
+  Handoff is an Agent Context / application-orchestration sub-boundary
+  (`AGENT_ACTION_HANDOFF.md`, ADR-0017).
+- **Persist intent, never authority.** The row stores no authorization decision,
+  membership result, provider-health snapshot, capability availability, credential
+  material or `secret_ref`, and no column duplicates REvoCompute's mutable run
+  state (`test_action_row_stores_no_provider_execution_state`,
+  `test_phase11_schema_has_no_authority_or_secret_columns`). Proposal-time
+  `autonomy` / `execution_class` / `side_effect_class` are presentation metadata and
+  are never consulted as authority (execution re-reads the CURRENT catalog).
+- **Proposal path** (`revolab/agent/runtime.py`): an `explicit_action` (or
+  `external_action`) tool call is validated against its canonical input model and
+  persisted in the SAME turn transaction as the transcript; the bounded
+  `PendingActionRead` returned to the model/human is now a VIEW naming the durable
+  `action_request_id`. An invalid or over-bound payload fails closed and is never
+  stored (a truncated preview is display data, not executable state).
+- **One canonical explicit-action input mapping**
+  (`revolab/tools/explicit_actions.py`) is consumed by BOTH the proposal boundary
+  and the human execution boundary; the duplicate mapping that previously lived in
+  `agent/runtime.py` is retired. Execution revalidates the stored payload against
+  the CURRENT model, so a schema change fails closed with no compatibility shim.
+- **Human surface** (`revolab/actions.py` + `api.py`): list (per conversation),
+  read, execute, reject. Ownership is the Phase-9 conversation lens exactly — one
+  owning Actor in one Project, another Project member gets 404, a non-member gets
+  403 before any lookup (never an existence oracle). `execute`/`reject` are NOT
+  Tools and never appear in the Agent ToolCatalog.
+- **Execution-time revalidation**: current Project readability (tombstone),
+  mutation-capable membership/role, current ToolCatalog + autonomy, current
+  canonical input schema + payload integrity digest, current resource visibility for
+  every referenced input, current provider availability and credential presence,
+  current project policy. A pre-claim refusal raises the typed domain error and
+  leaves the action `pending` (no side effect, no claim consumed); a post-claim
+  definite refusal is terminal `failed`.
+- **One-shot concurrency**: the durable `pending -> executing` claim is a single
+  conditional `UPDATE` whose rowcount decides the winner; it is COMMITTED before the
+  external call, so the claim (never a process-memory flag) is the production truth.
+  PostgreSQL orders concurrent claims; the conditional update is the cross-backend
+  backstop.
+- **Canonical execution paths, no duplication**: a local explicit action
+  (`decision.commit`) runs through the SAME closed `LocalToolRuntime` the human
+  workspace uses; a remote explicit action runs through the SAME
+  `services.compute_submit_handle` + `record_compute_run` capability path the human
+  compute endpoint uses (the new helper is a split of the existing implementation,
+  not a second one). A confirmed handle creates/reuses the canonical `RunReference`
+  and its `consumed_as_input_by` edges; REvoCompute remains the sole owner of
+  execution state.
+- **Honest external ambiguity**: REvoCompute exposes no client-usable idempotency
+  key, so none is invented. A transport failure, 5xx/gateway response, unexpected
+  payload, or a 2xx without a task identity settles the action `ambiguous` and it is
+  **never** automatically retried; explicit 4xx rejections and pre-side-effect local
+  provider checks settle `failed`. A confirmed provider handle whose local
+  `RunReference` recording fails also settles `ambiguous` rather than pretending
+  either outcome.
+- **Frontend** (`frontend/src/views/Agent.tsx`): a durable "Action requests"
+  section inside the existing conversation surface showing tool id, execution class,
+  side-effect class, human-readable canonical arguments (provider/task kind/input
+  identities/parameters for a compute action), state, what Execute will do, and the
+  resulting canonical reference; Execute/Reject only for a `pending` action and a
+  mutation-capable membership, never on render/reload/navigation/model response, with
+  the Phase-8–10 scope guards so a stale in-flight response cannot repopulate another
+  scope. No credential detail is ever rendered.
+
+## Verified evidence (Phase 11)
+
+Commands run on this branch head (2026-09-15):
+
+```text
+ruff check backend                                  All checks passed
+mypy (strict, 53 source files)                      Success: no issues found
+pytest (SQLite)                                     423 passed, 17 skipped
+alembic upgrade head + alembic check (SQLite)       no new upgrade operations
+alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
+pytest backend/tests/test_postgres_integration.py   17 passed (migrated PostgreSQL)
+python -m revolab.export_openapi  -> openapi.json   byte-identical (no drift)
+frontend: npm run typecheck                         clean
+frontend: npm run test                              56 passed
+frontend: npm run build                             built
+frontend: npm run check:contracts                   clean (generation idempotent)
+playwright test (real FastAPI + DB + fake model/compute)  8 passed
+git diff --check                                    clean
+```
+
+Phase-11 regressions (`backend/tests/test_actions.py`,
+`backend/tests/test_actions_api.py`, `frontend/src/views/Agent.test.tsx`,
+`frontend/e2e/actions.spec.ts`) cover, with mutation-sensitive assertions: an Agent
+proposal is durable but NOT executed; reload returns the same pending action; another
+Actor cannot read/execute/reject and another Project cannot use it; non-member 403
+before any existence check; Project tombstone, membership/role revocation, input
+visibility revocation, credential revocation, unavailable provider, removed Tool,
+changed autonomy, stale schema and a tampered payload all block execution; no
+credential/`secret_ref`/executable argument reaches the durable row or the transcript; rejection has no side effect and is terminal; concurrent execution
+submits at most once (SQLite threads and PostgreSQL connections with a blocking
+provider); success creates the canonical `RunReference` and a second execute never
+resubmits; the provider boundary classification is `failed` vs `ambiguous`; an
+ambiguous outcome is never retried; execute/reject are absent from the Agent
+catalog; hostile Note text cannot authorize or execute; an over-bound payload is
+refused rather than truncated.
+
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
-- Remote provider tool execution inside the Agent loop (Phase 8 surfaces remote
-  tools from the same catalog and converts remote `explicit_action` to a
-  PendingAction, but does not autonomously cross the external boundary; remote
+- Remote provider tool execution inside the Agent loop (the Agent surfaces remote
+  tools from the same catalog and converts remote `explicit_action` into a durable
+  Action Request, but never autonomously crosses the external boundary; remote
   reads remain on the human capability endpoints — documented in
-  `docs/architecture/PROJECT_AGENT_RUNTIME.md`).
+  `docs/architecture/PROJECT_AGENT_RUNTIME.md` and `AGENT_ACTION_HANDOFF.md`).
+- Phase-11 accepted limitation: a process hard-killed after the durable one-shot
+  claim and before the outcome write leaves the Action Request in `executing`. It is
+  reported honestly as an in-progress claim with its claim time, is never
+  auto-retried, and a further execute request fails closed; there is no automatic
+  reaper/reconciliation worker (a background worker is an explicit non-goal).
 - Live end-to-end acceptance against an authorized REvoCompute instance is
   external evidence: no authorized instance is configured in this development
   environment. The driver is built and tested against the documented public

@@ -37,7 +37,7 @@ tool-call validation           (tool id · availability · input schema ·
                                  membership · autonomy · execution class ·
                                  side-effect class)
     ↓
-LocalToolRuntime  OR  PendingAction  (explicit_action)  OR  fail-closed
+LocalToolRuntime  OR  durable Action Request (explicit_action)  OR  fail-closed
     ↓
 bounded ToolResult back to the model
     ↓
@@ -133,24 +133,36 @@ automatic        safe bounded reads/analysis        → execute in the loop
 policy           typed domain mutations (evidence,   → execute only if the
                  Decision draft)                      project policy authorizes
 explicit_action  Decision commit, compute submit     → NEVER execute
-                                                       → PendingAction
+                                                       → durable Action Request
+                                                         (pending human decision)
 never_agent       membership / sharing / credential  → never projected as a Tool
 ```
 
 `decision.record_draft` is the only Decision shape the loop can produce, and it is
 always a **DRAFT**; commit remains the separate promotion gate
 (`POST /api/projects/{project_id}/decisions/{decision_id}/commit`). Remote
-`explicit_action` (e.g. `{provider}.compute.submit`) becomes a `PendingAction`;
-remote automatic/policy tools are surfaced in the catalog but the Phase-8 loop
-does **not** autonomously cross the external boundary to execute them — they
-remain on the existing human capability endpoints (documented deferral).
+`explicit_action` (e.g. `{provider}.compute.submit`) becomes a durable Action
+Request (`AGENT_ACTION_HANDOFF.md`, ADR-0017); remote automatic/policy tools are
+surfaced in the catalog but the loop does **not** autonomously cross the external
+boundary to execute them — they remain on the existing human capability endpoints
+(documented deferral).
 
-## Pending explicit actions
+## Durable explicit actions
 
-`PendingActionRead` is an ephemeral, validated, non-secret description of a
-proposed-but-NOT-executed operation. Phase 8 has no approval database or
-workflow engine; the existing human UI/typed endpoint remains the execution
-authority.
+Phase 11 replaces the ephemeral-only handoff. An `explicit_action` tool call is
+validated against its canonical input model and persisted as a durable **Action
+Request** in the same transaction as the turn (complete bounded payload, never a
+truncated preview); over-bound or invalid arguments fail closed. The turn response
+still carries a bounded, non-secret `PendingActionRead` for display, now naming the
+durable `action_request_id`.
+
+The invariant is **persist intent, never authority**: the row stores no
+authorization decision, membership result, provider-health snapshot, capability
+availability, credential material or `secret_ref`. Only an explicit human/API
+request can execute or reject it, and execution rebuilds all current truth first.
+`execute`/`reject` are not Tools and never appear in the Agent ToolCatalog, so the
+model cannot approve its own action. The normative design is
+`docs/architecture/AGENT_ACTION_HANDOFF.md`.
 
 ## Prompt-injection boundary
 
@@ -188,14 +200,23 @@ response   ConversationTurnRead    { turn: AgentTurnRead, user_message,
 reason, budget) never exposes the raw provider/model response object, hidden
 prompt text, token/API credentials, or any secret. The frontend Agent workspace
 shows the persisted conversation list/transcript, the tools used during the
-last turn, pending explicit actions, and the Decision DRAFT vs COMMITTED truth
-boundary.
+last turn, the DURABLE action requests for the open conversation (with explicit
+Execute/Reject and the resulting canonical reference), and the Decision DRAFT vs
+COMMITTED truth boundary. `AGENT_ACTION_HANDOFF.md` owns the action surface:
+
+```text
+GET  /api/projects/{project_id}/agent/conversations/{conversation_id}/action-requests
+GET  /api/projects/{project_id}/action-requests/{action_request_id}
+POST /api/projects/{project_id}/action-requests/{action_request_id}/execute
+POST /api/projects/{project_id}/action-requests/{action_request_id}/reject
+```
 
 ## Deferrals (explicit)
 
 - RAG/vector/semantic memory, workflow engines, background jobs, recursive Agents,
   Agent subagents, conversation sharing, conversation search, generic approval
-  workflows.
+  workflows (no multi-party approval, no approval queue, no auto-approval rule,
+  no retry scheduler — Phase 11 is exactly one explicit handoff boundary).
 - **Agent Note mutation**: Phase 10 lets the Agent READ explicitly selected
   `ProjectNote`s as bounded untrusted context (`PROJECT_NOTEBOOK.md`); an
   Agent-facing Note tool is deferred and, if added, must be policy-gated and typed

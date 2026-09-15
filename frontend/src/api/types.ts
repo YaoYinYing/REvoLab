@@ -144,3 +144,11 @@ export type NoteMentionRead = NonNullable<NoteRevisionRead['mentions']>[number]
 // Request bodies live in `api/backend.ts` (indexed from `paths`). The one
 // request shape the view layer names directly is the mention target.
 export type NoteMentionCreate = components['schemas']['NoteMentionCreate']
+
+// Phase-11 durable Action Handoff. An Action Request is durable operational
+// INTENT (persist intent, never authority): it is not a ToolResult, a
+// RunReference, or provider execution state.
+export type ActionRequestStatus = components['schemas']['ActionRequestStatus']
+
+export type ActionRequestRead =
+  paths['/api/projects/{project_id}/action-requests/{action_request_id}']['get']['responses']['200']['content']['application/json']

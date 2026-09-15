@@ -286,6 +286,41 @@ class AgentToolCallStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class ActionRequestStatus(StrEnum):
+    """The durable lifecycle of one Agent-proposed explicit action (ADR-0017).
+
+    An Action Request records PROPOSED INTENT, never authority: `pending` is not
+    permission, and every execution re-derives current authority from canonical
+    state. `executing` is a durable one-shot claim (not a process-memory flag);
+    `succeeded` / `failed` / `ambiguous` / `rejected` are terminal. `ambiguous` is
+    the honest representation of an external side effect whose outcome cannot be
+    confirmed — it is never auto-retried.
+    """
+
+    PENDING = "pending"
+    EXECUTING = "executing"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    AMBIGUOUS = "ambiguous"
+    REJECTED = "rejected"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in _ACTION_TERMINAL_STATUSES
+
+
+# The frozen terminal set: once an action reaches one of these it can never
+# silently execute again (a second desired attempt is a NEW Action Request).
+_ACTION_TERMINAL_STATUSES = frozenset(
+    {
+        ActionRequestStatus.SUCCEEDED,
+        ActionRequestStatus.FAILED,
+        ActionRequestStatus.AMBIGUOUS,
+        ActionRequestStatus.REJECTED,
+    }
+)
+
+
 class ConversationRole(StrEnum):
     """The only two durable roles of a persisted conversation message. A stored
     transcript is conversational working memory: `user` text and `assistant`

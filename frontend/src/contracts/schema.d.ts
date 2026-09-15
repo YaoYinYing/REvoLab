@@ -116,6 +116,70 @@ export interface paths {
         patch: operations["patch_project_api_projects__project_id__patch"];
         trace?: never;
     };
+    "/api/projects/{project_id}/action-requests/{action_request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Project Action Request */
+        get: operations["get_project_action_request_api_projects__project_id__action_requests__action_request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/action-requests/{action_request_id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute Project Action Request
+         * @description Explicit human authorization: execute one pending Action Request.
+         *
+         *     The Action Request is NOT permission. Execution rebuilds current truth
+         *     (membership, role, ToolCatalog, autonomy, input schema, resource visibility,
+         *     provider availability, credentials, policy) and crosses the external boundary
+         *     at most once through the SAME canonical path the human workspace uses. The
+         *     Agent has no tool that can call this operation.
+         */
+        post: operations["execute_project_action_request_api_projects__project_id__action_requests__action_request_id__execute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/action-requests/{action_request_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject Project Action Request
+         * @description Explicit human rejection of a pending Action Request. Terminal, with no
+         *     scientific or external side effect; a second attempt is a NEW Action Request.
+         */
+        post: operations["reject_project_action_request_api_projects__project_id__action_requests__action_request_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/agent/conversations": {
         parameters: {
             query?: never;
@@ -163,6 +227,28 @@ export interface paths {
          * @description Rename and/or archive a conversation. Namespace-scoped, non-destructive.
          */
         patch: operations["patch_project_conversation_api_projects__project_id__agent_conversations__conversation_id__patch"];
+        trace?: never;
+    };
+    "/api/projects/{project_id}/agent/conversations/{conversation_id}/action-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Conversation Action Requests
+         * @description Durable Agent-proposed explicit actions for ONE conversation the current
+         *     Actor owns. Ownership follows the Phase-9 conversation lens: another member of
+         *     the same Project can never read them, and a guessed id is not an oracle.
+         */
+        get: operations["list_conversation_action_requests_api_projects__project_id__agent_conversations__conversation_id__action_requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/projects/{project_id}/agent/conversations/{conversation_id}/turns": {
@@ -1040,6 +1126,73 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActionRequestRead
+         * @description One durable Agent-proposed explicit action (Phase 11).
+         *
+         *     Persist intent, never authority: this read model exposes WHAT was proposed and
+         *     its current lifecycle state. It never exposes credential material, a
+         *     `secret_ref`, a lease, a provider-health snapshot, or an authorization result.
+         *     `result_run_id` is the canonical RunReference produced by a successful remote
+         *     execution; `result_decision_id` is the Decision produced by a successful local
+         *     promotion. Provider execution state is never copied here.
+         */
+        ActionRequestRead: {
+            /**
+             * Actor Id
+             * Format: uuid
+             */
+            actor_id: string;
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+            autonomy: components["schemas"]["AgentToolAutonomy"];
+            /** Claimed At */
+            claimed_at?: string | null;
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            execution_class: components["schemas"]["ToolExecutionClass"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Resolved At */
+            resolved_at?: string | null;
+            /** Result Decision Id */
+            result_decision_id?: string | null;
+            /** Result Run Id */
+            result_run_id?: string | null;
+            side_effect_class: components["schemas"]["ToolSideEffectClass"];
+            status: components["schemas"]["ActionRequestStatus"];
+            /** Status Reason */
+            status_reason?: string | null;
+            /** Tool Id */
+            tool_id: string;
+            /** Updated At */
+            updated_at?: string | null;
+        };
+        /**
+         * ActionRequestStatus
+         * @description The durable lifecycle of one Agent-proposed explicit action (ADR-0017).
+         *
+         *     An Action Request records PROPOSED INTENT, never authority: `pending` is not
+         *     permission, and every execution re-derives current authority from canonical
+         *     state. `executing` is a durable one-shot claim (not a process-memory flag);
+         *     `succeeded` / `failed` / `ambiguous` / `rejected` are terminal. `ambiguous` is
+         *     the honest representation of an external side effect whose outcome cannot be
+         *     confirmed — it is never auto-retried.
+         * @enum {string}
+         */
+        ActionRequestStatus: "pending" | "executing" | "succeeded" | "failed" | "ambiguous" | "rejected";
         /** ActorRead */
         ActorRead: {
             /**
@@ -2427,9 +2580,17 @@ export interface components {
          *     validated, bounded, non-secret information needed to understand the proposed
          *     operation; execution remains the existing human-authorized surface. When the
          *     validated argument payload is too large it is bounded to
-         *     `{"truncated": true, "preview": "<bounded json prefix>"}`.
+         *     `{"truncated": true, "preview": "<bounded json prefix>"}` — a DISPLAY preview,
+         *     never executable state.
+         *
+         *     `action_request_id` names the durable Action Request that holds the complete
+         *     validated payload and the human execute/reject surface. It is present whenever
+         *     the proposal was persisted; a proposal that could not be persisted (invalid or
+         *     over-bound arguments) fails closed and never appears here.
          */
         PendingActionRead: {
+            /** Action Request Id */
+            action_request_id?: string | null;
             /** Arguments */
             arguments?: {
                 [key: string]: unknown;
@@ -3410,6 +3571,108 @@ export interface operations {
             };
         };
     };
+    get_project_action_request_api_projects__project_id__action_requests__action_request_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                action_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionRequestRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_project_action_request_api_projects__project_id__action_requests__action_request_id__execute_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                action_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionRequestRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_project_action_request_api_projects__project_id__action_requests__action_request_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                action_request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionRequestRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_project_conversations_api_projects__project_id__agent_conversations_get: {
         parameters: {
             query?: {
@@ -3547,6 +3810,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConversationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_conversation_action_requests_api_projects__project_id__agent_conversations__conversation_id__action_requests_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActionRequestRead"][];
                 };
             };
             /** @description Validation Error */

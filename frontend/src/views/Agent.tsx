@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bot, BookmarkPlus, GitCommitHorizontal, MessageSquarePlus, Send } from 'lucide-react'
+import { Ban, Bot, BookmarkPlus, Play, Send, MessageSquarePlus } from 'lucide-react'
 
 import { projectApi } from '../api/backend'
 import { apiErrorMessage } from '../api/client'
-import { useNotes, useObjects, useResources } from '../api/hooks'
+import {
+  useConversationActionRequests,
+  useMyMembership,
+  useNotes,
+  useObjects,
+  useResources,
+} from '../api/hooks'
 import type {
+  ActionRequestRead,
   AgentTurnRead,
   ConversationMessageRead,
   ConversationRead,
@@ -13,6 +20,12 @@ import type {
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
 import {
+  ACTION_REQUEST_STATUS_AMBIGUOUS,
+  ACTION_REQUEST_STATUS_EXECUTING,
+  ACTION_REQUEST_STATUS_FAILED,
+  ACTION_REQUEST_STATUS_PENDING,
+  ACTION_REQUEST_STATUS_REJECTED,
+  ACTION_REQUEST_STATUS_SUCCEEDED,
   AGENT_TERMINATION_REASON_FINAL_RESPONSE,
   AGENT_TOOL_CALL_STATUS_COMPLETED,
   AGENT_TOOL_CALL_STATUS_FAILED,
@@ -20,7 +33,46 @@ import {
   CONVERSATION_ROLE_USER,
   AGENT_TOOL_CALL_STATUS_PENDING,
   RESOURCE_KIND_ARTIFACT,
+  ROLE_MEMBER,
+  ROLE_OWNER,
+  TOOL_EXECUTION_CLASS_REMOTE,
 } from '../contracts/enums'
+
+/** Presentation-only tone for a durable Action Request state. The state VALUES
+ * come from the generated contract; never a bare literal. */
+function actionTone(status: string): 'neutral' | 'good' | 'warn' {
+  if (status === ACTION_REQUEST_STATUS_SUCCEEDED) return 'good'
+  if (status === ACTION_REQUEST_STATUS_PENDING) return 'warn'
+  if (status === ACTION_REQUEST_STATUS_AMBIGUOUS) return 'warn'
+  if (status === ACTION_REQUEST_STATUS_FAILED) return 'warn'
+  if (status === ACTION_REQUEST_STATUS_REJECTED) return 'neutral'
+  return 'neutral'
+}
+
+/** The canonical bounded arguments rendered for human review. Compute
+ * submissions highlight provider, task kind and input identities; credential
+ * material is never part of an Action Request at all. */
+function describeAction(action: ActionRequestRead): string[] {
+  const args = action.arguments ?? {}
+  const lines: string[] = []
+  if (typeof args.provider_key === 'string') lines.push(`provider: ${args.provider_key}`)
+  if (typeof args.task_kind === 'string') lines.push(`task kind: ${args.task_kind}`)
+  const inputs = Array.isArray(args.inputs) ? args.inputs : []
+  for (const input of inputs) {
+    if (input && typeof input === 'object') {
+      const record = input as Record<string, unknown>
+      if (typeof record.resource_id === 'string') {
+        lines.push(`input ${String(record.kind ?? '')}: ${record.resource_id}`)
+      }
+    }
+  }
+  if (args.params && typeof args.params === 'object') {
+    lines.push(`parameters: ${JSON.stringify(args.params)}`)
+  }
+  if (typeof args.decision_id === 'string') lines.push(`decision: ${args.decision_id}`)
+  if (lines.length === 0) lines.push(JSON.stringify(args))
+  return lines
+}
 
 function traceTone(status: string): 'neutral' | 'good' | 'warn' {
   if (status === AGENT_TOOL_CALL_STATUS_COMPLETED) return 'good'
@@ -60,9 +112,23 @@ export function AgentView({
   const [totalMessages, setTotalMessages] = useState(0)
   const [turn, setTurn] = useState<AgentTurnRead | null>(null)
   const [savedMessageId, setSavedMessageId] = useState<string | null>(null)
+  const [actionBusyId, setActionBusyId] = useState<string | null>(null)
+  const [actionNotice, setActionNotice] = useState<string | null>(null)
   // A handed-off Note that is a valid current-Project note but falls outside the
   // newest selector page is resolved by id rather than silently dropped.
   const [handoffNote, setHandoffNote] = useState<NoteRead | null>(null)
+
+  const { data: membership } = useMyMembership(actorId, projectId)
+  // Execute/reject are offered only to a currently mutation-capable membership;
+  // authority itself is always re-enforced by the backend at execution time.
+  const canDecideActions =
+    membership?.role === ROLE_OWNER || membership?.role === ROLE_MEMBER
+  const {
+    data: actionRequests,
+    reload: reloadActionRequests,
+  } = useConversationActionRequests(actorId, projectId, activeConversationId, {
+    limit: 50,
+  })
 
   const noteInList = notes?.some((note) => note.id === selectedNoteId) ?? false
   // Only a Note that actually belongs to the current Project may be selected: a
@@ -121,6 +187,8 @@ export function AgentView({
     setSelectedNoteId(initialNoteIds[0] ?? '')
     setSavedMessageId(null)
     setHandoffNote(null)
+    setActionBusyId(null)
+    setActionNotice(null)
     projectApi(actorId)
       .listConversations(projectId)
       .then((res) => {
@@ -187,6 +255,8 @@ export function AgentView({
     setMessages(detail.data.messages ?? [])
     setTotalMessages(detail.data.total_messages ?? 0)
     setTurn(null)
+    setActionNotice(null)
+    setActionBusyId(null)
   }
 
   async function newConversation() {
@@ -265,6 +335,9 @@ export function AgentView({
     }
     const persisted = res.data
     setTurn(persisted.turn)
+    // A turn may have persisted NEW Action Requests: re-read the durable truth
+    // instead of trusting the ephemeral response payload.
+    void reloadActionRequests()
     const nextUser = persisted.user_message
     const nextAssistant = persisted.assistant_message
     const newCount = (nextUser ? 1 : 0) + (nextAssistant ? 1 : 0)
@@ -280,6 +353,58 @@ export function AgentView({
 
   const pendingActions = turn?.pending_actions ?? []
   const trace = turn?.tool_trace ?? []
+
+  /**
+   * Explicit human authorization. `execute`/`reject` are requested ONLY from a
+   * user click on a pending Action Request — never on render, reload, navigation
+   * or a model response. The backend re-derives all authority from current truth.
+   */
+  async function decideAction(action: ActionRequestRead, decision: 'execute' | 'reject') {
+    if (actionBusyId || busy) return
+    const requestScope = scopeRef.current
+    const requestConversation = activeConversationRef.current
+    setActionBusyId(action.id)
+    setActionNotice(null)
+    setActionError(null)
+    const api = projectApi(actorId)
+    const res =
+      decision === 'execute'
+        ? await api.executeActionRequest(projectId, action.id)
+        : await api.rejectActionRequest(projectId, action.id)
+    // A stale response from a previous Actor x Project x conversation scope must
+    // never repopulate the current one.
+    if (
+      scopeRef.current !== requestScope ||
+      activeConversationRef.current !== requestConversation
+    ) {
+      return
+    }
+    setActionBusyId(null)
+    if (res.error || !res.data) {
+      setActionError(apiErrorMessage(res.error, res.response))
+      void reloadActionRequests()
+      return
+    }
+    const updated = res.data as ActionRequestRead
+    if (updated.status === ACTION_REQUEST_STATUS_SUCCEEDED) {
+      setActionNotice(
+        updated.result_run_id
+          ? `Executed. Canonical run reference ${updated.result_run_id} — see Runs & Artifacts.`
+          : updated.result_decision_id
+            ? `Executed. Committed decision ${updated.result_decision_id}.`
+            : 'Executed.',
+      )
+    } else if (updated.status === ACTION_REQUEST_STATUS_AMBIGUOUS) {
+      setActionNotice(
+        'The provider outcome is uncertain. This action will NOT be retried automatically; reconcile with the provider or propose a new action.',
+      )
+    } else if (updated.status === ACTION_REQUEST_STATUS_FAILED) {
+      setActionNotice(`Execution failed with no external side effect: ${updated.status_reason ?? ''}`)
+    } else {
+      setActionNotice(`Action is now ${updated.status}.`)
+    }
+    void reloadActionRequests()
+  }
 
   /**
    * Explicit human capture: Conversation -> Project Note. The user clicks this
@@ -505,10 +630,10 @@ export function AgentView({
           ) : null}
 
           {pendingActions.length > 0 ? (
-            <Section title="Pending explicit actions">
+            <Section title="Proposed by this turn (not executed)">
               <p className="truth-boundary">
-                The Agent proposed these actions but did NOT execute them. Use the existing authorized
-                surface (e.g. the Decisions view with <GitCommitHorizontal size={12} /> commit) to act.
+                The Agent proposed these actions but did NOT execute them. Each one is persisted as a
+                durable Action Request below; nothing is authorized until you explicitly execute it.
               </p>
               {pendingActions.map((action, index) => (
                 <div className="list-row" key={index}>
@@ -517,7 +642,6 @@ export function AgentView({
                     <Badge tone="warn">{action.autonomy}</Badge>
                   </div>
                   <p>{action.summary}</p>
-                  <small className="mono">{JSON.stringify(action.arguments)}</small>
                 </div>
               ))}
             </Section>
@@ -529,6 +653,83 @@ export function AgentView({
           </p>
         </Section>
       ) : null}
+
+      <Section title="Action requests (durable intent, never authority)">
+        <p className="truth-boundary">
+          A durable Action Request records what the Agent proposed. It is never permission to execute:
+          executing re-checks your current membership, the current Tool, provider availability,
+          credentials and resource visibility, then runs the canonical path.
+        </p>
+        {actionNotice ? <p className="muted-note">{actionNotice}</p> : null}
+        {activeConversationId == null ? (
+          <Empty label="Open a conversation to see its durable action requests." />
+        ) : null}
+        {activeConversationId != null && (actionRequests ?? []).length === 0 ? (
+          <Empty label="No action requests in this conversation yet." />
+        ) : null}
+        {(actionRequests ?? []).map((action) => (
+          <div className="list-row" key={action.id}>
+            <div className="list-row-head">
+              <strong className="mono">{action.tool_id}</strong>
+              <Badge tone={actionTone(action.status)}>{action.status}</Badge>
+              <Badge>{action.execution_class}</Badge>
+              <Badge>{action.side_effect_class}</Badge>
+            </div>
+            <ul className="muted-note">
+              {describeAction(action).map((line, index) => (
+                <li key={index} className="mono">
+                  {line}
+                </li>
+              ))}
+            </ul>
+            <p className="muted-note">
+              {action.execution_class === TOOL_EXECUTION_CLASS_REMOTE
+                ? 'Execute submits this task to the provider through the canonical compute path.'
+                : 'Execute runs this local explicit action through the canonical closed tool runtime.'}
+            </p>
+            {action.status_reason ? (
+              <p className="inline-error">{action.status_reason}</p>
+            ) : null}
+            {action.result_run_id ? (
+              <small className="muted-note">
+                Canonical run reference {action.result_run_id} — visible in Runs &amp; Artifacts.
+              </small>
+            ) : null}
+            {action.result_decision_id ? (
+              <small className="muted-note">Committed decision {action.result_decision_id}.</small>
+            ) : null}
+            {action.status === ACTION_REQUEST_STATUS_PENDING ? (
+              <div className="list-row-head">
+                <Button
+                  type="button"
+                  onClick={() => decideAction(action, 'execute')}
+                  disabled={!canDecideActions || actionBusyId !== null || busy}
+                  aria-label={`Execute action request ${action.id}`}
+                >
+                  <Play size={13} /> Execute
+                </Button>
+                <Button
+                  type="button"
+                  kind="quiet"
+                  onClick={() => decideAction(action, 'reject')}
+                  disabled={!canDecideActions || actionBusyId !== null || busy}
+                  aria-label={`Reject action request ${action.id}`}
+                >
+                  <Ban size={13} /> Reject
+                </Button>
+                {!canDecideActions ? (
+                  <small className="muted-note">Owner/member membership required to decide.</small>
+                ) : null}
+              </div>
+            ) : null}
+            {action.status === ACTION_REQUEST_STATUS_EXECUTING ? (
+              <small className="muted-note">
+                Execution claimed; the outcome is not yet recorded. It will not be retried automatically.
+              </small>
+            ) : null}
+          </div>
+        ))}
+      </Section>
 
       <p className="truth-boundary">
         Agent output ≠ committed Project Knowledge. A Decision created by the Agent is always a{' '}

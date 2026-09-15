@@ -1320,6 +1320,53 @@ def record_compute_artifacts(
     return recorded
 
 
+def compute_submit_handle(
+    session: Session,
+    registry: DriverRegistry,
+    secret_store: SecretStore,
+    content_store: ContentStore,
+    actor_id: UUID,
+    project_id: UUID,
+    provider_key: str,
+    task_kind: str,
+    bindings: list[InputBinding],
+    params: dict[str, Any],
+) -> RunHandle:
+    """Preflight + the ONE external compute submission, returning the provider's
+    immutable run identity handle.
+
+    Every precondition (policy, mutation-capable membership, input visibility,
+    input materialization, driver readiness, provider health, credential presence)
+    is validated BEFORE the external side effect. Split out from `compute_submit`
+    so the explicit-action handoff can distinguish a confirmed provider handle
+    from the subsequent local RunReference recording without duplicating the
+    submission path: this remains the single compute-submission implementation.
+    """
+    permitted = project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE)
+    # Preflight the accepted #5 authority BEFORE any external side effect:
+    # task-submission authority (mutation-capable membership) + read(input).
+    # Stewardship over the input source is NOT required — a shared, visible
+    # input must be consumable without transferring mutation authority.
+    mutation_capable_membership(session, actor_id, project_id)
+    for binding in bindings:
+        persistence.require_visible(session, project_id, binding.resource_id)
+    resolved_inputs = [
+        resolve_compute_input(session, project_id, binding, store=content_store)
+        for binding in bindings
+    ]
+    return compute_domain.submit_compute(
+        session,
+        registry,
+        secret_store,
+        actor_id,
+        provider_key,
+        task_kind,
+        resolved_inputs,
+        params,
+        permitted=permitted,
+    )
+
+
 def compute_submit(
     session: Session,
     registry: DriverRegistry,
@@ -1335,28 +1382,17 @@ def compute_submit(
     """One real compute submission: every precondition is validated BEFORE the
     external side effect, then the live provider call, then REvoLab-side
     RunReference + input provenance."""
-    permitted = project_policy_permits(session, actor_id, project_id, CapabilityKind.COMPUTE)
-    # Preflight the accepted #5 authority BEFORE any external side effect:
-    # task-submission authority (mutation-capable membership) + read(input).
-    # Stewardship over the input source is NOT required — a shared, visible
-    # input must be consumable without transferring mutation authority.
-    mutation_capable_membership(session, actor_id, project_id)
-    for binding in bindings:
-        persistence.require_visible(session, project_id, binding.resource_id)
-    resolved_inputs = [
-        resolve_compute_input(session, project_id, binding, store=content_store)
-        for binding in bindings
-    ]
-    handle = compute_domain.submit_compute(
+    handle = compute_submit_handle(
         session,
         registry,
         secret_store,
+        content_store,
         actor_id,
+        project_id,
         provider_key,
         task_kind,
-        resolved_inputs,
+        bindings,
         params,
-        permitted=permitted,
     )
     return record_compute_run(
         session,

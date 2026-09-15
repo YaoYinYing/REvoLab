@@ -16,6 +16,7 @@ from revolab.capabilities import LEGAL_COMPUTE_INPUT_KINDS
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
     PROVIDER_KEY_PATTERN,
+    ActionRequestStatus,
     AgentTerminationReason,
     AgentToolAutonomy,
     AgentToolCallStatus,
@@ -962,13 +963,49 @@ class PendingActionRead(BaseModel):
     validated, bounded, non-secret information needed to understand the proposed
     operation; execution remains the existing human-authorized surface. When the
     validated argument payload is too large it is bounded to
-    `{"truncated": true, "preview": "<bounded json prefix>"}`."""
+    `{"truncated": true, "preview": "<bounded json prefix>"}` — a DISPLAY preview,
+    never executable state.
+
+    `action_request_id` names the durable Action Request that holds the complete
+    validated payload and the human execute/reject surface. It is present whenever
+    the proposal was persisted; a proposal that could not be persisted (invalid or
+    over-bound arguments) fails closed and never appears here."""
 
     tool_id: str
     autonomy: AgentToolAutonomy
     summary: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     reason: str
+    action_request_id: UUID | None = None
+
+
+class ActionRequestRead(BaseModel):
+    """One durable Agent-proposed explicit action (Phase 11).
+
+    Persist intent, never authority: this read model exposes WHAT was proposed and
+    its current lifecycle state. It never exposes credential material, a
+    `secret_ref`, a lease, a provider-health snapshot, or an authorization result.
+    `result_run_id` is the canonical RunReference produced by a successful remote
+    execution; `result_decision_id` is the Decision produced by a successful local
+    promotion. Provider execution state is never copied here."""
+
+    id: UUID
+    project_id: UUID
+    actor_id: UUID
+    conversation_id: UUID | None = None
+    tool_id: str
+    autonomy: AgentToolAutonomy
+    execution_class: ToolExecutionClass
+    side_effect_class: ToolSideEffectClass
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    status: ActionRequestStatus
+    status_reason: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    claimed_at: datetime | None = None
+    resolved_at: datetime | None = None
+    result_run_id: UUID | None = None
+    result_decision_id: UUID | None = None
 
 
 class ToolCallTraceRead(BaseModel):
