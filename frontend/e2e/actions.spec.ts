@@ -92,7 +92,9 @@ test('an explicit compute action survives reload and executes exactly once on de
 
   // 3. Explicit human authorization: execute exactly one submission.
   await page.getByRole('button', { name: /^Execute action request / }).first().click()
-  await expect(page.getByText(/Canonical run reference/)).toBeVisible()
+  // The execution notice is unambiguous; the durable row separately repeats the
+  // same reference, so match the notice specifically (never a multi-element match).
+  await expect(page.getByText(/^Executed\. Canonical run reference/)).toBeVisible()
   await expect(page.getByText('succeeded', { exact: true }).first()).toBeVisible()
 
   // 4. The canonical RunReference is observable in the normal Runs surface.
