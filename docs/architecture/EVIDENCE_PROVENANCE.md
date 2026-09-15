@@ -210,7 +210,7 @@ Conclusion are **modes**, not tables:
   question (there is no stored `status=concluded`).
 - Next actions live in `Decision.next_actions`. A note-like first-hand claim is
   modeled as an Evidence with `kind=note`.
-- **Phase 10 refinement (Proposed — pending human acceptance):** the Project
+- **Phase 10 refinement (Accepted):** the Project
   Notebook adds a durable, Project-scoped `ProjectNote` working document
   (`PROJECT_NOTEBOOK.md`, ADR-0016). It is explicitly **not** Evidence and **not** a
   canonical knowledge node: it creates no Evidence/Decision/provenance row, and any

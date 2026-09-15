@@ -123,7 +123,8 @@ describe('Notebook view (Phase 10)', () => {
     await user.click(await screen.findByText('Working notes'))
 
     expect((await screen.findAllByText('Current thinking')).length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('Revision #2')).toBeInTheDocument()
+    // Revision history is accumulated asynchronously from a fetched page.
+    expect(await screen.findByText('Revision #2')).toBeInTheDocument()
     expect(screen.getByText('Target protein')).toBeInTheDocument()
     expect(screen.getByText(/unresolved/)).toBeInTheDocument()
   })
@@ -315,46 +316,95 @@ describe('Notebook view (Phase 10)', () => {
 })
 
 describe('Notebook pagination and link retention (Phase 10 review)', () => {
-  it('paginates the notebook list beyond the first page', async () => {
-    const page = Array.from({ length: 50 }, (_, index) => ({
+  it('paginates the notebook list with offset-based page accumulation', async () => {
+    const dataset = Array.from({ length: 205 }, (_, index) => ({
       ...note,
       id: `note-${index}`,
       title: `Note ${index}`,
     }))
-    mockedUseNotes.mockReturnValue({ data: page, loading: false, error: null, reload: vi.fn() })
+    mockedUseNotes.mockImplementation((_actor, _project, query) => ({
+      data: dataset.slice(query?.offset ?? 0, (query?.offset ?? 0) + (query?.limit ?? 50)),
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    }))
 
     const user = userEvent.setup()
     render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
     await screen.findByText('Note 0')
-    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    // Page 1 only: the 51st note is not there yet.
+    expect(screen.queryByText('Note 50')).not.toBeInTheDocument()
 
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('Note 50')).toBeInTheDocument()
     expect(mockedUseNotes).toHaveBeenLastCalledWith(
       'actor-1',
       'project-1',
-      expect.objectContaining({ limit: 100 }),
+      expect.objectContaining({ limit: 50, offset: 50 }),
     )
   })
 
-  it('paginates the revision history beyond the first page', async () => {
-    const history = Array.from({ length: 100 }, (_, index) => ({
+  it('reaches the 201st note via offset pagination (beyond the server cap)', async () => {
+    const dataset = Array.from({ length: 205 }, (_, index) => ({
+      ...note,
+      id: `note-${index}`,
+      title: `Note ${index}`,
+    }))
+    mockedUseNotes.mockImplementation((_actor, _project, query) => ({
+      data: dataset.slice(query?.offset ?? 0, (query?.offset ?? 0) + (query?.limit ?? 50)),
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    }))
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await screen.findByText('Note 0')
+    // offsets 50, 100, 150, 200 -> notes beyond the 200 cap are appended.
+    for (let index = 0; index < 4; index += 1) {
+      await user.click(screen.getByRole('button', { name: 'Load more' }))
+    }
+    expect(mockedUseNotes).toHaveBeenLastCalledWith(
+      'actor-1',
+      'project-1',
+      expect.objectContaining({ limit: 50, offset: 200 }),
+    )
+    expect(await screen.findByText('Note 200')).toBeInTheDocument()
+    expect(screen.getByText('Note 204')).toBeInTheDocument()
+  })
+
+  it('paginates the revision history with offset pages and reaches the 201st revision', async () => {
+    const history = Array.from({ length: 205 }, (_, index) => ({
       ...revision,
       revision_id: `revision-${index}`,
       revision_seq: index + 1,
       note_id: note.id,
+      body: `body ${index}`,
     }))
-    mockedUseNoteRevisions.mockReturnValue({ data: history, loading: false, error: null, reload: vi.fn() })
+    mockedUseNoteRevisions.mockImplementation((_actor, _project, _noteId, query) => ({
+      data: history.slice(query?.offset ?? 0, (query?.offset ?? 0) + (query?.limit ?? 100)),
+      loading: false,
+      error: null,
+      reload: vi.fn(),
+    }))
 
     const user = userEvent.setup()
     render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
     await user.click(await screen.findByText('Working notes'))
-    await user.click(await screen.findByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('Revision #1')).toBeInTheDocument()
+    expect(screen.queryByText('Revision #201')).not.toBeInTheDocument()
 
+    // offsets 100, 200 -> revisions beyond the 200 cap are appended.
+    for (let index = 0; index < 2; index += 1) {
+      await user.click(screen.getByRole('button', { name: 'Load more' }))
+    }
     expect(mockedUseNoteRevisions).toHaveBeenLastCalledWith(
       'actor-1',
       'project-1',
       note.id,
-      expect.objectContaining({ limit: 200 }),
+      expect.objectContaining({ limit: 100, offset: 200 }),
     )
+    expect(await screen.findByText('Revision #201')).toBeInTheDocument()
   })
 
   it('retains existing links by default and clears them only on explicit action', async () => {
@@ -377,32 +427,5 @@ describe('Notebook pagination and link retention (Phase 10 review)', () => {
     await user.click(screen.getByLabelText('Clear context links on next revision'))
     await user.click(screen.getByRole('button', { name: /Save revision/ }))
     expect(appendNoteRevision.mock.calls[1][2]).toMatchObject({ mentions: [] })
-  })
-
-  it('stops offering load-more at the server cap', async () => {
-    mockedUseNotes.mockImplementation((_actor, _project, query) => ({
-      data: Array.from({ length: query?.limit ?? 50 }, (_, index) => ({
-        ...note,
-        id: `cap-note-${index}`,
-        title: `Cap note ${index}`,
-      })),
-      loading: false,
-      error: null,
-      reload: vi.fn(),
-    }))
-
-    const user = userEvent.setup()
-    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
-    await screen.findByText('Cap note 0')
-    // 50 -> 100 -> 150 -> 200; at the cap the control must disappear.
-    for (let index = 0; index < 3; index += 1) {
-      await user.click(screen.getByRole('button', { name: 'Load more' }))
-    }
-    expect(mockedUseNotes).toHaveBeenLastCalledWith(
-      'actor-1',
-      'project-1',
-      expect.objectContaining({ limit: 200 }),
-    )
-    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
   })
 })

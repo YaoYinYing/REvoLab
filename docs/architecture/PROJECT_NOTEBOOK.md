@@ -1,11 +1,10 @@
 # Project Notebook (Structured Working Notes)
 
-> **Status: Proposed — pending human acceptance** (Phase 10, PR #11). This is the
-> normative owner of the Project Note / working-knowledge boundary once accepted.
+> **Status: Accepted** (Phase 10; human-accepted during PR #11 review). This is
+> the normative owner of the Project Note / working-knowledge boundary.
 > `PROJECT_CONVERSATIONS.md` (private working memory) and `AGENT_CONTEXT.md` (the
 > consumer/authority lens) consume this document; they never re-describe Note
-> semantics. The `Accepted` status is set only by a human after review; the patch
-> does not self-promote it.
+> semantics.
 
 ## Canonical principle
 

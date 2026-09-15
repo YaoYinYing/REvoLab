@@ -13,7 +13,12 @@ import {
   useObjects,
   useResources,
 } from '../api/hooks'
-import type { NoteMentionCreate, NoteMentionRead } from '../api/types'
+import type {
+  NoteMentionCreate,
+  NoteMentionRead,
+  NoteRead,
+  NoteRevisionRead,
+} from '../api/types'
 import { Button } from '../components/buttons'
 import { Markdown } from '../components/Markdown'
 import { Badge, Empty, ErrorBox, Field, LoadMore, Loading, Section } from '../components/ui'
@@ -21,9 +26,12 @@ import { ROLE_MEMBER, ROLE_OWNER } from '../contracts/enums'
 
 const PAGE_SIZE = 50
 const REVISION_PAGE_SIZE = 100
-// Server-side hard caps (`le=200` on both endpoints): never request beyond them.
-const NOTES_MAX = 200
-const REVISIONS_MAX = 200
+
+/** Append a fetched page to an accumulated collection, deduplicated by key. */
+function appendPage<T>(current: T[], page: T[], key: (item: T) => string): T[] {
+  const seen = new Set(current.map(key))
+  return [...current, ...page.filter((item) => !seen.has(key(item)))]
+}
 
 /** Encode a mention target as a stable option value. */
 function mentionOptionToPayload(value: string): NoteMentionCreate {
@@ -63,8 +71,12 @@ export function NotebookView({
   projectId: string
   onAddToAgentContext: (noteId: string) => void
 }) {
-  const [limit, setLimit] = useState(PAGE_SIZE)
-  const [revisionLimit, setRevisionLimit] = useState(REVISION_PAGE_SIZE)
+  // Offset-based pagination: each page is fetched at a fixed size and appended,
+  // so collections beyond the server's per-request cap stay reachable.
+  const [notesOffset, setNotesOffset] = useState(0)
+  const [notesItems, setNotesItems] = useState<NoteRead[]>([])
+  const [revisionOffset, setRevisionOffset] = useState(0)
+  const [revisionItems, setRevisionItems] = useState<NoteRevisionRead[]>([])
   const [showArchived, setShowArchived] = useState(false)
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -80,9 +92,16 @@ export function NotebookView({
   const [editBody, setEditBody] = useState('')
   const [clearMentions, setClearMentions] = useState(false)
 
-  const notes = useNotes(actorId, projectId, { limit, include_archived: showArchived })
+  const notesPage = useNotes(actorId, projectId, {
+    limit: PAGE_SIZE,
+    offset: notesOffset,
+    include_archived: showArchived,
+  })
   const detail = useNoteDetail(actorId, projectId, selectedNoteId)
-  const revisions = useNoteRevisions(actorId, projectId, selectedNoteId, { limit: revisionLimit })
+  const revisionsPage = useNoteRevisions(actorId, projectId, selectedNoteId, {
+    limit: REVISION_PAGE_SIZE,
+    offset: revisionOffset,
+  })
   const membership = useMyMembership(actorId, projectId)
   const { data: objects } = useObjects(actorId, projectId)
   const { data: evidence } = useEvidence(actorId, projectId, { limit: 100 })
@@ -99,9 +118,59 @@ export function NotebookView({
   const selected = detail.data && detail.data.id === selectedNoteId ? detail.data : null
   // Revisions carry their note_id, so a stale page from the previous Note can be
   // filtered out instead of rendering under the new Note.
-  const selectedRevisions = (revisions.data ?? []).filter(
+  const selectedRevisions = revisionItems.filter(
     (revision) => revision.note_id === selectedNoteId,
   )
+
+  // Scope/archived toggles start a fresh offset-0 accumulation. Every update is
+  // identity-guarded so an unchanged page never triggers another render.
+  useEffect(() => {
+    setNotesItems((current) => (current.length === 0 ? current : []))
+    setNotesOffset((value) => (value === 0 ? value : 0))
+  }, [actorId, projectId, showArchived])
+
+  useEffect(() => {
+    const page = notesPage.data
+    // `loading` is a dependency so a reload that resolves to the same page
+    // reference still re-seeds the accumulation.
+    if (!page || notesPage.loading) return
+    setNotesItems((current) => {
+      const next = notesOffset === 0 ? page : appendPage(current, page, (n) => n.id)
+      return next.length === current.length && next.every((item, index) => item === current[index])
+        ? current
+        : next
+    })
+  }, [notesPage.data, notesPage.loading, notesOffset, actorId, projectId, showArchived])
+
+  useEffect(() => {
+    setRevisionItems((current) => (current.length === 0 ? current : []))
+    setRevisionOffset((value) => (value === 0 ? value : 0))
+  }, [selectedNoteId])
+
+  useEffect(() => {
+    const page = revisionsPage.data
+    if (!page || revisionsPage.loading) return
+    setRevisionItems((current) => {
+      const next =
+        revisionOffset === 0 ? page : appendPage(current, page, (r) => r.revision_id)
+      return next.length === current.length && next.every((item, index) => item === current[index])
+        ? current
+        : next
+    })
+  }, [revisionsPage.data, revisionsPage.loading, revisionOffset, selectedNoteId])
+
+  // A mutation invalidates the accumulated pages: restart from offset 0.
+  function refreshNotes() {
+    setNotesItems([])
+    if (notesOffset !== 0) setNotesOffset(0)
+    else notesPage.reload()
+  }
+
+  function refreshRevisions() {
+    setRevisionItems([])
+    if (revisionOffset !== 0) setRevisionOffset(0)
+    else revisionsPage.reload()
+  }
 
   useEffect(() => {
     // Clear the editor on selection change so the form can never briefly hold the
@@ -110,7 +179,6 @@ export function NotebookView({
     // selection (e.g. "Note created.") is not wiped in the same commit.
     setEditBody('')
     setClearMentions(false)
-    setRevisionLimit(REVISION_PAGE_SIZE)
   }, [selectedNoteId])
 
   function openNote(noteId: string) {
@@ -195,7 +263,7 @@ export function NotebookView({
     setShowCreate(false)
     setSelectedNoteId(res.data.id)
     setNotice('Note created.')
-    notes.reload()
+    refreshNotes()
   }
 
   async function appendRevision(event: React.FormEvent) {
@@ -220,8 +288,8 @@ export function NotebookView({
     setNotice(`Revision #${res.data.revision_seq} appended.`)
     setClearMentions(false)
     detail.reload()
-    revisions.reload()
-    notes.reload()
+    refreshRevisions()
+    refreshNotes()
   }
 
   async function toggleArchive(archive: boolean) {
@@ -235,7 +303,7 @@ export function NotebookView({
       return
     }
     detail.reload()
-    notes.reload()
+    refreshNotes()
   }
 
   return (
@@ -339,15 +407,15 @@ export function NotebookView({
           </form>
         ) : null}
 
-        {notes.loading ? <Loading label="Loading notes…" /> : null}
-        <ErrorBox message={notes.error} />
+        {notesPage.loading ? <Loading label="Loading notes…" /> : null}
+        <ErrorBox message={notesPage.error} />
         {actionError ? <div className="inline-error">{actionError}</div> : null}
         {notice ? <p className="muted-note">{notice}</p> : null}
-        {notes.data && notes.data.length === 0 ? (
+        {notesItems.length === 0 && !notesPage.loading ? (
           <Empty label="No notes in this project yet. Create one to start shared working notes." />
         ) : null}
         <div className="list">
-          {(notes.data ?? []).map((note) => (
+          {notesItems.map((note) => (
             <div className={`list-row note-row ${note.id === selectedNoteId ? 'active' : ''}`} key={note.id}>
               <button type="button" className="conversation-link" onClick={() => openNote(note.id)}>
                 <strong>{note.title}</strong>
@@ -361,8 +429,8 @@ export function NotebookView({
           ))}
         </div>
         <LoadMore
-          visible={(notes.data?.length ?? 0) === limit && limit < NOTES_MAX}
-          onLoad={() => setLimit((value) => Math.min(value + PAGE_SIZE, NOTES_MAX))}
+          visible={(notesPage.data?.length ?? 0) === PAGE_SIZE}
+          onLoad={() => setNotesOffset((value) => value + PAGE_SIZE)}
         />
       </Section>
 
@@ -480,8 +548,8 @@ export function NotebookView({
           </form>
 
           <Section title="Revision history">
-            {revisions.loading ? <Loading label="Loading revisions…" /> : null}
-            <ErrorBox message={revisions.error} />
+            {revisionsPage.loading ? <Loading label="Loading revisions…" /> : null}
+            <ErrorBox message={revisionsPage.error} />
             {selectedRevisions.map((revision) => (
               <div className="list-row revision-row" key={revision.revision_id}>
                 <div className="list-row-head">
@@ -496,10 +564,8 @@ export function NotebookView({
               </div>
             ))}
             <LoadMore
-              visible={
-                (revisions.data?.length ?? 0) === revisionLimit && revisionLimit < REVISIONS_MAX
-              }
-              onLoad={() => setRevisionLimit((value) => Math.min(value + REVISION_PAGE_SIZE, REVISIONS_MAX))}
+              visible={(revisionsPage.data?.length ?? 0) === REVISION_PAGE_SIZE}
+              onLoad={() => setRevisionOffset((value) => value + REVISION_PAGE_SIZE)}
             />
           </Section>
         </Section>

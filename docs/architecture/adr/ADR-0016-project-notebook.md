@@ -1,7 +1,6 @@
 # ADR-0016: Project Notebook — Project-scoped Notes with Immutable Revisions
 
-> **Status: Proposed — pending human acceptance** (Phase 10, PR #11). Not yet an
-> accepted architectural decision; a human sets `Accepted` after review.
+> **Status: Accepted** (Phase 10; human-accepted during PR #11 review).
 
 ## Context
 

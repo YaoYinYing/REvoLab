@@ -16,11 +16,11 @@ The governing invariant is unchanged:
 
 > **Persist working memory, never stale truth or authority.**
 
-**Phase 10 (Project Notebook / structured working notes) is implemented and under
-human review in PR #11** on `feat/phase-10-project-notebook`; its architectural
-decision is `Proposed — pending human acceptance` (`PROJECT_NOTEBOOK.md`,
-ADR-0016). The Phase-10 section below records the machine-verified state of the
-CURRENT reviewed head of that branch. Phases 1–9 are the accepted `main` state.
+**Phase 10 (Project Notebook / structured working notes) is implemented and
+human-accepted**, pending merge of PR #11 on `feat/phase-10-project-notebook`; its
+architectural decision is **Accepted** (`PROJECT_NOTEBOOK.md`, ADR-0016). The
+Phase-10 section below records the machine-verified state of the CURRENT reviewed
+head of that branch. Phases 1–9 are the accepted `main` state.
 
 ## Implemented (Phase 1)
 
@@ -1697,8 +1697,10 @@ blockers on the previously reviewed head. All were corrected on the same branch:
   `SYSTEM_ARCHITECTURE.md` state that cross-domain composition happens in the
   application layer, adding no Project → Evidence/Knowledge Core edge. The
   nine-domain DAG is unchanged.
-- **Authority state.** `PROJECT_NOTEBOOK.md` and ADR-0016 are marked
-  `Proposed — pending human acceptance`; the patch no longer self-promotes them.
+- **Authority state.** `PROJECT_NOTEBOOK.md` and ADR-0016 were marked
+  `Proposed — pending human acceptance` while under review; after the human
+  reviewer granted acceptance (PR #11 review) they are now **Accepted**, as are the
+  consuming references in `SYSTEM_ARCHITECTURE.md` and `EVIDENCE_PROVENANCE.md`.
 - **P2 findings.** `resolve_selected_notes` authorizes/resolves every supplied
   `note_id`/`note_revision_id` BEFORE applying `max_notes` (so `max_notes=0` cannot
   bypass fail-closed validation); the Notebook list and the revision history gained
@@ -1762,6 +1764,24 @@ now fixed:
   the reviewer-count sentence and the stale "Domain service" label were corrected;
   `DOMAIN_BOUNDARIES.md` §1a now names the lifecycle check; the 200-cap and
   `ContextSelectionCreate` strictness gained regressions.
+
+### Final pagination correction (PR #11, human review round 3)
+
+The human reviewer found one remaining P2: the Notebook list and revision history
+"Load more" grew `limit` toward the server's `le=200` cap instead of paging, so the
+201st Note / revision was unreachable. Fixed by using the API's `offset`:
+
+- Notes page with `limit=50` at offsets `0, 50, 100, …`; revision history pages
+  with `limit=100` at offsets `0, 100, 200, …`. Each fetched page is appended to an
+  accumulated collection (deduplicated by id), so collections beyond the per-request
+  cap stay reachable; a mutation restarts accumulation from offset 0.
+- Regressions `paginates the notebook list with offset-based page accumulation`,
+  `reaches the 201st note via offset pagination (beyond the server cap)`, and
+  `paginates the revision history with offset pages and reaches the 201st revision`
+  render 205-item datasets and prove the 201st row is displayed.
+- With human acceptance recorded, `PROJECT_NOTEBOOK.md` and ADR-0016 (and their
+  references in `SYSTEM_ARCHITECTURE.md` / `EVIDENCE_PROVENANCE.md`) are now
+  `Accepted`; this ledger states that Phase 10 is human-accepted pending merge.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
