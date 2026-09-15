@@ -156,7 +156,10 @@ The nine domains and their one-line purpose (detailed in
 The **Project Notebook** is an explicit sub-boundary of the Project Domain (not a
 tenth domain), so the nine-domain DAG is unchanged: Agent Context and Presentation
 reach Notes through their existing Project edge (`DOMAIN_BOUNDARIES.md` §1a,
-`PROJECT_NOTEBOOK.md`, ADR-0016).
+`PROJECT_NOTEBOOK.md`, ADR-0016 with status `Proposed — pending human acceptance`).
+Cross-domain Evidence/Decision mention composition happens in the application
+orchestration layer over those domains' public contracts, so no Project ->
+Evidence / Knowledge Core edge is introduced.
 
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
 Knowledge) never depend on the Agent Context domain or the Project Tool Harness

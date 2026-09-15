@@ -16,10 +16,11 @@ import {
 import type { NoteMentionCreate, NoteMentionRead } from '../api/types'
 import { Button } from '../components/buttons'
 import { Markdown } from '../components/Markdown'
-import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
+import { Badge, Empty, ErrorBox, Field, LoadMore, Loading, Section } from '../components/ui'
 import { ROLE_MEMBER, ROLE_OWNER } from '../contracts/enums'
 
 const PAGE_SIZE = 50
+const REVISION_PAGE_SIZE = 100
 
 /** Encode a mention target as a stable option value. */
 function mentionOptionToPayload(value: string): NoteMentionCreate {
@@ -60,6 +61,7 @@ export function NotebookView({
   onAddToAgentContext: (noteId: string) => void
 }) {
   const [limit, setLimit] = useState(PAGE_SIZE)
+  const [revisionLimit, setRevisionLimit] = useState(REVISION_PAGE_SIZE)
   const [showArchived, setShowArchived] = useState(false)
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -73,10 +75,11 @@ export function NotebookView({
   const [mentionTarget, setMentionTarget] = useState('')
 
   const [editBody, setEditBody] = useState('')
+  const [clearMentions, setClearMentions] = useState(false)
 
   const notes = useNotes(actorId, projectId, { limit, include_archived: showArchived })
   const detail = useNoteDetail(actorId, projectId, selectedNoteId)
-  const revisions = useNoteRevisions(actorId, projectId, selectedNoteId)
+  const revisions = useNoteRevisions(actorId, projectId, selectedNoteId, { limit: revisionLimit })
   const membership = useMyMembership(actorId, projectId)
   const { data: objects } = useObjects(actorId, projectId)
   const { data: evidence } = useEvidence(actorId, projectId, { limit: 100 })
@@ -101,6 +104,7 @@ export function NotebookView({
     // Clear the editor on selection change so the form can never briefly hold the
     // previous Note's body.
     setEditBody('')
+    setClearMentions(false)
   }, [selectedNoteId])
 
   useEffect(() => {
@@ -186,6 +190,9 @@ export function NotebookView({
     const res = await projectApi(actorId).appendNoteRevision(projectId, latest.note_id, {
       base_revision_seq: latest.revision_seq,
       body: editBody,
+      // Omitted `mentions` inherits the previous revision's links (the durable
+      // default); an explicit [] clears them.
+      ...(clearMentions ? { mentions: [] } : {}),
     })
     setBusy(false)
     if (res.error || !res.data) {
@@ -193,6 +200,7 @@ export function NotebookView({
       return
     }
     setNotice(`Revision #${res.data.revision_seq} appended.`)
+    setClearMentions(false)
     detail.reload()
     revisions.reload()
     notes.reload()
@@ -334,6 +342,10 @@ export function NotebookView({
             </div>
           ))}
         </div>
+        <LoadMore
+          visible={(notes.data?.length ?? 0) === limit}
+          onLoad={() => setLimit((value) => value + PAGE_SIZE)}
+        />
       </Section>
 
       {selectedNoteId ? <ErrorBox message={detail.error} /> : null}
@@ -426,13 +438,27 @@ export function NotebookView({
             </Field>
             <div className="form-actions">
               {canMutate ? (
-                <Button type="submit" disabled={busy || !editBody.trim()}>
-                  <Save size={15} /> Save revision
-                </Button>
+                <>
+                  <Button type="submit" disabled={busy || !editBody.trim()}>
+                    <Save size={15} /> Save revision
+                  </Button>
+                  <label className="check-line">
+                    <input
+                      type="checkbox"
+                      checked={clearMentions}
+                      onChange={(event) => setClearMentions(event.target.checked)}
+                      aria-label="Clear context links on next revision"
+                    />{' '}
+                    Clear context links on next revision
+                  </label>
+                </>
               ) : (
                 <span className="muted-note">Read-only: only owner/member may append revisions.</span>
               )}
             </div>
+            <small className="muted-note">
+              Saving a body-only edit keeps the current context links by default.
+            </small>
           </form>
 
           <Section title="Revision history">
@@ -451,6 +477,10 @@ export function NotebookView({
                 <Markdown source={revision.body} />
               </div>
             ))}
+            <LoadMore
+              visible={(revisions.data?.length ?? 0) === revisionLimit}
+              onLoad={() => setRevisionLimit((value) => value + REVISION_PAGE_SIZE)}
+            />
           </Section>
         </Section>
       ) : null}

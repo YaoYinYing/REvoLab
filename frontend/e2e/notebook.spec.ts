@@ -153,6 +153,8 @@ test('project notes are shared, revision-safe working knowledge, not truth', asy
   await expect(pageB.getByText(/Revision #2 appended/)).toBeVisible()
   await expect(pageB.locator('.revision-row', { hasText: 'Revision #2' })).toBeVisible()
   await expect(pageB.locator('.revision-row', { hasText: 'Revision #1' })).toBeVisible()
+  // A body-only edit preserves the existing context link by default.
+  await expect(pageB.locator('.chip', { hasText: 'Note Target' })).toBeVisible()
 
   // --- Stale writes fail closed instead of overwriting: base seq 1 is no longer
   // the server's latest.

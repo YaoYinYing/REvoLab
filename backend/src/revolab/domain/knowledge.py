@@ -9,7 +9,7 @@ materializes the immutable knowledge edges only at commit.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from sqlalchemy import select
@@ -204,6 +204,35 @@ def _require_project_decision(session: Session, project_id: UUID, decision_id: U
     if decision is None or decision.project_id != project_id:
         raise NotFoundError("decision not found in project")
     return decision
+
+
+class DecisionMentionTarget(NamedTuple):
+    """The Knowledge/Decision domain's public contract for "may this Decision be a
+    context mention target, and what is its title?".
+
+    Consumers outside this domain (for example the application-level Notebook
+    service) use this instead of reaching into `Decision` ORM internals, so the
+    domain keeps ownership of its own visibility rule (`project_id` match and
+    `archived_at IS NULL`).
+    """
+
+    decision_id: UUID
+    title: str | None
+    active: bool
+
+
+def decision_mention_target(
+    session: Session, project_id: UUID, decision_id: UUID
+) -> DecisionMentionTarget | None:
+    decision = session.get(Decision, decision_id)
+    if decision is None:
+        return None
+    active = decision.project_id == project_id and decision.archived_at is None
+    return DecisionMentionTarget(
+        decision_id=decision.id,
+        title=decision.title if active else None,
+        active=active,
+    )
 
 
 def _require_project_evidence(session: Session, project_id: UUID, evidence_id: UUID) -> Evidence:

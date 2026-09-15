@@ -1,10 +1,12 @@
 # Project Notebook (Structured Working Notes)
 
-> **Status: Accepted** (Phase 10). This is the normative owner of the Project
-> Note / working-knowledge boundary. `PROJECT_CONVERSATIONS.md` (private working
-> memory), `AGENT_CONTEXT.md` (the consumer/authority lens), and
-> `EVIDENCE_PROVENANCE.md` (the scientific-claim boundary) consume this document;
-> they never re-describe Note semantics.
+> **Status: Proposed — pending human acceptance** (Phase 10, PR #11). This is the
+> normative owner of the Project Note / working-knowledge boundary once accepted.
+> `PROJECT_CONVERSATIONS.md` (private working memory), `AGENT_CONTEXT.md` (the
+> consumer/authority lens), and `EVIDENCE_PROVENANCE.md` (the scientific-claim
+> boundary) consume this document; they never re-describe Note semantics. The
+> `Accepted` status is set only by a human after review; the patch does not
+> self-promote it.
 
 ## Canonical principle
 
@@ -126,6 +128,23 @@ A `NoteMention` means only:
   active in this Project (`archived_at IS NULL`), because archiving is how those
   aggregates leave the Project-visible set. This asymmetry is intentional, not a
   second visibility model.
+- Cross-domain composition is an application-layer concern: the Notebook service
+  resolves Evidence/Decision targets through the owning domains' public contracts
+  (`domain.provenance.evidence_mention_target`,
+  `domain.knowledge.decision_mention_target`), never their ORM internals, so the
+  Project-domain sub-boundary adds no Project → Evidence/Knowledge edge to the
+  Core DAG.
+- **Mention semantics on edit** are tri-state and durable (not a UI convention):
+  an **omitted** `mentions` inherits the previous revision's mention identities, an
+  explicit **`[]`** clears them, and an explicit **non-empty list** replaces them
+  after normal current-Project authorization. Inherited mentions are copied without
+  re-validation: a reference that was already authorized stays a historical
+  contextual reference (`resolved=false` if it later becomes unavailable) rather
+  than silently disappearing from the latest revision.
+- Command atomicity: every fallible mention validation/authorization runs before
+  any durable mutation, so a rejected create/append leaves no flushed Note,
+  Revision, or Mention row behind even if the caller later commits on the same
+  Session.
 
 ## Working knowledge vs scientific truth
 

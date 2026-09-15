@@ -61,12 +61,22 @@ External systems own their capabilities and execution truth.
 ### 1a. Project Notebook (Project Domain sub-boundary)
 
 The Project Notebook is an explicit **sub-boundary of the Project Domain**, not a
-tenth domain: a Note is Project-scoped, the Project is its namespace/lifecycle
-owner, and it depends only on the Project read lens plus the Identity membership
-contract. The nine-domain DAG is unchanged — Agent Context and Presentation reach
+tenth domain: a Note is Project-scoped and the Project is its namespace/lifecycle
+owner. The nine-domain DAG is unchanged — Agent Context and Presentation reach
 Notes through their existing Project edge.
 
-- **Normative owner:** `PROJECT_NOTEBOOK.md` (ADR-0016).
+Cross-domain mention composition is deliberately **not** part of the Project
+domain. Validating or resolving an Evidence or Decision mention is performed by the
+application command boundary (`revolab.notes`, an application-orchestration service
+at the same layer as `revolab.services`) through the owning domains' **public
+contracts** (`domain.provenance.evidence_mention_target`,
+`domain.knowledge.decision_mention_target`). The Notebook therefore adds no
+Project -> Evidence / Knowledge edge to the Core DAG and never consumes those
+domains' ORM internals; application orchestration is the sanctioned composition
+layer.
+
+- **Normative owner:** `PROJECT_NOTEBOOK.md` (ADR-0016; status `Proposed — pending
+  human acceptance`).
 - **Owned concepts:** `ProjectNote`, immutable `ProjectNoteRevision`, and typed,
   non-semantic `NoteMention`.
 - **Owned mutable state:** the Note title and `archived_at` (non-destructive);
@@ -77,11 +87,11 @@ Notes through their existing Project edge.
   `base_revision_seq` append fails closed (typed 409); a mention is a reference,
   never a `RelationType` or provenance edge, and is validated through the current
   Project read lens at write time.
-- **Public contracts:** the `/api/projects/{project_id}/notes` surface, the
-  `revolab.notes` domain service, and bounded Note selection in
-  `ContextSelection`.
-- **Dependencies:** Project (read lens/lifecycle), Identity/Collaboration
-  (membership authority), and the shared read projections.
+- **Public contracts:** the `/api/projects/{project_id}/notes` surface and bounded
+  Note selection in `ContextSelection`.
+- **Dependencies:** Project (read lens/lifecycle) and Identity/Collaboration
+  (membership authority); the cross-domain mention contracts are consumed by the
+  application orchestration layer, not by the Project domain.
 - **Non-responsibilities:** becoming Evidence/Decision truth; entering the
   scientific graph; per-note ACLs or sharing outside the Project; rich
   collaborative editing.

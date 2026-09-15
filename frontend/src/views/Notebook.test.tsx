@@ -271,3 +271,69 @@ describe('Notebook view (Phase 10)', () => {
     expect(await screen.findByText('Not authorized for this project.')).toBeInTheDocument()
   })
 })
+
+describe('Notebook pagination and link retention (Phase 10 review)', () => {
+  it('paginates the notebook list beyond the first page', async () => {
+    const page = Array.from({ length: 50 }, (_, index) => ({
+      ...note,
+      id: `note-${index}`,
+      title: `Note ${index}`,
+    }))
+    mockedUseNotes.mockReturnValue({ data: page, loading: false, error: null, reload: vi.fn() })
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await screen.findByText('Note 0')
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+
+    expect(mockedUseNotes).toHaveBeenLastCalledWith(
+      'actor-1',
+      'project-1',
+      expect.objectContaining({ limit: 100 }),
+    )
+  })
+
+  it('paginates the revision history beyond the first page', async () => {
+    const history = Array.from({ length: 100 }, (_, index) => ({
+      ...revision,
+      revision_id: `revision-${index}`,
+      revision_seq: index + 1,
+      note_id: note.id,
+    }))
+    mockedUseNoteRevisions.mockReturnValue({ data: history, loading: false, error: null, reload: vi.fn() })
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await user.click(await screen.findByText('Working notes'))
+    await user.click(await screen.findByRole('button', { name: 'Load more' }))
+
+    expect(mockedUseNoteRevisions).toHaveBeenLastCalledWith(
+      'actor-1',
+      'project-1',
+      note.id,
+      expect.objectContaining({ limit: 200 }),
+    )
+  })
+
+  it('retains existing links by default and clears them only on explicit action', async () => {
+    const appendNoteRevision = vi
+      .fn()
+      .mockResolvedValue({ data: revision, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), appendNoteRevision } as never)
+
+    const user = userEvent.setup()
+    render(<NotebookView actorId="actor-1" projectId="project-1" onAddToAgentContext={vi.fn()} />)
+    await user.click(await screen.findByText('Working notes'))
+    const editor = await screen.findByLabelText('Edit note body')
+    await user.clear(editor)
+    await user.type(editor, 'body-only edit')
+    await user.click(screen.getByRole('button', { name: /Save revision/ }))
+
+    // Omitted `mentions` => the backend inherits the previous revision's links.
+    expect(appendNoteRevision.mock.calls[0][2]).not.toHaveProperty('mentions')
+
+    await user.click(screen.getByLabelText('Clear context links on next revision'))
+    await user.click(screen.getByRole('button', { name: /Save revision/ }))
+    expect(appendNoteRevision.mock.calls[1][2]).toMatchObject({ mentions: [] })
+  })
+})

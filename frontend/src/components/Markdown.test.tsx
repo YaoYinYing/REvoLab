@@ -53,4 +53,14 @@ describe('safe Markdown renderer', () => {
     expect(container.querySelector('script')).toBeNull()
     expect(container.querySelector('pre code')?.textContent).toBe('<script>alert(2)</script>')
   })
+
+  it('only treats marker/whitespace-only lines as thematic breaks', () => {
+    const { container } = render(
+      <Markdown source={'--- IMPORTANT\n\n***warning: read this\n\n---\n\n* * *'} />,
+    )
+    // The text-bearing lines stay visible; only the marker-only lines are breaks.
+    expect(screen.getByText('--- IMPORTANT')).toBeInTheDocument()
+    expect(screen.getByText('***warning: read this')).toBeInTheDocument()
+    expect(container.querySelectorAll('hr')).toHaveLength(2)
+  })
 })

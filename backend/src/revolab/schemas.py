@@ -1171,14 +1171,19 @@ class NotePatch(BaseModel):
 class NoteRevisionCreate(BaseModel):
     """Append one immutable revision. `base_revision_seq` is the revision the
     client edited; the server appends `base_revision_seq + 1` only while it is
-    still the latest, otherwise the write fails closed with a typed conflict."""
+    still the latest, otherwise the write fails closed with a typed conflict.
+
+    `mentions` is tri-state: OMITTED inherits the previous revision's mention
+    identities (already-authorized references are preserved even if a target later
+    becomes unavailable), explicit `[]` clears them, and a non-empty list replaces
+    them after normal current-Project authorization."""
 
     model_config = ConfigDict(extra="forbid")
 
     base_revision_seq: int = Field(ge=1)
     body: str = Field(min_length=1, max_length=MAX_NOTE_BODY_CHARS)
-    mentions: list[NoteMentionCreate] = Field(
-        default_factory=list, max_length=MAX_NOTE_MENTIONS_PER_REVISION
+    mentions: list[NoteMentionCreate] | None = Field(
+        default=None, max_length=MAX_NOTE_MENTIONS_PER_REVISION
     )
 
 

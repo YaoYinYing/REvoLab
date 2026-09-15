@@ -118,7 +118,10 @@ export function Markdown({ source }: { source: string }) {
       continue
     }
 
-    if (/^\s*([-*_])\s*\1\s*\1[\s\S]*$/.test(line) && line.trim().length >= 3) {
+    // A thematic break is a line of ONLY three-or-more repeated `-`/`*`/`_`
+    // markers (optionally space-separated). Trailing content such as
+    // `--- IMPORTANT` or `***warning` stays visible literal text.
+    if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
       flushParagraph()
       blocks.push(<hr key={`hr${key++}`} />)
       index += 1

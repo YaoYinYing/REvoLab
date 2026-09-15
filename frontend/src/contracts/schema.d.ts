@@ -2292,6 +2292,11 @@ export interface components {
          * @description Append one immutable revision. `base_revision_seq` is the revision the
          *     client edited; the server appends `base_revision_seq + 1` only while it is
          *     still the latest, otherwise the write fails closed with a typed conflict.
+         *
+         *     `mentions` is tri-state: OMITTED inherits the previous revision's mention
+         *     identities (already-authorized references are preserved even if a target later
+         *     becomes unavailable), explicit `[]` clears them, and a non-empty list replaces
+         *     them after normal current-Project authorization.
          */
         NoteRevisionCreate: {
             /** Base Revision Seq */
@@ -2299,7 +2304,7 @@ export interface components {
             /** Body */
             body: string;
             /** Mentions */
-            mentions?: components["schemas"]["NoteMentionCreate"][];
+            mentions?: components["schemas"]["NoteMentionCreate"][] | null;
         };
         /**
          * NoteRevisionRead

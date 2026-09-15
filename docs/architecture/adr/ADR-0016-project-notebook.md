@@ -1,5 +1,8 @@
 # ADR-0016: Project Notebook — Project-scoped Notes with Immutable Revisions
 
+> **Status: Proposed — pending human acceptance** (Phase 10, PR #11). Not yet an
+> accepted architectural decision; a human sets `Accepted` after review.
+
 ## Context
 
 Phase 9 added persistent, Actor × Project scoped Conversations as durable **working
@@ -61,6 +64,18 @@ through the current Project read lens at write time; an invisible or foreign tar
 fails closed with the same 403 as an unknown id. Mentions hang off an immutable
 revision, so a target that later becomes unavailable leaves an unresolved
 historical mention (`resolved=false`) instead of rewriting the note.
+
+Cross-domain mention composition lives in the application orchestration layer: the
+Notebook service consumes `domain.provenance.evidence_mention_target` and
+`domain.knowledge.decision_mention_target` public contracts rather than those
+domains' ORM internals, so the Project-domain sub-boundary adds no Project →
+Evidence/Knowledge edge to the accepted nine-domain Core DAG. All mention
+validation runs before any durable mutation (atomic commands).
+
+Editing semantics for `mentions` are tri-state: omitted inherits the previous
+revision's mention identities (already-authorized references are preserved even if
+they later resolve as unavailable), explicit `[]` clears them, and a non-empty list
+replaces them after normal authorization.
 
 ### Bounded content, safe rendering
 

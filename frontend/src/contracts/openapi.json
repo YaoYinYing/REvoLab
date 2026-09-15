@@ -2755,7 +2755,7 @@
       },
       "NoteRevisionCreate": {
         "additionalProperties": false,
-        "description": "Append one immutable revision. `base_revision_seq` is the revision the\nclient edited; the server appends `base_revision_seq + 1` only while it is\nstill the latest, otherwise the write fails closed with a typed conflict.",
+        "description": "Append one immutable revision. `base_revision_seq` is the revision the\nclient edited; the server appends `base_revision_seq + 1` only while it is\nstill the latest, otherwise the write fails closed with a typed conflict.\n\n`mentions` is tri-state: OMITTED inherits the previous revision's mention\nidentities (already-authorized references are preserved even if a target later\nbecomes unavailable), explicit `[]` clears them, and a non-empty list replaces\nthem after normal current-Project authorization.",
         "properties": {
           "base_revision_seq": {
             "minimum": 1.0,
@@ -2769,12 +2769,19 @@
             "type": "string"
           },
           "mentions": {
-            "items": {
-              "$ref": "#/components/schemas/NoteMentionCreate"
-            },
-            "maxItems": 100,
-            "title": "Mentions",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/NoteMentionCreate"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mentions"
           }
         },
         "required": [

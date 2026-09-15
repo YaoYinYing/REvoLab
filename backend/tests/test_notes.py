@@ -991,3 +991,245 @@ def test_note_audit_and_mention_fks_do_not_cascade():
             foreign_keys = list(table.__table__.columns[column].foreign_keys)
             assert len(foreign_keys) == 1
             assert foreign_keys[0].ondelete is None, f"{table.__name__}.{column} must not cascade"
+
+
+# ---------------------------------------------------------------------------
+# 7. Command atomicity + mention inheritance on edit
+# ---------------------------------------------------------------------------
+
+
+def _hidden_series(session):
+    """A resource that exists but is not visible through the acting Project."""
+    other_actor = _actor(session)
+    other_project = _project(session, other_actor, "Hidden holder")
+    return _object(session, other_actor, other_project, "Hidden")
+
+
+def test_create_note_with_invalid_mention_leaves_no_ghost_rows(session):
+    owner = _actor(session)
+    project = _project(session, owner)
+    hidden = _hidden_series(session)
+
+    with pytest.raises(AuthorizationError):
+        create_note(
+            session,
+            owner,
+            project.id,
+            title="Rejected",
+            body="body",
+            mentions=[NoteMentionCreate(resource_id=hidden)],
+        )
+
+    # A later SUCCESSFUL committing operation on the SAME Session must not
+    # resurrect the rejected command's flushed rows.
+    accepted = create_note(session, owner, project.id, title="Accepted", body="ok")
+    assert accepted.id is not None
+
+    assert [note.title for note in session.scalars(select(ProjectNote))] == ["Accepted"]
+    assert [revision.revision_seq for revision in session.scalars(select(ProjectNoteRevision))] == [1]
+    assert session.scalars(select(NoteMention)).all() == []
+
+
+def test_append_revision_with_invalid_mention_leaves_no_ghost_rows(session):
+    owner = _actor(session)
+    project = _project(session, owner)
+    note = create_note(session, owner, project.id, title="N", body="v1")
+    hidden = _hidden_series(session)
+
+    with pytest.raises(AuthorizationError):
+        append_revision(
+            session,
+            owner,
+            project.id,
+            note.id,
+            base_revision_seq=1,
+            body="rejected",
+            mentions=[NoteMentionCreate(resource_id=hidden)],
+        )
+
+    # If the rejected append had flushed revision #2, the base=1 append below
+    # would conflict; it must succeed from the true latest (1) instead.
+    appended = append_revision(session, owner, project.id, note.id, base_revision_seq=1, body="v2-ok")
+    assert appended.revision_seq == 2
+
+    history = list_revisions(session, owner, project.id, note.id)
+    assert [revision.revision_seq for revision in history] == [1, 2]
+    assert [revision.body for revision in history] == ["v1", "v2-ok"]
+    assert session.scalars(select(NoteMention)).all() == []
+
+
+def test_append_body_edit_inherits_existing_mentions(session):
+    owner = _actor(session)
+    project = _project(session, owner)
+    series = _object(session, owner, project, "Kept target")
+    note = create_note(
+        session,
+        owner,
+        project.id,
+        title="N",
+        body="v1",
+        mentions=[NoteMentionCreate(resource_id=series)],
+    )
+    assert note.latest is not None and len(note.latest.mentions) == 1
+
+    # Body-only edit: `mentions` omitted -> inherit.
+    append_revision(session, owner, project.id, note.id, base_revision_seq=1, body="v2")
+
+    latest = get_note(session, owner, project.id, note.id).latest
+    assert latest is not None
+    assert latest.revision_seq == 2
+    mentions = latest.mentions
+    assert len(mentions) == 1
+    assert mentions[0].resource_id == series
+    assert mentions[0].resolved is True
+
+
+def test_explicit_empty_mentions_clears_them(session):
+    owner = _actor(session)
+    project = _project(session, owner)
+    series = _object(session, owner, project, "Cleared target")
+    note = create_note(
+        session,
+        owner,
+        project.id,
+        title="N",
+        body="v1",
+        mentions=[NoteMentionCreate(resource_id=series)],
+    )
+
+    append_revision(
+        session, owner, project.id, note.id, base_revision_seq=1, body="v2", mentions=[]
+    )
+    latest = get_note(session, owner, project.id, note.id).latest
+    assert latest is not None and latest.mentions == []
+
+
+def test_explicit_nonempty_mentions_replace_them(session):
+    owner = _actor(session)
+    project = _project(session, owner)
+    first = _object(session, owner, project, "First target")
+    second = _object(session, owner, project, "Second target")
+    note = create_note(
+        session,
+        owner,
+        project.id,
+        title="N",
+        body="v1",
+        mentions=[NoteMentionCreate(resource_id=first)],
+    )
+
+    append_revision(
+        session,
+        owner,
+        project.id,
+        note.id,
+        base_revision_seq=1,
+        body="v2",
+        mentions=[NoteMentionCreate(resource_id=second)],
+    )
+    latest = get_note(session, owner, project.id, note.id).latest
+    assert latest is not None
+    assert [mention.resource_id for mention in latest.mentions] == [second]
+
+
+def test_inherited_mention_survives_target_becoming_unavailable(session):
+    """An already-authorized inherited mention is preserved (resolved=false) even
+    after its target is no longer visible; the body edit never re-validates it."""
+    owner = _actor(session)
+    project = _project(session, owner)
+    decision = services.create_decision(
+        session, owner, project.id, title="Will archive", statement="d"
+    )
+    note = create_note(
+        session,
+        owner,
+        project.id,
+        title="N",
+        body="v1",
+        mentions=[NoteMentionCreate(decision_id=decision.id)],
+    )
+    assert note.latest is not None and note.latest.mentions[0].resolved is True
+
+    decision.archived_at = note.updated_at
+    session.add(decision)
+    session.commit()
+
+    append_revision(session, owner, project.id, note.id, base_revision_seq=1, body="v2")
+    latest = get_note(session, owner, project.id, note.id).latest
+    assert latest is not None
+    assert latest.revision_seq == 2
+    assert latest.mentions[0].decision_id == decision.id
+    assert latest.mentions[0].resolved is False
+
+
+def test_note_context_selection_authorizes_all_ids_before_the_cap(session):
+    owner = _actor(session)
+    outsider = _actor(session)
+    project = _project(session, owner)
+    other_project = _project(session, outsider, "Other")
+    foreign = create_note(session, outsider, other_project.id, title="Foreign", body="b")
+    own = create_note(session, owner, project.id, title="Own", body="a")
+
+    # max_notes=0 must not bypass fail-closed validation of any supplied id.
+    with pytest.raises(AuthorizationError):
+        build_context(
+            session,
+            owner,
+            project.id,
+            _registry(),
+            ContextSelectionCreate(note_ids=[foreign.id], max_notes=0),
+        )
+    with pytest.raises(AuthorizationError):
+        build_context(
+            session,
+            owner,
+            project.id,
+            _registry(),
+            ContextSelectionCreate(note_ids=[uuid4()], max_notes=0),
+        )
+    # An invalid id sorted AFTER the cap is still authorized/validated.
+    with pytest.raises(AuthorizationError):
+        build_context(
+            session,
+            owner,
+            project.id,
+            _registry(),
+            ContextSelectionCreate(note_ids=[own.id, foreign.id], max_notes=1),
+        )
+
+
+def test_note_http_append_without_mentions_inherits_links(client):
+    """Wire-level proof of the tri-state semantics: an omitted `mentions` on the
+    revision endpoint inherits the previous revision's links."""
+    actor_id = _api_actor(client)
+    project_id = _api_project(client, actor_id, "Notes inherit")
+    obj = client.post(
+        f"/api/projects/{project_id}/objects",
+        headers={"X-Actor-Id": actor_id},
+        json={"object_type": "protein", "name": "Link target", "payload": {}},
+    )
+    assert obj.status_code == 201
+    series_id = obj.json()["series"]["series_id"]
+
+    created = client.post(
+        f"/api/projects/{project_id}/notes",
+        headers={"X-Actor-Id": actor_id},
+        json={"title": "N", "body": "v1", "mentions": [{"resource_id": series_id}]},
+    )
+    assert created.status_code == 201
+    note_id = created.json()["id"]
+    assert created.json()["latest"]["mentions"][0]["resource_id"] == series_id
+
+    appended = client.post(
+        f"/api/projects/{project_id}/notes/{note_id}/revisions",
+        headers={"X-Actor-Id": actor_id},
+        json={"base_revision_seq": 1, "body": "v2"},
+    )
+    assert appended.status_code == 201
+    assert appended.json()["mentions"][0]["resource_id"] == series_id
+
+    latest = client.get(
+        f"/api/projects/{project_id}/notes/{note_id}", headers={"X-Actor-Id": actor_id}
+    ).json()["latest"]
+    assert latest["revision_seq"] == 2
+    assert latest["mentions"][0]["resource_id"] == series_id

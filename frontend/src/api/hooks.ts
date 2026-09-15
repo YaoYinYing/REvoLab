@@ -257,15 +257,16 @@ export function useNoteRevisions(
   actorId: string | null,
   projectId: string | null,
   noteId: string | null,
+  query: ListQuery = {},
 ): AsyncState<NoteRevisionRead[]> {
   return useAsync(
     () =>
       actorId && projectId && noteId
         ? projectApi(actorId)
-            .listNoteRevisions(projectId, noteId)
+            .listNoteRevisions(projectId, noteId, query)
             .then((res) => value<NoteRevisionRead[]>(res as ApiResult<NoteRevisionRead[]>))
         : Promise.resolve([]),
-    [actorId, projectId, noteId],
+    [actorId, projectId, noteId, query.limit, query.offset],
   )
 }
 

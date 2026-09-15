@@ -16,6 +16,12 @@ The governing invariant is unchanged:
 
 > **Persist working memory, never stale truth or authority.**
 
+**Phase 10 (Project Notebook / structured working notes) is implemented and under
+human review in PR #11** on `feat/phase-10-project-notebook`; its architectural
+decision is `Proposed — pending human acceptance` (`PROJECT_NOTEBOOK.md`,
+ADR-0016). The Phase-10 section below records the machine-verified state of the
+CURRENT reviewed head of that branch. Phases 1–9 are the accepted `main` state.
+
 ## Implemented (Phase 1)
 
 - **Minimal authority substrate** (`revolab/domain/identity.py`):
@@ -1520,8 +1526,8 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
 ## Verified evidence (Phase 10)
 
 - Backend: `ruff check backend` and strict `mypy` pass on **51 source files**.
-  `pytest` passes **377 passed, 13 skipped** (SQLite fast tests; the 13 skips are
-  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (34
+  `pytest` passes **385 passed, 13 skipped** (SQLite fast tests; the 13 skips are
+  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (42
   tests) covers: Project-shared read for member/viewer; non-member no-oracle;
   cross-Project 404; viewer mutation 403; immediate membership revocation;
   Project tombstone; immutable sequence-ordered revisions; stale-edit 409;
@@ -1548,7 +1554,7 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
   idempotent; the contract regression asserts the three Note paths, the Note
   request schemas reject unknown fields, the context selection carries the Note
   fields, and `ProjectContextRead` carries `notes`.
-- Frontend: `npm run typecheck`, `npm run test` (**44 tests**, including safe
+- Frontend: `npm run typecheck`, `npm run test` (**48 tests**, including safe
   Markdown inertness, Notebook create/mention/append/conflict/archive/Agent
   hand-off/viewer read-only, and explicit "Save to Project Note"), and
   `npm run build` pass.
@@ -1657,8 +1663,51 @@ were then closed:
   adversarial href, and FK no-cascade all gained regressions; the browser gate
   records its `REVOLAB_DATABASE_URL` requirement.
 
-Final machine state: backend `377 passed, 13 skipped`; PostgreSQL `13 passed`;
-frontend `44 tests`; Playwright `6 specs` (all over PostgreSQL).
+Final machine state: backend `385 passed, 13 skipped`; PostgreSQL `13 passed`;
+frontend `48 tests`; Playwright `6 specs` (all over PostgreSQL).
+
+## Merge-quality reconciliation (PR #11, review round 2)
+
+A second independent review (GitHub inline threads + Codex) found valid unresolved
+blockers on the previously reviewed head. All were corrected on the same branch:
+
+- **Atomic Note commands.** `create_note` / `append_revision` previously flushed the
+  Note/Revision before validating mentions, so a hidden/foreign mention left a
+  ghost row in the Session. Mention validation now runs BEFORE any durable mutation
+  (`_resolve_mentions`), and the append path resolves inherited/replacement mentions
+  before adding the revision. Regressions
+  `test_create_note_with_invalid_mention_leaves_no_ghost_rows` and
+  `test_append_revision_with_invalid_mention_leaves_no_ghost_rows` trigger the typed
+  failure, then commit a successful operation on the SAME Session and prove no ghost
+  Note/Revision/Mention survives.
+- **Mention retention across body edits (durable API semantic).** `mentions` on
+  `NoteRevisionCreate` is tri-state: omitted inherits the previous revision's
+  mention identities, `[]` clears, non-empty replaces after normal authorization.
+  `_inherit_mentions` copies identities without re-validation, so an
+  already-authorized reference that later becomes unavailable stays historical
+  (`resolved=false`). Regressions: inherit, clear, replace, inherited-target-
+  archive, and a wire-level HTTP inherit test; the workspace keeps links by default
+  and exposes an explicit "clear links" action; the browser slice asserts the chip
+  survives member B's body edit.
+- **DAG/layering honesty.** `revolab.notes` is documented as an
+  application-orchestration service (not a Core domain leaf) and no longer consumes
+  Evidence/Decision ORM internals: it calls the owning domains' new public contracts
+  `domain.provenance.evidence_mention_target` and
+  `domain.knowledge.decision_mention_target`. `DOMAIN_BOUNDARIES.md` §1a and
+  `SYSTEM_ARCHITECTURE.md` state that cross-domain composition happens in the
+  application layer, adding no Project → Evidence/Knowledge Core edge. The
+  nine-domain DAG is unchanged.
+- **Authority state.** `PROJECT_NOTEBOOK.md` and ADR-0016 are marked
+  `Proposed — pending human acceptance`; the patch no longer self-promotes them.
+- **P2 findings.** `resolve_selected_notes` authorizes/resolves every supplied
+  `note_id`/`note_revision_id` BEFORE applying `max_notes` (so `max_notes=0` cannot
+  bypass fail-closed validation); the Notebook list and the revision history gained
+  real load-more pagination (50 / 100 per page); Markdown thematic breaks are now
+  marker/whitespace-only lines, so `--- IMPORTANT` and `***warning` stay literal
+  text. Focused regressions cover each.
+- **Machine truth.** The top-level Status now states Phase 10 is implemented and
+  under human review (Phases 1–9 accepted on `main`), and this ledger reflects the
+  current reviewed head only.
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

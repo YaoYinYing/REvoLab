@@ -1,5 +1,12 @@
 """Phase 10 — Project Notebook: Project-shared working documents.
 
+This module is the **application-level Notebook service** (the same layer as
+`revolab.services`), not a Core domain leaf: it owns Project-scoped Note /
+Revision / Mention persistence and composes the owning domains' **public
+contracts** for cross-domain mention composition rather than reaching into
+`Evidence`/`Decision` ORM internals. It therefore adds no Project -> Evidence /
+Knowledge edge to the accepted nine-domain Core DAG.
+
 The canonical ladder this module implements:
 
     Conversation   private Actor x Project working memory
@@ -19,10 +26,22 @@ Revision semantics: `ProjectNoteRevision` rows are immutable and the latest
 revision is DERIVED from the max `revision_seq` (no mutable current pointer).
 Appending a revision carries the base sequence the client edited; a stale base
 fails closed with a typed `ConflictError` (409) instead of overwriting another
-member's work. PostgreSQL row locking orders concurrent appends; the
-`(note_id, revision_seq)` uniqueness constraint is the backend-independent
-backstop, so SQLite never silently claims stronger concurrency semantics than it
-actually provides.
+member's work.
+
+Atomicity: every fallible mention validation/authorization runs BEFORE any
+durable mutation, so a rejected command leaves no flushed Note, Revision, or
+Mention row behind (a caller that catches the typed error and later commits an
+unrelated operation on the same Session cannot persist a ghost).
+
+Mention semantics on edit: an OMITTED `mentions` inherits the previous
+revision's mention identities (preserving already-authorized references even if a
+target later becomes unavailable); an explicit `[]` clears them; an explicit
+non-empty list replaces them after normal current-Project authorization.
+
+PostgreSQL row locking orders concurrent appends; the `(note_id, revision_seq)`
+uniqueness constraint is the backend-independent backstop. SQLite ignores
+`FOR UPDATE`, so it additionally uses a bounded process-level per-note lock and
+never claims cross-process semantics.
 """
 
 from __future__ import annotations
@@ -31,6 +50,7 @@ import threading
 import weakref
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -39,12 +59,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from revolab import queries
+from revolab.domain import knowledge as knowledge_domain
+from revolab.domain import provenance as provenance_domain
 from revolab.domain.errors import AuthorizationError, ConflictError, NotFoundError, ValidationError
 from revolab.domain.identity import mutation_capable_membership, readable_membership
 from revolab.enums import ResourceKind
 from revolab.models import (
-    Decision,
-    Evidence,
     GlobalResourceRegistry,
     NoteMention,
     ProjectNote,
@@ -165,6 +185,112 @@ def _check_mention_count(mentions: list[NoteMentionCreate]) -> None:
         raise ValidationError("note revision exceeds the maximum number of mentions")
 
 
+@dataclass(frozen=True)
+class _MentionSpec:
+    """A fully validated mention target, ready to persist against a revision."""
+
+    resource_id: UUID | None = None
+    resource_kind: str | None = None
+    evidence_id: UUID | None = None
+    decision_id: UUID | None = None
+
+
+# ---------------------------------------------------------------------------
+# Mentions
+# ---------------------------------------------------------------------------
+
+
+def _resolve_mentions(
+    session: Session, project_id: UUID, mentions: list[NoteMentionCreate]
+) -> list[_MentionSpec]:
+    """Validate EVERY explicitly supplied mention through the current Project
+    read lens and return persistable specs.
+
+    This is pure validation: it performs no durable mutation, so it runs before
+    the Note/Revision rows are created and a typed failure leaves nothing flushed.
+    Cross-domain targets are validated through the owning domains' public
+    contracts, never their ORM internals. Knowing a UUID is not authority: a
+    hidden/archived/foreign/unknown target raises one uniform 403 (no existence
+    oracle)."""
+    if not mentions:
+        return []
+    visible = queries.visible_resources(session, project_id)
+    specs: list[_MentionSpec] = []
+    for mention in mentions:
+        if mention.resource_id is not None:
+            registry = session.get(GlobalResourceRegistry, mention.resource_id)
+            if registry is None or mention.resource_id not in visible:
+                raise AuthorizationError("mentioned resource is not visible in this project")
+            specs.append(
+                _MentionSpec(
+                    resource_id=registry.resource_id,
+                    resource_kind=registry.resource_kind,
+                )
+            )
+        elif mention.evidence_id is not None:
+            target = provenance_domain.evidence_mention_target(
+                session, project_id, mention.evidence_id
+            )
+            if target is None or not target.active:
+                raise AuthorizationError("mentioned evidence is not visible in this project")
+            specs.append(_MentionSpec(evidence_id=target.evidence_id))
+        else:
+            if mention.decision_id is None:  # schema/CHECK guarantee exactly one target
+                raise ValidationError("note mention must name exactly one target")
+            decision_target = knowledge_domain.decision_mention_target(
+                session, project_id, mention.decision_id
+            )
+            if decision_target is None or not decision_target.active:
+                raise AuthorizationError("mentioned decision is not visible in this project")
+            specs.append(_MentionSpec(decision_id=decision_target.decision_id))
+    return specs
+
+
+def _inherit_mentions(session: Session, revision: ProjectNoteRevision) -> list[_MentionSpec]:
+    """Copy the mention IDENTITIES of a previous revision onto a new one.
+
+    Inherited mentions were already authorized when they were created and are
+    deliberately NOT re-validated against the current lens: a target that later
+    becomes unavailable stays a historical contextual reference (resolved=false)
+    rather than silently disappearing from the note."""
+    rows = session.scalars(
+        select(NoteMention)
+        .where(NoteMention.revision_id == revision.revision_id)
+        .order_by(NoteMention.ordinal.asc())
+    )
+    return [
+        _MentionSpec(
+            resource_id=row.target_resource_id,
+            resource_kind=row.target_kind,
+            evidence_id=row.target_evidence_id,
+            decision_id=row.target_decision_id,
+        )
+        for row in rows
+    ]
+
+
+def _write_mention_rows(
+    session: Session, revision: ProjectNoteRevision, specs: list[_MentionSpec]
+) -> None:
+    """Persist already-validated mention specs against an immutable revision."""
+    for ordinal, spec in enumerate(specs):
+        session.add(
+            NoteMention(
+                revision_id=revision.revision_id,
+                ordinal=ordinal,
+                target_resource_id=spec.resource_id,
+                target_kind=spec.resource_kind,
+                target_evidence_id=spec.evidence_id,
+                target_decision_id=spec.decision_id,
+            )
+        )
+
+
+def _check_mention_specs_count(specs: list[_MentionSpec]) -> None:
+    if len(specs) > MAX_NOTE_MENTIONS_PER_REVISION:
+        raise ValidationError("note revision exceeds the maximum number of mentions")
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -179,12 +305,18 @@ def create_note(
     body: str,
     mentions: list[NoteMentionCreate] | None = None,
 ) -> NoteDetailRead:
-    """Create a Project Note with its first immutable revision (seq 1)."""
+    """Create a Project Note with its first immutable revision (seq 1).
+
+    Atomic: title/body bounds, membership, and every mention target are validated
+    BEFORE any row is added or flushed, so a rejected command leaves no ghost
+    Note/Revision/Mention behind."""
     _check_title(title)
     _check_body(body)
     mention_payload = list(mentions or [])
     _check_mention_count(mention_payload)
     mutation_capable_membership(session, actor_id, project_id)
+    specs = _resolve_mentions(session, project_id, mention_payload)
+    _check_mention_specs_count(specs)
 
     note = ProjectNote(project_id=project_id, created_by_actor_id=actor_id, title=title)
     session.add(note)
@@ -197,7 +329,7 @@ def create_note(
     )
     session.add(revision)
     session.flush()
-    _write_mentions(session, project_id, revision, mention_payload)
+    _write_mention_rows(session, revision, specs)
     session.commit()
     session.refresh(note)
     session.refresh(revision)
@@ -216,28 +348,44 @@ def append_revision(
 ) -> NoteRevisionRead:
     """Append one immutable revision at `base_revision_seq + 1`.
 
+    `mentions` semantics: `None` (omitted) inherits the previous revision's
+    mention identities, `[]` clears them, and a non-empty list replaces them after
+    normal current-Project authorization. All mention validation happens before
+    the revision row is added, so a rejected command leaves nothing flushed.
+
     A stale base (the server's latest no longer equals what the client edited)
     raises a typed 409 rather than silently overwriting another member's work."""
     _check_body(body)
-    mention_payload = list(mentions or [])
-    _check_mention_count(mention_payload)
+    if mentions is not None:
+        _check_mention_count(list(mentions))
 
     with _note_mutation_lock(session, note_id):
         note = _mutable_note(session, actor_id, project_id, note_id, with_for_update=True)
         if note.archived_at is not None:
             raise ValidationError("archived note cannot accept new revisions")
 
-        latest = _latest_revision_seq(session, note_id)
-        if latest is None:
+        latest_seq = _latest_revision_seq(session, note_id)
+        if latest_seq is None:
             raise NotFoundError("note has no revision")
-        if base_revision_seq != latest:
+        if base_revision_seq != latest_seq:
             raise ConflictError(
                 "note revision conflict: the note changed since it was edited"
             )
+        previous = _latest_revision(session, note_id)
+        if previous is None:
+            raise NotFoundError("note has no revision")
+
+        # Resolve mentions BEFORE any durable mutation. Omitted -> inherit,
+        # [] -> clear, non-empty -> validate/replace.
+        if mentions is None:
+            specs = _inherit_mentions(session, previous)
+        else:
+            specs = _resolve_mentions(session, project_id, list(mentions))
+        _check_mention_specs_count(specs)
 
         revision = ProjectNoteRevision(
             note_id=note_id,
-            revision_seq=latest + 1,
+            revision_seq=latest_seq + 1,
             body=body,
             created_by_actor_id=actor_id,
         )
@@ -253,7 +401,7 @@ def append_revision(
             raise ConflictError(
                 "note revision conflict: the note changed since it was edited"
             ) from exc
-        _write_mentions(session, project_id, revision, mention_payload)
+        _write_mention_rows(session, revision, specs)
         note.updated_at = _now()
         session.add(note)
         session.commit()
@@ -364,52 +512,8 @@ def list_revisions(
 
 
 # ---------------------------------------------------------------------------
-# Mentions
+# Mention read projection
 # ---------------------------------------------------------------------------
-
-
-def _write_mentions(
-    session: Session,
-    project_id: UUID,
-    revision: ProjectNoteRevision,
-    mentions: list[NoteMentionCreate],
-) -> None:
-    """Validate every mention through the CURRENT Project read lens and persist
-    it against the immutable revision.
-
-    Knowing a UUID is not authority to mention a hidden resource: an invisible or
-    foreign target raises one uniform 403 (no existence oracle) and the whole
-    revision write is rolled back by the caller's transaction."""
-    if not mentions:
-        return
-    visible = queries.visible_resources(session, project_id)
-    for ordinal, mention in enumerate(mentions):
-        row = NoteMention(revision_id=revision.revision_id, ordinal=ordinal)
-        if mention.resource_id is not None:
-            registry = session.get(GlobalResourceRegistry, mention.resource_id)
-            if registry is None or mention.resource_id not in visible:
-                raise AuthorizationError("mentioned resource is not visible in this project")
-            row.target_resource_id = registry.resource_id
-            row.target_kind = registry.resource_kind
-        elif mention.evidence_id is not None:
-            evidence = session.get(Evidence, mention.evidence_id)
-            if (
-                evidence is None
-                or evidence.project_id != project_id
-                or evidence.archived_at is not None
-            ):
-                raise AuthorizationError("mentioned evidence is not visible in this project")
-            row.target_evidence_id = evidence.id
-        else:
-            decision = session.get(Decision, mention.decision_id)
-            if (
-                decision is None
-                or decision.project_id != project_id
-                or decision.archived_at is not None
-            ):
-                raise AuthorizationError("mentioned decision is not visible in this project")
-            row.target_decision_id = decision.id
-        session.add(row)
 
 
 def _mentions_read(
@@ -448,31 +552,27 @@ def _mention_read(
             resolved=resolved,
         )
     if row.target_evidence_id is not None:
-        evidence = session.get(Evidence, row.target_evidence_id)
-        resolved = (
-            evidence is not None
-            and evidence.project_id == project_id
-            and evidence.archived_at is None
+        evidence_target = provenance_domain.evidence_mention_target(
+            session, project_id, row.target_evidence_id
         )
         return NoteMentionRead(
             mention_id=row.id,
             ordinal=row.ordinal,
             evidence_id=row.target_evidence_id,
-            label=(evidence.label or f"Evidence ({evidence.kind})") if resolved and evidence else None,
-            resolved=resolved,
+            label=evidence_target.label if evidence_target is not None else None,
+            resolved=bool(evidence_target is not None and evidence_target.active),
         )
-    decision = session.get(Decision, row.target_decision_id)
-    resolved = (
-        decision is not None
-        and decision.project_id == project_id
-        and decision.archived_at is None
+    if row.target_decision_id is None:  # CHECK guarantees exactly one target
+        raise NotFoundError("note mention has no target")
+    decision_target = knowledge_domain.decision_mention_target(
+        session, project_id, row.target_decision_id
     )
     return NoteMentionRead(
         mention_id=row.id,
         ordinal=row.ordinal,
         decision_id=row.target_decision_id,
-        label=decision.title if resolved and decision else None,
-        resolved=resolved,
+        label=decision_target.title if decision_target is not None else None,
+        resolved=bool(decision_target is not None and decision_target.active),
     )
 
 
@@ -523,8 +623,6 @@ def resolve_selected_notes(
     Returns the refs plus a `truncated` flag: exceeding `max_notes` or clipping a
     body to `max_note_chars` is reported explicitly, never silently."""
     readable_membership(session, actor_id, project_id)
-    refs: list[NoteRefRead] = []
-    truncated = False
     seen: set[UUID] = set()
 
     def _build(note: ProjectNote, revision: ProjectNoteRevision) -> NoteRefRead:
@@ -571,16 +669,19 @@ def resolve_selected_notes(
     candidates: list[tuple[UUID | None, UUID | None]] = [
         (note_id, None) for note_id in sorted(note_ids or [])
     ] + [(None, revision_id) for revision_id in sorted(note_revision_ids or [])]
+
+    # Authorize/resolve EVERY explicitly supplied identity BEFORE applying
+    # `max_notes`. Otherwise an invalid/foreign id sorted after the cap would
+    # never be validated, and `max_notes=0` would bypass fail-closed validation
+    # entirely.
+    resolved: list[NoteRefRead] = []
     for note_id, revision_id in candidates:
-        if len(refs) >= max_notes:
-            truncated = True
-            break
         ref = _resolve(note_id, revision_id)
-        if ref is None:
-            continue
-        if ref.truncated:
-            truncated = True
-        refs.append(ref)
+        if ref is not None:
+            resolved.append(ref)
+
+    refs = resolved[:max_notes]
+    truncated = len(resolved) > max_notes or any(ref.truncated for ref in resolved)
     return refs, truncated
 
 
