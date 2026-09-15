@@ -16,6 +16,12 @@ The governing invariant is unchanged:
 
 > **Persist working memory, never stale truth or authority.**
 
+**Phase 10 (Project Notebook / structured working notes) is implemented and
+human-accepted**, pending merge of PR #11 on `feat/phase-10-project-notebook`; its
+architectural decision is **Accepted** (`PROJECT_NOTEBOOK.md`, ADR-0016). The
+Phase-10 section below records the machine-verified state of the CURRENT reviewed
+head of that branch. Phases 1–9 are the accepted `main` state.
+
 ## Implemented (Phase 1)
 
 - **Minimal authority substrate** (`revolab/domain/identity.py`):
@@ -1444,8 +1450,340 @@ nits were also closed: `ge=0` settings validation has its own regression, and th
 deferred-durability assertion runs under `no_autoflush` so it pins the explicit flush rather than
 an incidental autoflush. Final counts: **343 backend tests**, **24 frontend tests**.
 
-## Known deferrals (explicit, not silently postponed)
+## Implemented (Phase 10)
 
+- **Note model** (`revolab/models.py`): `ProjectNote` (`id`, `project_id`,
+  `created_by_actor_id` audit only, `title`, `created_at`/`updated_at`,
+  `archived_at`), immutable `ProjectNoteRevision` (`revision_id`, `note_id`,
+  `revision_seq`, `body`, `created_by_actor_id`, unique `(note_id, revision_seq)`;
+  latest derived from `max(revision_seq)`, no mutable current pointer), and
+  `NoteMention` (mirrors the frozen Evidence endpoint shape: optional
+  `target_resource_id` + stored registry `target_kind`, optional
+  `target_evidence_id`/`target_decision_id`, CHECK exactly-one-target, unique
+  `(revision_id, ordinal)`). No new enum; a Note is not a `GlobalResourceRegistry`
+  entry, ScientificObject, Evidence, Decision, or provenance node.
+- **Application service** (`revolab/notes.py`): create / list / get / patch
+  (rename-archive) / append-revision / list-revisions plus
+  `resolve_selected_notes` for bounded Agent-context selection. Read uses
+  `readable_membership` (owner/member/viewer); mutate uses
+  `mutation_capable_membership` (viewer 403); a note in another Project is a 404
+  and a non-member gets one uniform 403 before any row lookup (no existence
+  oracle). Append carries `base_revision_seq`; a stale base raises typed
+  `ConflictError` (409). PostgreSQL takes the note row lock; the
+  `(note_id, revision_seq)` unique constraint (translated to 409) is the
+  backend-independent backstop. Mentions are validated through the current
+  Project read lens at write time (hidden/unknown/foreign target ⇒ one uniform
+  403) and hang off the immutable revision, so an unlinked target yields
+  `resolved=false` without rewriting history.
+- **Schemas** (`revolab/schemas.py`): `NoteCreate`/`NotePatch`/
+  `NoteRevisionCreate` (`extra="forbid"`), `NoteRead`/`NoteDetailRead`/
+  `NoteRevisionRead`/`NoteMentionCreate`/`NoteMentionRead`, plus canonical bounds
+  (`MAX_NOTE_TITLE_CHARS` 200, `MAX_NOTE_BODY_CHARS` 20000,
+  `MAX_NOTE_MENTIONS_PER_REVISION` 100). `ContextSelectionCreate` gains
+  `note_ids`/`note_revision_ids`/`max_notes`/`max_note_chars`;
+  `ProjectContextRead` gains `notes`; `BudgetReportRead` gains `note_count`.
+- **API** (`revolab/api.py`): `GET/POST /api/projects/{id}/notes`,
+  `GET/PATCH /api/projects/{id}/notes/{note_id}`,
+  `POST/GET /api/projects/{id}/notes/{note_id}/revisions`; explicit response
+  models, no raw ORM exposure.
+- **Agent context** (`revolab/agent/builder.py`): explicit Note selection is
+  resolved project-scoped (never through the global-resource lens), bounded by
+  `max_notes`/`max_note_chars` with per-note truncation marking; Note text flows
+  into the existing single `<untrusted_project_data>` block. The Agent gets no
+  Note tool.
+- **Migration**: `8822524ef06f_phase10_project_notes.py` (`down_revision =
+  6c88c6688930`) creating `project_notes`, `project_note_revisions`,
+  `note_mentions` with the unique/check constraints, on SQLite and PostgreSQL.
+- **Frontend**: generated-contract aliases (`api/types.ts`, `api/backend.ts`),
+  hooks (`useNotes`/`useNoteDetail`/`useNoteRevisions`/`useMyMembership`), new
+  `views/Notebook.tsx` (list + create + mention linking + safe Markdown detail +
+  revision history + archive + "Add to Agent context"), viewer read-only gating,
+  safe Markdown renderer `components/Markdown.tsx` (never
+  `dangerouslySetInnerHTML`), `Notes` navigation, Agent note selector and
+  "Save to Project Note" explicit capture, `playwright e2e/notebook.spec.ts`.
+- **Docs**: `docs/architecture/PROJECT_NOTEBOOK.md` (normative owner), ADR-0016;
+  `PROJECT_CONVERSATIONS.md`, `AGENT_CONTEXT.md`,
+  `WORKSPACE_INFORMATION_ARCHITECTURE.md`, `IMPLEMENTATION_ROADMAP.md`,
+  `DOMAIN_BOUNDARIES.md` (§1a Project Notebook sub-boundary),
+  `SYSTEM_ARCHITECTURE.md`, and `PROJECT_AGENT_RUNTIME.md` reconciled to point at
+  it.
+- **Post-review hardening** (from the mandatory independent review): the Agent
+  prompt's reserved untrusted-data delimiters are neutralized inside serialized
+  project content, so a Note body containing `</untrusted_project_data>` can no
+  longer close the wrapper early (`agent/prompt.py::neutralize_delimiters`); the
+  Note/revision audit-actor FKs no longer cascade (the author is not a lifecycle
+  owner) and mention target FKs no longer cascade (historical mentions are never
+  silently destroyed); note mutation takes the PostgreSQL row lock in
+  `append_revision` AND `patch_note` plus a bounded process-level lock on SQLite;
+  the revision-uniqueness `IntegrityError` translation is narrowed to
+  `uq_note_revision_seq`; `resolve_selected_notes` authorizes itself; `list_notes`
+  orders by `(updated_at, id)`; `NotePatch.archive` is a strict boolean; the Agent
+  selection only ever sends a Note present in the current Project list; the
+  Notebook detail panel never renders or mutates a stale/failed detail and shows
+  its error; `NoteCreate`/`NotePatch`/`NoteRevisionCreate` are no longer duplicated
+  in `api/types.ts`.
+
+## Verified evidence (Phase 10)
+
+- Backend: `ruff check backend` and strict `mypy` pass on **51 source files**.
+  `pytest` passes **390 passed, 13 skipped** (SQLite fast tests; the 13 skips are
+  the opt-in PostgreSQL acceptance file). `backend/tests/test_notes.py` (47
+  tests) covers: Project-shared read for member/viewer; non-member no-oracle;
+  cross-Project 404; viewer mutation 403; immediate membership revocation;
+  Project tombstone; immutable sequence-ordered revisions; stale-edit 409;
+  archived-note read-history/reject-new-revision; title/body/mention bounds;
+  mention exactly-one-target; mention of a visible object resolving without a
+  provenance edge; hidden/unknown/foreign mention targets 403; unlinked target
+  ⇒ unresolved mention with preserved text; Evidence/Decision mention resolution;
+  Note activity not creating Evidence/Decision/provenance; Notes not a
+  `GlobalResourceRegistry` entry; explicit-only bounded Note context
+  (`max_notes`/`max_note_chars` truncation marked); exact `note_revision_ids`
+  selection; foreign/unknown Note selection no-oracle; hostile Note text inside
+  the untrusted block (never `system`) and unable to widen the tool set or
+  execute `decision.commit`; HTTP round-trip 201/200/409 and fail-closed
+  unknown fields/401/404/403.
+- PostgreSQL (migrated schema): `alembic upgrade head` and `alembic check`
+  report **no drift** on PostgreSQL 16; `test_postgres_integration.py` passes
+  **13 passed**, including the Phase-10 Note lifecycle on the migrated schema,
+  DB-level enforcement when the ORM is bypassed (duplicate `(note_id,
+  revision_seq)`; zero-target and two-target `note_mentions`), and the required
+  concurrent stale-write regression (two threads appending from base seq 1: one
+  succeeds at seq 2, the other gets `ConflictError`; final sequences `[1, 2]`).
+- OpenAPI/contracts: `python -m revolab.export_openapi` is byte-identical to
+  `frontend/src/contracts/openapi.json`; `npm run generate:contracts` is
+  idempotent; the contract regression asserts the three Note paths, the Note
+  request schemas reject unknown fields, the context selection carries the Note
+  fields, and `ProjectContextRead` carries `notes`.
+- Frontend: `npm run typecheck`, `npm run test` (**51 tests**, including safe
+  Markdown inertness, Notebook create/mention/append/conflict/archive/Agent
+  hand-off/viewer read-only, and explicit "Save to Project Note"), and
+  `npm run build` pass.
+- Browser (`REVOLAB_DATABASE_URL=<postgres> npm run test:e2e`, Playwright
+  Chromium over real FastAPI + **PostgreSQL 16** + `REVOLAB_E2E_FAKE_MODEL=1` +
+  `REVOLAB_E2E_FAKE_COMPUTE=1`): all **6 specs** pass. (The bare command uses the
+  config's SQLite fallback; the PostgreSQL run requires exporting
+  `REVOLAB_DATABASE_URL`.) `notebook.spec.ts` creates a Note with a typed mention,
+  reloads it, confirms the selected Note reaches bounded Agent context (the fake
+  model echoes only what the real prompt assembler placed in context), confirms
+  an uncommitted Decision stays a draft, has a second member append a visible
+  revision, confirms a stale write returns 409, and confirms a viewer is
+  read-only in the UI while a viewer API write is 403 and a non-member read is
+  403; a second spec proves a raw-HTML Note body renders as inert text in a real
+  browser (no script execution, no `img`).
+- `git diff --check` clean.
+
+## Independent review (Phase 10)
+
+Five fresh read-only reviewers audited `main...HEAD` (TODO §17 lenses), each under
+an explicit composition contract (role, question, allowed paths, write=NO,
+evidence required, output schema, stop condition). All five returned. Verdicts
+before reconciliation: **A REQUEST_CHANGES** (architecture/ownership),
+**B REQUEST_CHANGES** (authorization/security/prompt-trust), **C PASS**
+(persistence/concurrency), **D REQUEST_CHANGES** (API/frontend/contracts),
+**E PASS** (tests/CI/docs). No reviewer found a P0.
+
+Reconciled findings (all fixed; regression coverage added where behavior changed):
+
+- **A-P1 / C-P2 — audit-actor FK made the author a second lifecycle owner.**
+  `ProjectNote.created_by_actor_id` / `ProjectNoteRevision.created_by_actor_id`
+  were `ON DELETE CASCADE`. Fixed: no delete action (the Project, not the author,
+  owns the Note); migration amended; structural regression
+  `test_note_audit_and_mention_fks_do_not_cascade` fails if CASCADE is re-added.
+- **A-P2 / C-P1 — mention target FKs cascaded.** `note_mentions.target_evidence_id`
+  / `target_decision_id` were `ON DELETE CASCADE`, which could silently destroy a
+  historical mention on an immutable revision. Fixed: no delete action, matching
+  `target_resource_id`; covered by the same structural regression.
+- **A-P1 / E-P2 — stale "Notebooks deferred" text and a missing ownership-map
+  entry.** `DOMAIN_BOUNDARIES.md` now declares §1a Project Notebook as a Project
+  Domain sub-boundary (nine-domain DAG unchanged); `SYSTEM_ARCHITECTURE.md` points
+  at it; `PROJECT_AGENT_RUNTIME.md` deferral re-scoped to Agent Note *mutation*.
+- **B-P2 — forgeable untrusted-data delimiter.** A Note body could contain
+  `</untrusted_project_data>` and close the Agent data block early. Fixed:
+  `prompt.neutralize_delimiters` escapes the reserved tokens inside serialized
+  project content; regression asserts exactly one delimiter pair survives and the
+  hostile text stays inside the block.
+- **C-P2 — the concurrency regression did not prove the row lock.** Added a
+  PostgreSQL test that records executed SQL and fails if `FOR UPDATE` is not
+  emitted; `patch_note` now also takes the row lock, and SQLite note mutations use
+  a bounded process-level lock so append/archive are genuinely ordered there
+  (regression `test_sqlite_note_mutation_lock_blocks_a_concurrent_append`).
+- **D-P1 — cross-Project Note hand-off leak.** `App` now clears the Note hand-off
+  on every Project change and `AgentView` only sends a Note present in the current
+  Project list; the selector loads archived notes so an explicit archived-note
+  hand-off is not silently dropped.
+- **D-P1 — stale/swallowed Notebook detail.** The detail panel is gated on
+  `detail.data.id === selectedNoteId`, `detail.error` is always rendered, the
+  editor clears on selection change, the revision history filters by `note_id`,
+  and archive targets `selectedNoteId`.
+- **D-P2 — Save-to-Project-Note error text.** Uses `apiErrorMessage` and refreshes
+  the note list on success; a regression asserts the typed message on failure.
+- **D-P3 — `isSafeHref` hardening.** URL-parsed protocol allowlist plus rejection
+  of control/quote/angle characters, with an adversarial-href regression.
+- **C-P3 / E-P2 — non-mutation-sensitive two-target CHECK test.** The raw insert
+  now uses valid FK ids, so only the CHECK can fail; also added archived-target
+  `resolved=false`, revision pagination, viewer-archive, strict-boolean,
+  delimiter-forgery, neutralization-bound, and foreign-real-revision regressions.
+- **Deferred with rationale (P2/P3, not silently dropped):** the archived-resource
+  mention asymmetry is intentional (resource availability is lens-based;
+  Evidence/Decision availability is aggregate-active-based) and is now documented
+  in `PROJECT_NOTEBOOK.md`; `notes.py` stays outside `revolab/domain/` because it
+  is an application service mirroring `agent/conversations.py`; `created_by_actor_id`
+  follows the TODO-mandated name; per-Note list N+1 queries are bounded by the
+  page size; revision immutability is code-enforced (as for other immutable
+  tables); DB-level UPDATE/DELETE triggers are not added; the Phase-10 migration
+  was amended in place (fine for an unmerged draft; a released environment would
+  need a follow-up migration because an ondelete change is real DDL).
+
+## Delta review (Phase 10)
+
+Because the corrections materially changed Agent prompt assembly, FK/lifecycle
+semantics, and frontend selection, three fresh read-only reviewers re-audited the
+corrected diff. All three returned; no P0/P1 remained and every prior finding was
+confirmed FIXED (architecture/concurrency: FIXED except the normative-doc wording,
+now fixed; security: PASS, delimiter forgery FIXED with the payload still decoding
+byte-identically; frontend/contracts: all prior D/E findings FIXED, generated
+contracts byte-identical, all new tests mutation-sensitive). Their new findings
+were then closed:
+
+- **P2 (security) — budget flag measured the pre-neutralization payload.** Escaping
+  growth could exceed `max_context_chars` while `context_truncated` stayed False.
+  Fixed with a single `prompt.context_payload()` used by both the prompt builder and
+  the turn-budget measurement, plus regression
+  `test_neutralized_context_growth_is_reported_as_a_bound_hit`.
+- **P2 (architecture) — normative concurrency text stale.** `PROJECT_NOTEBOOK.md`
+  and ADR-0016 now state that PostgreSQL takes the row lock in BOTH
+  `append_revision` and `patch_note`, and that SQLite additionally uses the bounded
+  process-level per-note lock (uniqueness constraint as backstop, single-process
+  only). `IMPLEMENTATION_ROADMAP.md` wording aligned to "sub-boundary".
+- **P2 (frontend) — archived-note hand-off dropped.** The Agent note selector now
+  loads archived notes as well, so an explicit hand-off of an archived note is not
+  silently discarded.
+- **P3** — revision history filtered by `note_id`; editor cleared on selection
+  change; same-note `detail.error` surfaced; the SQLite lock, save-to-note failure,
+  adversarial href, and FK no-cascade all gained regressions; the browser gate
+  records its `REVOLAB_DATABASE_URL` requirement.
+
+Final machine state: backend `390 passed, 13 skipped`; PostgreSQL `13 passed`;
+frontend `51 tests`; Playwright `6 specs` (all over PostgreSQL).
+
+## Merge-quality reconciliation (PR #11, review round 2)
+
+A second independent review (GitHub inline threads + Codex) found valid unresolved
+blockers on the previously reviewed head. All were corrected on the same branch:
+
+- **Atomic Note commands.** `create_note` / `append_revision` previously flushed the
+  Note/Revision before validating mentions, so a hidden/foreign mention left a
+  ghost row in the Session. Mention validation now runs BEFORE any durable mutation
+  (`_resolve_mentions`), and the append path resolves inherited/replacement mentions
+  before adding the revision. Regressions
+  `test_create_note_with_invalid_mention_leaves_no_ghost_rows` and
+  `test_append_revision_with_invalid_mention_leaves_no_ghost_rows` trigger the typed
+  failure, then commit a successful operation on the SAME Session and prove no ghost
+  Note/Revision/Mention survives.
+- **Mention retention across body edits (durable API semantic).** `mentions` on
+  `NoteRevisionCreate` is tri-state: omitted inherits the previous revision's
+  mention identities, `[]` clears, non-empty replaces after normal authorization.
+  `_inherit_mentions` copies identities without re-validation, so an
+  already-authorized reference that later becomes unavailable stays historical
+  (`resolved=false`). Regressions: inherit, clear, replace, inherited-target-
+  archive, and a wire-level HTTP inherit test; the workspace keeps links by default
+  and exposes an explicit "clear links" action; the browser slice asserts the chip
+  survives member B's body edit.
+- **DAG/layering honesty.** `revolab.notes` is documented as an
+  application-orchestration service (not a Core domain leaf) and no longer consumes
+  Evidence/Decision ORM internals: it calls the owning domains' new public contracts
+  `domain.provenance.evidence_mention_target` and
+  `domain.knowledge.decision_mention_target`. `DOMAIN_BOUNDARIES.md` §1a and
+  `SYSTEM_ARCHITECTURE.md` state that cross-domain composition happens in the
+  application layer, adding no Project → Evidence/Knowledge Core edge. The
+  nine-domain DAG is unchanged.
+- **Authority state.** `PROJECT_NOTEBOOK.md` and ADR-0016 were marked
+  `Proposed — pending human acceptance` while under review; after the human
+  reviewer granted acceptance (PR #11 review) they are now **Accepted**, as are the
+  consuming references in `SYSTEM_ARCHITECTURE.md` and `EVIDENCE_PROVENANCE.md`.
+- **P2 findings.** `resolve_selected_notes` authorizes/resolves every supplied
+  `note_id`/`note_revision_id` BEFORE applying `max_notes` (so `max_notes=0` cannot
+  bypass fail-closed validation); the Notebook list and the revision history gained
+  real load-more pagination (50 / 100 per page); Markdown thematic breaks are now
+  marker/whitespace-only lines, so `--- IMPORTANT` and `***warning` stay literal
+  text. Focused regressions cover each.
+- **Machine truth.** The top-level Status now states Phase 10 is implemented and
+  under human review (Phases 1–9 accepted on `main`), and this ledger reflects the
+  current reviewed head only.
+
+### Final independent review (5 reviewers) — reconciliation
+
+A fresh 5-reviewer pass over `main...HEAD` (A architecture, B security, C
+persistence, D API/frontend, E tests/docs) found no P0; A/B/D/E returned PASS and C
+returned one P1 plus one P2 (D also reported P2 frontend findings). All valid
+findings were fixed:
+
+- **P1 (transaction safety).** The flush-time uniqueness backstop called
+  `session.rollback()`, discarding a composing caller's whole transaction. It now
+  uses a SAVEPOINT around the revision insert (and expunges the failed revision),
+  so only this command's own write is discarded; the stale-base path is unchanged.
+  Regression `test_uniqueness_backstop_preserves_a_composing_callers_transaction`
+  pre-flushes a caller row, forces the collision, and proves the caller row and the
+  true revision history survive.
+- **P2 (mention lifecycle consistency).** Resource mentions resolved/validated from
+  link visibility alone, ignoring `archived_at`/`revoked_at`, unlike
+  Evidence/Decision. `queries.resource_mention_active` is now the shared resource-side
+  lifecycle check; `_resolve_mentions` refuses an archived series/revoked reference
+  and `_mention_read` derives `resolved` from it. Regression
+  `test_archived_resource_mention_is_refused_and_reads_unresolved`.
+- **P2 (frontend).** Transient notice/error now clear on Note switch; load-more is
+  clamped to the server's 200 cap (and `revisionLimit` resets per Note); an Agent
+  hand-off of a valid current-Project Note outside the newest selector page is
+  resolved by id (`getNote`) instead of being silently dropped
+  (`Agent.test.tsx` hand-off-resolution regression).
+- **P3 hardening.** `ContextSelectionCreate` gained `extra="forbid"`;
+  `resolve_selected_notes` clamps `max_notes`/`max_note_chars` internally (defense in
+  depth); the cap-ordering regression is deterministic regardless of UUID sort
+  order; the PostgreSQL lock test now also asserts `patch_note` emits `FOR UPDATE`
+  and the lifecycle test asserts the rejected create left no ghost; the stale
+  "Domain service" label, `DOMAIN_BOUNDARIES.md` public-contract list, and the
+  `EVIDENCE_PROVENANCE.md` wording were corrected.
+
+Delta pass after these corrections: three fresh read-only reviewers re-audited
+`662bf38..HEAD`. Security/frontend returned PASS; persistence and
+contracts/tests/docs returned REQUEST_CHANGES with no P0/P1 and further P2s, all
+now fixed:
+
+- **Revision-archival bypass.** `queries.resource_mention_active` treated any
+  existing revision as active, so a revision of an archived series stayed
+  mentionable. It now requires the owning series to be unarchived; regression
+  `test_archived_revision_mention_is_refused_via_owning_series`.
+- **Picker offered rejected targets.** The Notebook mention picker now filters out
+  archived objects and revoked references, matching the backend rule and the
+  already-filtered Evidence/Decision lists (frontend regression
+  `offers no lifecycle-inactive mention targets`).
+- **Revoked-reference branch untested.** Added
+  `test_revoked_reference_mention_is_refused_and_reads_unresolved`.
+- **Machine truth.** `EVIDENCE_PROVENANCE.md` gained the Phase-10 refinement it was
+  claimed to have (a durable `ProjectNote` exists and is explicitly not Evidence);
+  the reviewer-count sentence and the stale "Domain service" label were corrected;
+  `DOMAIN_BOUNDARIES.md` §1a now names the lifecycle check; the 200-cap and
+  `ContextSelectionCreate` strictness gained regressions.
+
+### Final pagination correction (PR #11, human review round 3)
+
+The human reviewer found one remaining P2: the Notebook list and revision history
+"Load more" grew `limit` toward the server's `le=200` cap instead of paging, so the
+201st Note / revision was unreachable. Fixed by using the API's `offset`:
+
+- Notes page with `limit=50` at offsets `0, 50, 100, …`; revision history pages
+  with `limit=100` at offsets `0, 100, 200, …`. Each fetched page is appended to an
+  accumulated collection (deduplicated by id), so collections beyond the per-request
+  cap stay reachable; a mutation restarts accumulation from offset 0.
+- Regressions `paginates the notebook list with offset-based page accumulation`,
+  `reaches the 201st note via offset pagination (beyond the server cap)`, and
+  `paginates the revision history with offset pages and reaches the 201st revision`
+  render 205-item datasets and prove the 201st row is displayed.
+- With human acceptance recorded, `PROJECT_NOTEBOOK.md` and ADR-0016 (and their
+  references in `SYSTEM_ARCHITECTURE.md` / `EVIDENCE_PROVENANCE.md`) are now
+  `Accepted`; this ledger states that Phase 10 is human-accepted pending merge.
+
+## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
 - Remote provider tool execution inside the Agent loop (Phase 8 surfaces remote
   tools from the same catalog and converts remote `explicit_action` to a
@@ -1466,6 +1804,12 @@ an incidental autoflush. Final counts: **343 backend tests**, **24 frontend test
 - Production secret-manager integration: the Secret store remains the
   non-production in-memory adapter (see disclosure above); a production-grade
   backend is deferred until explicitly configured.
+- Agent Note mutation: Phase 10 gives the Agent read-only access to explicitly
+  selected Notes; an Agent-facing Note tool is deferred (it must be policy-gated
+  and typed and never bypass the ordinary ProjectNote domain command).
+- Rich collaborative editing (CRDT/realtime), a block-editor framework, RAG/
+  embeddings/vector search over Notes, and a global full-text search are
+  deferred; Phase 10 content is bounded Markdown/plain text.
 
 ## Working set
 

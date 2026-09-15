@@ -114,4 +114,45 @@ describe('generated API contract boundary', () => {
       expect(model.additionalProperties, `${name} should forbid extra fields`).toBe(false)
     }
   })
+
+  it('Phase-10 Notebook surface is typed, generated and strict', () => {
+    for (const path of [
+      '/api/projects/{project_id}/notes',
+      '/api/projects/{project_id}/notes/{note_id}',
+      '/api/projects/{project_id}/notes/{note_id}/revisions',
+    ]) {
+      expect(spec.paths[path], `missing note path ${path}`).toBeDefined()
+      expect(schemaDts).toContain(JSON.stringify(path))
+    }
+
+    for (const name of ['NoteCreate', 'NotePatch', 'NoteRevisionCreate', 'NoteMentionCreate']) {
+      const model = spec.components.schemas[name] as { additionalProperties?: unknown }
+      expect(model, `missing note schema ${name}`).toBeDefined()
+      expect(model.additionalProperties, `${name} should forbid extra fields`).toBe(false)
+    }
+
+    // A Note mention is a bounded reference, never a scientific-semantics enum:
+    // the mention target stays a ResourceKind/Evidence/Decision reference.
+    const mention = spec.components.schemas.NoteMentionRead as {
+      properties?: Record<string, unknown>
+    }
+    expect(Object.keys(mention.properties ?? {})).toEqual(
+      expect.arrayContaining(['resource_kind', 'resource_id', 'evidence_id', 'decision_id', 'resolved']),
+    )
+  })
+
+  it('Note selection is part of the bounded ContextSelection contract', () => {
+    const selection = spec.components.schemas.ContextSelectionCreate as {
+      properties?: Record<string, unknown>
+      additionalProperties?: unknown
+    }
+    expect(Object.keys(selection.properties ?? {})).toEqual(
+      expect.arrayContaining(['note_ids', 'note_revision_ids', 'max_notes', 'max_note_chars']),
+    )
+    expect(selection.additionalProperties, 'ContextSelectionCreate should forbid extra fields').toBe(false)
+    const context = spec.components.schemas.ProjectContextRead as {
+      properties?: Record<string, unknown>
+    }
+    expect(Object.keys(context.properties ?? {})).toContain('notes')
+  })
 })

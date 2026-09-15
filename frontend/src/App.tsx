@@ -9,6 +9,7 @@ import {
   FlaskConical,
   Home,
   ListTree,
+  NotebookPen,
   Play,
   Server,
   Settings2,
@@ -26,6 +27,7 @@ import { ComputeView } from './views/Compute'
 import { DecisionsView } from './views/Decisions'
 import { EvidenceView } from './views/Evidence'
 import { KnowledgeView } from './views/Knowledge'
+import { NotebookView } from './views/Notebook'
 import { ObjectDetailView } from './views/ObjectDetail'
 import { ObjectsView } from './views/Objects'
 import { OverviewView } from './views/Overview'
@@ -39,6 +41,7 @@ type View =
   | 'objects'
   | 'object'
   | 'agent'
+  | 'notes'
   | 'evidence'
   | 'runs'
   | 'decisions'
@@ -52,6 +55,7 @@ const NAV = [
   { view: 'overview', label: 'Overview', icon: Home },
   { view: 'objects', label: 'Objects', icon: ListTree },
   { view: 'agent', label: 'Agent', icon: Bot },
+  { view: 'notes', label: 'Notes', icon: NotebookPen },
   { view: 'compute', label: 'Compute', icon: Play },
   { view: 'analyze', label: 'Analyze', icon: BarChart3 },
   { view: 'evidence', label: 'Evidence', icon: Boxes },
@@ -70,6 +74,7 @@ export function App() {
   const [view, setView] = useState<View>('overview')
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null)
   const [computeRevisionId, setComputeRevisionId] = useState<string | null>(null)
+  const [agentNoteIds, setAgentNoteIds] = useState<string[]>([])
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
@@ -94,6 +99,11 @@ export function App() {
     const first = projects.data?.[0]
     if (first) setActiveProjectId(first.id)
   }, [projects.data, activeProjectId])
+
+  useEffect(() => {
+    // Any Project change invalidates the Project-scoped Note hand-off.
+    setAgentNoteIds([])
+  }, [activeProjectId])
 
   async function createProject(name: string, description: string | null) {
     if (!actorId) return
@@ -122,6 +132,9 @@ export function App() {
   function selectProject(projectId: string) {
     setActiveProjectId(projectId)
     setSelectedSeriesId(null)
+    // The Note hand-off is Project-scoped: never carry a note id across a
+    // Project switch into another Project's Agent turn.
+    setAgentNoteIds([])
     setView('overview')
   }
 
@@ -272,7 +285,23 @@ export function App() {
             />
           ) : null}
           {view === 'agent' ? (
-            <AgentView key={`${actorId}:${projectId}`} actorId={actorId} projectId={projectId} />
+            <AgentView
+              key={`${actorId}:${projectId}`}
+              actorId={actorId}
+              projectId={projectId}
+              initialNoteIds={agentNoteIds}
+            />
+          ) : null}
+          {view === 'notes' ? (
+            <NotebookView
+              key={`${actorId}:${projectId}`}
+              actorId={actorId}
+              projectId={projectId}
+              onAddToAgentContext={(noteId) => {
+                setAgentNoteIds([noteId])
+                setView('agent')
+              }}
+            />
           ) : null}
           {view === 'compute' ? (
             <ComputeView actorId={actorId} projectId={projectId} initialRevisionId={computeRevisionId} />

@@ -283,9 +283,40 @@ collaboration/sharing and the agent.
   Decision promotion boundary unchanged; no RAG/memory framework introduced;
   PostgreSQL/OpenAPI/frontend/browser gates green.
 - **Non-goals:** RAG, embeddings, vector/semantic memory, `AgentMemory`,
-  notebooks, shared conversations, conversation search, background Agents,
+  shared conversations, conversation search, background Agents,
   recursive Agents/subagents, workflow engines, generic approval workflow,
   remote provider Agent execution, authentication/OIDC, RBAC, public sharing.
+
+---
+
+### Phase 10 — Project Notebook & Structured Working Notes
+
+- **Goal:** add the missing rung between private persistent conversation and
+  formal Evidence/Decision truth: Project-shared, versioned working documents
+  that never become scientific truth.
+- **Owned domains:** new Project Notebook sub-boundary of the Project Domain
+  (normative owner: `docs/architecture/PROJECT_NOTEBOOK.md`; `DOMAIN_BOUNDARIES.md`
+  §1a); Agent Context (consumer), Presentation (Notebook surface).
+- **Vertical slice:** Project-scoped `ProjectNote` + immutable
+  `ProjectNoteRevision` (`(note_id, revision_seq)` unique, latest derived from the
+  max sequence) + typed non-semantic `NoteMention`s validated through the current
+  Project read lens; resource-oriented notes API; optimistic `base_revision_seq`
+  append with a typed 409 on a stale base; explicit "Save to Project Note" capture
+  from a conversation; explicit bounded Note selection in `ContextSelection`;
+  safe Markdown rendering; PostgreSQL migration and concurrency regression.
+- **Acceptance evidence:** Notes persist durably and are Project-shared but not
+  scientific truth; Revision-safe editing (stale edit fails instead of
+  overwriting); Project authorization correct (viewer read-only, non-member
+  no-oracle); mentions Project-visible and non-semantic; Conversation → Note is
+  explicit; selected Notes enter Agent context only as bounded untrusted data;
+  hostile Note text cannot widen Agent authority; Evidence/Decision semantics
+  unchanged; frontend uses generated contracts; PostgreSQL/migrations/contracts/
+  frontend/browser gates green.
+- **Non-goals:** RAG, embeddings, vector database, semantic Agent memory,
+  `AgentMemory`, conversation search, shared conversations, background/recursive
+  Agents, workflow engines, generic approval workflow, remote-provider Agent
+  execution, authentication/OIDC, RBAC, public sharing, CRDT/realtime editing,
+  full ELN, experiment inventory, rich block-editor framework, global search.
 
 ---
 

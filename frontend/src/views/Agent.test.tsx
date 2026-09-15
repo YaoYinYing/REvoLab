@@ -1,15 +1,16 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { projectApi } from '../api/backend'
-import { useObjects, useResources } from '../api/hooks'
-import type { AgentTurnRead, ConversationRead, ConversationTurnRead } from '../api/types'
+import { useNotes, useObjects, useResources } from '../api/hooks'
+import type { AgentTurnRead, ConversationRead, ConversationTurnRead, NoteRead } from '../api/types'
 import { AgentView } from './Agent'
 
 vi.mock('../api/hooks', () => ({
   useObjects: vi.fn(),
   useResources: vi.fn(),
+  useNotes: vi.fn(),
 }))
 
 vi.mock('../api/backend', () => ({
@@ -18,7 +19,20 @@ vi.mock('../api/backend', () => ({
 
 const mockedUseObjects = vi.mocked(useObjects)
 const mockedUseResources = vi.mocked(useResources)
+const mockedUseNotes = vi.mocked(useNotes)
 const mockedProjectApi = vi.mocked(projectApi)
+
+const note: NoteRead = {
+  id: '88888888-8888-4888-8888-888888888888',
+  project_id: 'project-1',
+  created_by_actor_id: 'actor-1',
+  title: 'Working notes',
+  created_at: '2026-09-14T00:00:00Z',
+  updated_at: '2026-09-14T00:00:00Z',
+  archived_at: null,
+  latest_revision_seq: 2,
+  revision_count: 2,
+}
 
 const turn: AgentTurnRead = {
   project_id: '11111111-1111-4111-8111-111111111111',
@@ -121,12 +135,23 @@ const defaultApi = () => ({
   }),
   createConversation: vi.fn().mockResolvedValue({ data: conversation, error: undefined, response: new Response() }),
   createConversationTurn: vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() }),
+  createNote: vi.fn().mockResolvedValue({
+    data: { ...note, latest: null },
+    error: undefined,
+    response: new Response(),
+  }),
+  getNote: vi.fn().mockResolvedValue({
+    data: undefined,
+    error: new Error('not found'),
+    response: new Response(),
+  }),
 })
 
 beforeEach(() => {
   vi.clearAllMocks()
   mockedUseObjects.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
   mockedUseResources.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
+  mockedUseNotes.mockReturnValue({ data: [note], loading: false, error: null, reload: vi.fn() })
   mockedProjectApi.mockReturnValue(defaultApi() as never)
 })
 
@@ -414,5 +439,126 @@ describe('Agent view (Phase 9)', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled()
 
     resolveList({ data: [], error: undefined, response: new Response() })
+  })
+
+  it('passes an explicitly selected Project Note into the bounded context selection', async () => {
+    const turnMock = vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), createConversationTurn: turnMock } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.selectOptions(
+      await screen.findByLabelText('Select note for agent context'),
+      note.id,
+    )
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'Summarize the note',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    const body = turnMock.mock.calls[0][2] as { selection: { note_ids?: string[] } }
+    expect(body.selection.note_ids).toEqual([note.id])
+  })
+
+  it('captures conversation content into a Note only on explicit human action', async () => {
+    const createNote = vi.fn().mockResolvedValue({
+      data: { ...note, latest: null },
+      error: undefined,
+      response: new Response(),
+    })
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: [turnRead.user_message], total_messages: 1 },
+        error: undefined,
+        response: new Response(),
+      }),
+      createNote,
+    } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    // Nothing is promoted automatically on load.
+    expect(createNote).not.toHaveBeenCalled()
+
+    await user.click(await screen.findByRole('button', { name: /Save message to project note/ }))
+    expect(createNote).toHaveBeenCalledTimes(1)
+    expect(createNote.mock.calls[0][1]).toMatchObject({ body: 'Describe this table' })
+    expect(await screen.findByText(/Saved to Notes/)).toBeInTheDocument()
+  })
+
+  it('surfaces the typed error when Save to Project Note fails and does not refresh', async () => {
+    const reloadNotes = vi.fn()
+    mockedUseNotes.mockReturnValue({ data: [note], loading: false, error: null, reload: reloadNotes })
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockResolvedValue({ data: [conversation], error: undefined, response: new Response() }),
+      getConversation: vi.fn().mockResolvedValue({
+        data: { ...conversation, messages: [turnRead.user_message], total_messages: 1 },
+        error: undefined,
+        response: new Response(),
+      }),
+      createNote: vi.fn().mockResolvedValue({
+        data: undefined,
+        error: { detail: 'note body is empty or exceeds the maximum length' },
+        response: new Response(),
+      }),
+    } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" />)
+    await user.click(await screen.findByRole('button', { name: /Save message to project note/ }))
+    expect(await screen.findByText(/note body is empty or exceeds the maximum length/)).toBeInTheDocument()
+    expect(reloadNotes).not.toHaveBeenCalled()
+  })
+
+  it('prefills the note selection from the Notebook hand-off', async () => {
+    render(<AgentView actorId="actor-1" projectId="project-1" initialNoteIds={[note.id]} />)
+    expect(await screen.findByLabelText('Select note for agent context')).toHaveValue(note.id)
+  })
+
+  it('never sends a stale note id that is not in the current project list', async () => {
+    const turnMock = vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), createConversationTurn: turnMock } as never)
+
+    const user = userEvent.setup()
+    render(
+      <AgentView
+        actorId="actor-1"
+        projectId="project-1"
+        initialNoteIds={['99999999-9999-4999-8999-999999999999']}
+      />,
+    )
+    expect(await screen.findByLabelText('Select note for agent context')).toHaveValue('')
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'hello',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    const body = turnMock.mock.calls[0][2] as { selection: Record<string, unknown> }
+    expect(body.selection.note_ids).toBeUndefined()
+  })
+  it('resolves a handed-off note that is outside the newest selector page', async () => {
+    const turnMock = vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() })
+    const getNote = vi.fn().mockResolvedValue({ data: { ...note, latest: null }, error: undefined, response: new Response() })
+    // The hand-off note is NOT in the (newest-page) list.
+    mockedUseNotes.mockReturnValue({ data: [], loading: false, error: null, reload: vi.fn() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), getNote, createConversationTurn: turnMock } as never)
+
+    const user = userEvent.setup()
+    render(<AgentView actorId="actor-1" projectId="project-1" initialNoteIds={[note.id]} />)
+    const select = await screen.findByLabelText('Select note for agent context')
+    await waitFor(() => expect(select).toHaveValue(note.id))
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'summarize the handed-off note',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    const body = turnMock.mock.calls[0][2] as { selection: { note_ids?: string[] } }
+    expect(body.selection.note_ids).toEqual([note.id])
   })
 })

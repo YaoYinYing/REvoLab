@@ -64,6 +64,13 @@ def _first_series_id(context: dict[str, Any]) -> str | None:
     return None
 
 
+def _first_note(context: dict[str, Any]) -> dict[str, Any] | None:
+    for note in context.get("notes") or []:
+        if isinstance(note, dict):
+            return note
+    return None
+
+
 class ScriptedModelBackend:
     """A deterministic ModelBackend. `steps` is an optional list of explicit
     turn dicts; when exhausted (or absent) the default Phase-8 slice runs."""
@@ -83,10 +90,24 @@ class ScriptedModelBackend:
         return self._default_turn(index, context)
 
     def _default_turn(self, index: int, context: dict[str, Any]) -> ModelResponse:
+        artifact_id = _first_artifact_id(context)
+        if artifact_id is None:
+            # A Note-only selection is a self-contained Phase-10 turn: answer
+            # deterministically from the untrusted context instead of depending on
+            # the process-wide scripted turn counter (several browser specs share
+            # one backend process).
+            note = _first_note(context)
+            if note is not None:
+                return ModelResponse(
+                    finish="stop",
+                    content=(
+                        f'I read the selected Project note "{note.get("title")}" '
+                        f'(revision {note.get("revision_seq")}). It is shared working '
+                        "knowledge, not project truth."
+                    ),
+                )
+            return ModelResponse(finish="stop", content="No artifact was selected in context.")
         if index == 0:
-            artifact_id = _first_artifact_id(context)
-            if artifact_id is None:
-                return ModelResponse(finish="stop", content="No artifact was selected in context.")
             return ModelResponse(
                 finish="tool_calls",
                 tool_calls=(

@@ -193,9 +193,13 @@ boundary.
 
 ## Deferrals (explicit)
 
-- Notebooks/structured working notes, RAG/vector/semantic memory, workflow
-  engines, background jobs, recursive Agents, Agent subagents, conversation
-  sharing, conversation search, generic approval workflows.
+- RAG/vector/semantic memory, workflow engines, background jobs, recursive Agents,
+  Agent subagents, conversation sharing, conversation search, generic approval
+  workflows.
+- **Agent Note mutation**: Phase 10 lets the Agent READ explicitly selected
+  `ProjectNote`s as bounded untrusted context (`PROJECT_NOTEBOOK.md`); an
+  Agent-facing Note tool is deferred and, if added, must be policy-gated and typed
+  and must never bypass the ordinary ProjectNote domain command.
 - Authentication/OIDC (the endpoint uses the existing `X-Actor-Id` seam).
 - Live-model acceptance in CI (CI uses the deterministic fake; a live smoke test
   would be opt-in and is not part of normal gates).

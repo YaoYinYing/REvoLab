@@ -30,6 +30,16 @@ from revolab.agent.model_backend import ChatMessage, ModelRequest, ToolSpec
 _DATA_OPEN = "<untrusted_project_data>"
 _DATA_CLOSE = "</untrusted_project_data>"
 
+# Neutralized forms of the reserved tokens, used INSIDE serialized untrusted
+# content. Project text (a Note body, an Evidence interpretation, …) is
+# attacker-influenced: a body containing the literal closing token must not be
+# able to close the wrapper early and have the remainder read as ordinary user
+# text. `\u003c`/`\u003e` are JSON-escaped angle brackets, so the payload still
+# decodes to the original text as DATA while the wrapper keeps exactly one opening
+# and one closing marker.
+_DATA_OPEN_ESCAPED = "\\u003cuntrusted_project_data\\u003e"
+_DATA_CLOSE_ESCAPED = "\\u003c/untrusted_project_data\\u003e"
+
 SYSTEM_INSTRUCTIONS = """You are the REvoLab Project Agent. You read bounded, read-only
 Project context and reason about it. You never own project truth and you cannot
 write it directly.
@@ -90,6 +100,23 @@ def serialize_context(context: object) -> str:
     if hasattr(context, "model_dump"):
         return json.dumps(context.model_dump(mode="json"), sort_keys=True, default=str)
     return json.dumps(context, sort_keys=True, default=str)
+
+
+def neutralize_delimiters(payload: str) -> str:
+    """Neutralize the reserved wrapper tokens inside untrusted content so no
+    project-authored text can forge the data-block boundary. The payload still
+    round-trips to the original text when parsed as JSON."""
+    return payload.replace(_DATA_OPEN, _DATA_OPEN_ESCAPED).replace(
+        _DATA_CLOSE, _DATA_CLOSE_ESCAPED
+    )
+
+
+def context_payload(context: object) -> str:
+    """The EXACT untrusted payload the model receives: the serialized context with
+    the reserved delimiters neutralized. The turn budget must measure this string,
+    not the pre-neutralization text, so escaping growth stays visible as a bound
+    hit."""
+    return neutralize_delimiters(serialize_context(context))
 
 
 def _message_groups(messages: tuple[ChatMessage, ...]) -> list[tuple[ChatMessage, ...]]:
@@ -156,7 +183,9 @@ def build_model_request(
     `bounds` is the live AgentLoopBounds instance (max_history_messages,
     max_history_chars, max_context_chars)."""
     data_block = (
-        f"{_DATA_OPEN}\n{_trim(serialize_context(context), bounds.max_context_chars)}\n{_DATA_CLOSE}"
+        f"{_DATA_OPEN}\n"
+        f"{_trim(context_payload(context), bounds.max_context_chars)}\n"
+        f"{_DATA_CLOSE}"
     )
 
     system = SYSTEM_INSTRUCTIONS
@@ -184,5 +213,7 @@ def build_model_request(
 __all__ = [
     "SYSTEM_INSTRUCTIONS",
     "build_model_request",
+    "context_payload",
+    "neutralize_delimiters",
     "serialize_context",
 ]

@@ -126,3 +126,21 @@ export type ConversationTurnRead =
   paths['/api/projects/{project_id}/agent/conversations/{conversation_id}/turns']['post']['responses']['201']['content']['application/json']
 
 export type ConversationRole = components['schemas']['ConversationRole']
+
+// Phase-10 Project Notebook: Project-shared, versioned working documents. A Note
+// is not a ScientificObject/Evidence/Decision, so these aliases point only at the
+// generated Note contract.
+export type NoteRead =
+  paths['/api/projects/{project_id}/notes']['get']['responses']['200']['content']['application/json'][number]
+
+export type NoteDetailRead =
+  paths['/api/projects/{project_id}/notes/{note_id}']['get']['responses']['200']['content']['application/json']
+
+export type NoteRevisionRead =
+  paths['/api/projects/{project_id}/notes/{note_id}/revisions']['get']['responses']['200']['content']['application/json'][number]
+
+export type NoteMentionRead = NonNullable<NoteRevisionRead['mentions']>[number]
+
+// Request bodies live in `api/backend.ts` (indexed from `paths`). The one
+// request shape the view layer names directly is the mention target.
+export type NoteMentionCreate = components['schemas']['NoteMentionCreate']

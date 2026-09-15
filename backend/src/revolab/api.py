@@ -64,6 +64,16 @@ from revolab.models import (
     RunReference,
     ToolInvocation,
 )
+from revolab.notes import (
+    append_revision as append_note_revision,
+)
+from revolab.notes import (
+    create_note,
+    get_note,
+    list_notes,
+    list_revisions,
+    patch_note,
+)
 from revolab.secret_store import SecretStore, default_secret_store
 from revolab.tools import build_tool_catalog, inspect_artifact
 from revolab.tools.registry import LocalToolRegistry, build_default_registry
@@ -1297,6 +1307,138 @@ def create_agent_conversation_turn(
         message=payload.message,
         selection=payload.selection,
         history_limit=_agent_bounds().max_history_messages,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/notes",
+    status_code=201,
+    response_model=schemas.NoteDetailRead,
+)
+def create_project_note(
+    project_id: UUID,
+    payload: schemas.NoteCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.NoteDetailRead:
+    """Create a Project-shared working Note with its first immutable revision.
+    A Note is working knowledge, never Evidence/Decision truth and never a
+    scientific-graph node."""
+    return create_note(
+        session,
+        actor_id,
+        project_id,
+        title=payload.title,
+        body=payload.body,
+        mentions=payload.mentions,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/notes",
+    response_model=list[schemas.NoteRead],
+)
+def list_project_notes(
+    project_id: UUID,
+    include_archived: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> list[schemas.NoteRead]:
+    """List the Notes shared with the readable members of this Project."""
+    return list_notes(
+        session,
+        actor_id,
+        project_id,
+        include_archived=include_archived,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/notes/{note_id}",
+    response_model=schemas.NoteDetailRead,
+)
+def get_project_note(
+    project_id: UUID,
+    note_id: UUID,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.NoteDetailRead:
+    """The Note plus its latest immutable revision and resolved mentions."""
+    return get_note(session, actor_id, project_id, note_id)
+
+
+@router.patch(
+    "/projects/{project_id}/notes/{note_id}",
+    response_model=schemas.NoteRead,
+)
+def patch_project_note(
+    project_id: UUID,
+    note_id: UUID,
+    payload: schemas.NotePatch,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.NoteRead:
+    """Rename and/or archive a Note. Non-destructive; body edits are a new
+    revision, never a rewrite."""
+    return patch_note(
+        session,
+        actor_id,
+        project_id,
+        note_id,
+        title=payload.title,
+        archive=payload.archive,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/notes/{note_id}/revisions",
+    status_code=201,
+    response_model=schemas.NoteRevisionRead,
+)
+def append_project_note_revision(
+    project_id: UUID,
+    note_id: UUID,
+    payload: schemas.NoteRevisionCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> schemas.NoteRevisionRead:
+    """Append one immutable Note revision. `base_revision_seq` must still be the
+    server's latest revision or the write fails closed with a 409 conflict."""
+    return append_note_revision(
+        session,
+        actor_id,
+        project_id,
+        note_id,
+        base_revision_seq=payload.base_revision_seq,
+        body=payload.body,
+        mentions=payload.mentions,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/notes/{note_id}/revisions",
+    response_model=list[schemas.NoteRevisionRead],
+)
+def list_project_note_revisions(
+    project_id: UUID,
+    note_id: UUID,
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+) -> list[schemas.NoteRevisionRead]:
+    """The immutable revision history (oldest first)."""
+    return list_revisions(
+        session,
+        actor_id,
+        project_id,
+        note_id,
+        limit=limit,
+        offset=offset,
     )
 
 

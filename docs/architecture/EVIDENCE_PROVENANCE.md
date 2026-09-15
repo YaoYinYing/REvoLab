@@ -208,9 +208,15 @@ Conclusion are **modes**, not tables:
 - A hypothesis is an Evidence with a `hypothesis` role/interpretation + a proposed test.
 - A conclusion is the *derived* current committed, not-superseded Decision on a
   question (there is no stored `status=concluded`).
-- Next actions live in `Decision.next_actions`. A free-form **Note is deferred** — it is
-  not a canonical node and has **no durable model** in PR1 (no fields to point at); if a
-  note-like first-hand claim is needed it is modeled as an Evidence with `kind=note`.
+- Next actions live in `Decision.next_actions`. A note-like first-hand claim is
+  modeled as an Evidence with `kind=note`.
+- **Phase 10 refinement (Accepted):** the Project
+  Notebook adds a durable, Project-scoped `ProjectNote` working document
+  (`PROJECT_NOTEBOOK.md`, ADR-0016). It is explicitly **not** Evidence and **not** a
+  canonical knowledge node: it creates no Evidence/Decision/provenance row, and any
+  conversion into a scientific claim goes through the canonical Evidence command.
+  `Evidence(kind=note)` remains the representation of a note-like scientific claim;
+  Note is not added to the source-kind matrix.
 
 **Decision is the one first-class knowledge node** — the durable project-truth
 record with its own lifecycle.

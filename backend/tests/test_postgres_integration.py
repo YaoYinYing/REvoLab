@@ -768,3 +768,269 @@ def test_phase9_concurrent_turns_serialize_on_postgres(pg_session: Session, tmp_
         )
         assert draft is not None
         assert draft.status == DecisionStatus.DRAFT.value
+
+
+def test_phase10_notes_schema_and_lifecycle_on_postgres(pg_session: Session) -> None:
+    """Phase-10 Project Notebook acceptance on the migrated PostgreSQL schema:
+    durable Note + immutable revisions + non-semantic mentions, project-shared
+    authorization, membership/tombstone immediacy, and DB-level constraints."""
+    from revolab.domain.errors import AuthorizationError, ConflictError, ValidationError
+    from revolab.enums import Role
+    from revolab.models import ProjectNote
+    from revolab.notes import (
+        append_revision,
+        create_note,
+        get_note,
+        list_notes,
+        list_revisions,
+        patch_note,
+    )
+    from revolab.schemas import NoteMentionCreate
+
+    inspector = inspect(pg_session.get_bind())
+    tables = set(inspector.get_table_names())
+    assert {"project_notes", "project_note_revisions", "note_mentions"} <= tables
+
+    actor_a = services.create_actor(pg_session)
+    actor_b = services.create_actor(pg_session)
+    actor_viewer = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor_a, "PG Notes")
+    services.add_membership(pg_session, actor_a, project.id, actor_b, Role.MEMBER.value)
+    services.add_membership(pg_session, actor_a, project.id, actor_viewer, Role.VIEWER.value)
+
+    series = services.create_object(
+        pg_session, actor_a, project.id, "protein", "PG-Note-Target", payload={}
+    )
+    note = create_note(
+        pg_session,
+        actor_a,
+        project.id,
+        title="PG working note",
+        body="initial body",
+        mentions=[NoteMentionCreate(resource_id=series)],
+    )
+    assert pg_session.get(ProjectNote, note.id) is not None
+    assert note.latest is not None and note.latest.revision_seq == 1
+    assert note.latest.mentions[0].resolved is True
+
+    # Project-shared read for every readable member (incl. viewer).
+    assert get_note(pg_session, actor_b, project.id, note.id).title == "PG working note"
+    assert get_note(pg_session, actor_viewer, project.id, note.id).id == note.id
+    assert [row.id for row in list_notes(pg_session, actor_b, project.id)] == [note.id]
+
+    # Member append + stale-base conflict (409), then a later append succeeds.
+    appended = append_revision(
+        pg_session, actor_b, project.id, note.id, base_revision_seq=1, body="member revision"
+    )
+    assert appended.revision_seq == 2
+    with pytest.raises(ConflictError):
+        append_revision(
+            pg_session, actor_a, project.id, note.id, base_revision_seq=1, body="stale"
+        )
+    assert append_revision(
+        pg_session, actor_a, project.id, note.id, base_revision_seq=2, body="third"
+    ).revision_seq == 3
+    assert [r.revision_seq for r in list_revisions(pg_session, actor_a, project.id, note.id)] == [1, 2, 3]
+
+    # Viewer cannot mutate; a hidden-resource mention fails closed.
+    with pytest.raises(AuthorizationError):
+        append_revision(
+            pg_session, actor_viewer, project.id, note.id, base_revision_seq=3, body="viewer"
+        )
+    other_actor = services.create_actor(pg_session)
+    other_project = services.create_project(pg_session, other_actor, "PG Notes Other")
+    hidden = services.create_object(
+        pg_session, other_actor, other_project.id, "protein", "PG-Hidden", payload={}
+    )
+    with pytest.raises(AuthorizationError):
+        create_note(
+            pg_session,
+            actor_a,
+            project.id,
+            title="bad",
+            body="bad",
+            mentions=[NoteMentionCreate(resource_id=hidden)],
+        )
+    # The rejected create left no ghost Note behind (atomic command).
+    assert (
+        pg_session.scalar(
+            select(ProjectNote.id).where(
+                ProjectNote.project_id == project.id, ProjectNote.title == "bad"
+            )
+        )
+        is None
+    )
+
+    # Archiving is non-destructive but blocks new revisions.
+    patch_note(pg_session, actor_a, project.id, note.id, archive=True)
+    with pytest.raises(ValidationError):
+        append_revision(
+            pg_session, actor_a, project.id, note.id, base_revision_seq=3, body="after archive"
+        )
+    assert len(list_revisions(pg_session, actor_a, project.id, note.id)) == 3
+
+    # Membership revocation, then Project tombstone, take effect immediately.
+    services.remove_membership(pg_session, actor_a, project.id, actor_b)
+    with pytest.raises(AuthorizationError):
+        get_note(pg_session, actor_b, project.id, note.id)
+    services.delete_project(pg_session, actor_a, project.id)
+    with pytest.raises(AuthorizationError):
+        get_note(pg_session, actor_a, project.id, note.id)
+
+
+def test_phase10_note_constraints_enforced_by_postgres(pg_session: Session) -> None:
+    """The Note model's DB constraints hold even when the ORM is bypassed: the
+    (note_id, revision_seq) uniqueness and the exactly-one-mention-target check."""
+    from uuid import uuid4
+
+    from revolab.models import ProjectNoteRevision
+    from revolab.notes import append_revision, create_note
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Note Checks")
+    note = create_note(pg_session, actor, project.id, title="C", body="v1")
+    append_revision(pg_session, actor, project.id, note.id, base_revision_seq=1, body="v2")
+    revision_id = pg_session.scalar(
+        select(ProjectNoteRevision.revision_id).where(ProjectNoteRevision.note_id == note.id).limit(1)
+    )
+    # Valid FK targets, so the two-target case below can ONLY fail on the CHECK.
+    valid_resource_id = services.create_object(
+        pg_session, actor, project.id, "protein", "PG-Check-Target", payload={}
+    )
+    valid_decision = services.create_decision(
+        pg_session, actor, project.id, title="PG check decision", statement="d"
+    )
+
+    # (note_id, revision_seq) is unique at the DB level.
+    with pytest.raises(IntegrityError):
+        pg_session.execute(
+            text(
+                "INSERT INTO project_note_revisions "
+                "(revision_id, note_id, revision_seq, body, created_by_actor_id) "
+                "VALUES (CAST(:rid AS UUID), CAST(:nid AS UUID), 1, 'dup', CAST(:aid AS UUID))"
+            ),
+            {"rid": str(uuid4()), "nid": str(note.id), "aid": str(actor)},
+        )
+    pg_session.rollback()
+
+    # A mention with no target violates the exactly-one-target check.
+    with pytest.raises(IntegrityError):
+        pg_session.execute(
+            text(
+                "INSERT INTO note_mentions (id, revision_id, ordinal) "
+                "VALUES (CAST(:id AS UUID), CAST(:rid AS UUID), 0)"
+            ),
+            {"id": str(uuid4()), "rid": str(revision_id)},
+        )
+    pg_session.rollback()
+
+    # A mention with two VALID targets violates it too — and would otherwise
+    # satisfy both foreign keys, so this assertion is mutation-sensitive.
+    with pytest.raises(IntegrityError):
+        pg_session.execute(
+            text(
+                "INSERT INTO note_mentions "
+                "(id, revision_id, ordinal, target_resource_id, target_decision_id) "
+                "VALUES (CAST(:id AS UUID), CAST(:rid AS UUID), 1, CAST(:x AS UUID), CAST(:y AS UUID))"
+            ),
+            {
+                "id": str(uuid4()),
+                "rid": str(revision_id),
+                "x": str(valid_resource_id),
+                "y": str(valid_decision.id),
+            },
+        )
+    pg_session.rollback()
+
+
+def test_phase10_concurrent_append_conflicts_on_postgres(pg_session: Session) -> None:
+    """The required concurrent stale-write regression: two members appending from
+    the SAME base revision must NOT both succeed. The note row lock orders them on
+    PostgreSQL and the (note_id, revision_seq) uniqueness is the backstop."""
+    import threading
+
+    from sqlalchemy.orm import Session as ORMSession
+
+    from revolab.domain.errors import ConflictError
+    from revolab.models import ProjectNoteRevision
+    from revolab.notes import append_revision, create_note
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Note Race")
+    note = create_note(pg_session, actor, project.id, title="Race", body="v1")
+    engine = pg_session.get_bind()
+    pg_session.rollback()
+
+    barrier = threading.Barrier(2)
+    outcomes: dict[str, object] = {}
+
+    def worker(label: str) -> None:
+        with ORMSession(bind=engine) as session:
+            barrier.wait(timeout=10)
+            try:
+                outcomes[label] = append_revision(
+                    session,
+                    actor,
+                    project.id,
+                    note.id,
+                    base_revision_seq=1,
+                    body=f"{label} body",
+                ).revision_seq
+            except ConflictError as exc:
+                outcomes[label] = exc
+
+    threads = [threading.Thread(target=worker, args=(label,)) for label in ("A", "B")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+    succeeded = [value for value in outcomes.values() if isinstance(value, int)]
+    conflicted = [value for value in outcomes.values() if isinstance(value, ConflictError)]
+    assert succeeded == [2]
+    assert len(conflicted) == 1
+
+    with ORMSession(bind=engine) as check:
+        seqs = list(
+            check.scalars(
+                select(ProjectNoteRevision.revision_seq)
+                .where(ProjectNoteRevision.note_id == note.id)
+                .order_by(ProjectNoteRevision.revision_seq)
+            )
+        )
+        assert seqs == [1, 2]
+
+
+def test_phase10_append_takes_note_row_lock_on_postgres(pg_session: Session) -> None:
+    """BOTH mutators request the PostgreSQL row lock: removing `with_for_update`
+    from `notes._mutable_note` (or dropping it from `patch_note`) makes this fail,
+    so the ordering claim in notes.py/ADR-0016 is executable, not just asserted."""
+    from sqlalchemy import event
+
+    from revolab.notes import append_revision, create_note, patch_note
+
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, "PG Note Lock")
+    note = create_note(pg_session, actor, project.id, title="Lock", body="v1")
+    engine = pg_session.get_bind()
+    statements: list[str] = []
+
+    def recorder(conn, cursor, statement, parameters, context, executemany):  # type: ignore[no-untyped-def]
+        statements.append(statement)
+
+    def recording(call):  # type: ignore[no-untyped-def]
+        event.listen(engine, "before_cursor_execute", recorder)
+        try:
+            call()
+        finally:
+            event.remove(engine, "before_cursor_execute", recorder)
+
+    recording(lambda: append_revision(pg_session, actor, project.id, note.id, base_revision_seq=1, body="v2"))
+    append_statements = list(statements)
+    statements.clear()
+    recording(lambda: patch_note(pg_session, actor, project.id, note.id, title="Lock renamed"))
+    patch_statements = list(statements)
+
+    assert any("FOR UPDATE" in statement.upper() for statement in append_statements), append_statements
+    assert any("FOR UPDATE" in statement.upper() for statement in patch_statements), patch_statements

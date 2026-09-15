@@ -11,7 +11,7 @@ re-derives mutation authority.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from sqlalchemy import select
@@ -472,6 +472,36 @@ def create_evidence_row(
 _MUTABLE_EVIDENCE_FIELDS = frozenset(
     {"role", "label", "interpretation", "polarity", "confidence", "confidence_source", "scope"}
 )
+
+
+class EvidenceMentionTarget(NamedTuple):
+    """The Evidence/Provenance domain's public contract for "may this Evidence be
+    a context mention target, and what is its label?".
+
+    Consumers outside this domain (for example the application-level Notebook
+    service) use this instead of reaching into `Evidence` ORM internals, so the
+    domain keeps ownership of its own visibility rule (`project_id` match and
+    `archived_at IS NULL`). `active=False` with a non-None record means the
+    Evidence exists but is not a legal mention target here; `None` means unknown.
+    """
+
+    evidence_id: UUID
+    label: str | None
+    active: bool
+
+
+def evidence_mention_target(
+    session: Session, project_id: UUID, evidence_id: UUID
+) -> EvidenceMentionTarget | None:
+    evidence = session.get(Evidence, evidence_id)
+    if evidence is None:
+        return None
+    active = evidence.project_id == project_id and evidence.archived_at is None
+    return EvidenceMentionTarget(
+        evidence_id=evidence.id,
+        label=(evidence.label or f"Evidence ({evidence.kind})") if active else None,
+        active=active,
+    )
 
 
 def update_evidence_row(

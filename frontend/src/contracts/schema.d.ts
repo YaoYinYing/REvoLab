@@ -505,6 +505,82 @@ export interface paths {
         patch: operations["update_membership_api_projects__project_id__members__member_actor_id__patch"];
         trace?: never;
     };
+    "/api/projects/{project_id}/notes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Project Notes
+         * @description List the Notes shared with the readable members of this Project.
+         */
+        get: operations["list_project_notes_api_projects__project_id__notes_get"];
+        put?: never;
+        /**
+         * Create Project Note
+         * @description Create a Project-shared working Note with its first immutable revision.
+         *     A Note is working knowledge, never Evidence/Decision truth and never a
+         *     scientific-graph node.
+         */
+        post: operations["create_project_note_api_projects__project_id__notes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/notes/{note_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Project Note
+         * @description The Note plus its latest immutable revision and resolved mentions.
+         */
+        get: operations["get_project_note_api_projects__project_id__notes__note_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Patch Project Note
+         * @description Rename and/or archive a Note. Non-destructive; body edits are a new
+         *     revision, never a rewrite.
+         */
+        patch: operations["patch_project_note_api_projects__project_id__notes__note_id__patch"];
+        trace?: never;
+    };
+    "/api/projects/{project_id}/notes/{note_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Project Note Revisions
+         * @description The immutable revision history (oldest first).
+         */
+        get: operations["list_project_note_revisions_api_projects__project_id__notes__note_id__revisions_get"];
+        put?: never;
+        /**
+         * Append Project Note Revision
+         * @description Append one immutable Note revision. `base_revision_seq` must still be the
+         *     server's latest revision or the write fails closed with a 409 conflict.
+         */
+        post: operations["append_project_note_revision_api_projects__project_id__notes__note_id__revisions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/objects": {
         parameters: {
             query?: never;
@@ -1163,6 +1239,11 @@ export interface components {
              */
             evidence_count: number;
             /**
+             * Note Count
+             * @default 0
+             */
+            note_count: number;
+            /**
              * Reference Count
              * @default 0
              */
@@ -1368,7 +1449,8 @@ export interface components {
          *     The selection is a bounded, Project-scoped list of resource identities and
          *     explicit category/budget switches. It contains no query syntax and never
          *     requests material from another Project; the ContextBuilder validates every
-         *     selected identity against this Project's read lens and fails closed.
+         *     selected identity against this Project's read lens and fails closed. Unknown
+         *     fields fail closed like every other request model.
          */
         ContextSelectionCreate: {
             /** Artifact Ids */
@@ -1414,6 +1496,16 @@ export interface components {
              */
             max_evidence: number;
             /**
+             * Max Note Chars
+             * @default 4000
+             */
+            max_note_chars: number;
+            /**
+             * Max Notes
+             * @default 10
+             */
+            max_notes: number;
+            /**
              * Max References
              * @default 100
              */
@@ -1433,6 +1525,10 @@ export interface components {
              * @default 50
              */
             max_series: number;
+            /** Note Ids */
+            note_ids?: string[] | null;
+            /** Note Revision Ids */
+            note_revision_ids?: string[] | null;
             /** Revision Ids */
             revision_ids?: string[] | null;
             /** Series Ids */
@@ -2009,6 +2105,240 @@ export interface components {
         MembershipUpdate: {
             role: components["schemas"]["Role"];
         };
+        /**
+         * NoteCreate
+         * @description Create a Project Note with its first immutable revision.
+         */
+        NoteCreate: {
+            /** Body */
+            body: string;
+            /** Mentions */
+            mentions?: components["schemas"]["NoteMentionCreate"][];
+            /** Title */
+            title: string;
+        };
+        /**
+         * NoteDetailRead
+         * @description A Note plus its latest immutable revision (body, author, mentions).
+         */
+        NoteDetailRead: {
+            /** Archived At */
+            archived_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By Actor Id
+             * Format: uuid
+             */
+            created_by_actor_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            latest?: components["schemas"]["NoteRevisionRead"] | null;
+            /** Latest Revision Seq */
+            latest_revision_seq: number;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Revision Count */
+            revision_count: number;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * NoteMentionCreate
+         * @description One non-semantic contextual reference: it names exactly one existing
+         *     Project-visible entity. It never carries scientific semantics and never
+         *     creates a provenance edge. The target kind is derived from the referenced
+         *     row (registry kind / Evidence / Decision) rather than restated by the
+         *     client.
+         */
+        NoteMentionCreate: {
+            /** Decision Id */
+            decision_id?: string | null;
+            /** Evidence Id */
+            evidence_id?: string | null;
+            /** Resource Id */
+            resource_id?: string | null;
+        };
+        /**
+         * NoteMentionRead
+         * @description A Note revision's contextual reference resolved against the CURRENT
+         *     Project read lens. `resolved=false` marks a mention whose target is no longer
+         *     visible in this Project (unlinked, archived, revoked); the historical
+         *     revision text is never rewritten to hide that.
+         */
+        NoteMentionRead: {
+            /** Decision Id */
+            decision_id?: string | null;
+            /** Evidence Id */
+            evidence_id?: string | null;
+            /** Label */
+            label?: string | null;
+            /**
+             * Mention Id
+             * Format: uuid
+             */
+            mention_id: string;
+            /** Ordinal */
+            ordinal: number;
+            /**
+             * Resolved
+             * @default true
+             */
+            resolved: boolean;
+            /** Resource Id */
+            resource_id?: string | null;
+            resource_kind?: components["schemas"]["ResourceKind"] | null;
+        };
+        /**
+         * NotePatch
+         * @description Rename and/or archive a Note (non-destructive). Body edits are a new
+         *     revision, never a patch of existing content. `archive` is a strict boolean so
+         *     a coerced string can never silently archive a Note.
+         */
+        NotePatch: {
+            /** Archive */
+            archive?: boolean | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * NoteRead
+         * @description A Project Note identity (not a global resource) plus derived revision
+         *     metadata. The latest revision is derived from the max sequence.
+         */
+        NoteRead: {
+            /** Archived At */
+            archived_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By Actor Id
+             * Format: uuid
+             */
+            created_by_actor_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Latest Revision Seq */
+            latest_revision_seq: number;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Revision Count */
+            revision_count: number;
+            /** Title */
+            title: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * NoteRefRead
+         * @description One explicitly selected Note revision as bounded, UNTRUSTED context data.
+         *
+         *     `body` is Markdown/plain text copied from a Project working document: it is
+         *     data the Agent may read, never instructions or authority. A per-note
+         *     `truncated` flag makes the deterministic character bound visible.
+         */
+        NoteRefRead: {
+            /** Archived At */
+            archived_at?: string | null;
+            /** Body */
+            body: string;
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Revision Seq */
+            revision_seq: number;
+            /** Title */
+            title: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * NoteRevisionCreate
+         * @description Append one immutable revision. `base_revision_seq` is the revision the
+         *     client edited; the server appends `base_revision_seq + 1` only while it is
+         *     still the latest, otherwise the write fails closed with a typed conflict.
+         *
+         *     `mentions` is tri-state: OMITTED inherits the previous revision's mention
+         *     identities (already-authorized references are preserved even if a target later
+         *     becomes unavailable), explicit `[]` clears them, and a non-empty list replaces
+         *     them after normal current-Project authorization.
+         */
+        NoteRevisionCreate: {
+            /** Base Revision Seq */
+            base_revision_seq: number;
+            /** Body */
+            body: string;
+            /** Mentions */
+            mentions?: components["schemas"]["NoteMentionCreate"][] | null;
+        };
+        /**
+         * NoteRevisionRead
+         * @description One immutable Note revision. `body` is untrusted Project working text.
+         */
+        NoteRevisionRead: {
+            /** Body */
+            body: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Created By Actor Id
+             * Format: uuid
+             */
+            created_by_actor_id: string;
+            /** Mentions */
+            mentions?: components["schemas"]["NoteMentionRead"][];
+            /**
+             * Note Id
+             * Format: uuid
+             */
+            note_id: string;
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Revision Seq */
+            revision_seq: number;
+        };
         /** ObjectCreate */
         ObjectCreate: {
             /** Description */
@@ -2151,6 +2481,8 @@ export interface components {
             /** Loaded Skill Ids */
             loaded_skill_ids?: string[];
             membership_role: components["schemas"]["Role"];
+            /** Notes */
+            notes?: components["schemas"]["NoteRefRead"][];
             /**
              * Project Id
              * Format: uuid
@@ -4125,6 +4457,227 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MembershipRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_notes_api_projects__project_id__notes_get: {
+        parameters: {
+            query?: {
+                include_archived?: boolean;
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_project_note_api_projects__project_id__notes_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteDetailRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_project_note_api_projects__project_id__notes__note_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteDetailRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_project_note_api_projects__project_id__notes__note_id__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotePatch"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_project_note_revisions_api_projects__project_id__notes__note_id__revisions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteRevisionRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    append_project_note_revision_api_projects__project_id__notes__note_id__revisions_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+                note_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NoteRevisionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoteRevisionRead"];
                 };
             };
             /** @description Validation Error */

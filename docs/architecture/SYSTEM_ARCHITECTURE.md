@@ -143,7 +143,7 @@ The nine domains and their one-line purpose (detailed in
 
 | Domain | Owns |
 |---|---|
-| Project | the workspace boundary: project record, project visibility/annotation, **owns `ProjectResourceLink`** (binds global resources into a Project context), scoping |
+| Project | the workspace boundary: project record, project visibility/annotation, **owns `ProjectResourceLink`** (binds global resources into a Project context), scoping; **Project Notebook sub-boundary** (`ProjectNote`/`ProjectNoteRevision`/`NoteMention` — versioned working documents, never scientific truth, see `PROJECT_NOTEBOOK.md`) |
 | Scientific Object | typed scientific entities and their per-type metadata (a global resource) |
 | Evidence / Provenance | references, evidence claims, and lineage edges |
 | Knowledge / Decision | decisions and the promotion of proposals into project truth |
@@ -152,6 +152,14 @@ The nine domains and their one-line purpose (detailed in
 | Agent Context | project-scoped context, skill resolution, and the agent loop (the Agent **consumes** the Project Tool Harness's canonical ToolCatalog) |
 | Identity / Collaboration | actors, authentication identities, membership, roles, credential **bindings** (`ExternalProviderCredentialBinding`: actor + provider + kind + `secret_ref`; the secret **material** lives in the Secret store) |
 | Presentation / Workspace | API surface and the user workspace information architecture |
+
+The **Project Notebook** is an explicit sub-boundary of the Project Domain (not a
+tenth domain), so the nine-domain DAG is unchanged: Agent Context and Presentation
+reach Notes through their existing Project edge (`DOMAIN_BOUNDARIES.md` §1a,
+`PROJECT_NOTEBOOK.md`, ADR-0016, both `Accepted`).
+Cross-domain Evidence/Decision mention composition happens in the application
+orchestration layer over those domains' public contracts, so no Project ->
+Evidence / Knowledge Core edge is introduced.
 
 **Dependency discipline:** Core domains (Project, Scientific Object, Evidence,
 Knowledge) never depend on the Agent Context domain or the Project Tool Harness
@@ -382,6 +390,7 @@ direct access to a Resource. No per-object ACL and no RBAC engine in this phase.
 | `AGENT_CONTEXT.md` | Context selection, tools, skills, safety/authority |
 | `PROJECT_AGENT_RUNTIME.md` | The bounded Project Agent turn loop, model boundary, prompt/trust separation, authority |
 | `PROJECT_CONVERSATIONS.md` | Persistent Actor × Project conversation working memory: ownership, server-owned history, trust model, API, lifecycle, bounds |
+| `PROJECT_NOTEBOOK.md` | Project Note working documents: revision ownership, mention semantics, concurrency, trust and Agent-context boundary |
 | `COLLABORATION_IDENTITY.md` | Identity, sharing, persistence, lifecycle/deletion, event/audit |
 | `WORKSPACE_INFORMATION_ARCHITECTURE.md` | The product surface and API/frontend contract |
 | `IMPLEMENTATION_ROADMAP.md` | Staged vertical slices and bootstrap classification |

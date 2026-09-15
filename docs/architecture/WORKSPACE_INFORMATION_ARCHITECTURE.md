@@ -23,6 +23,7 @@
 Overview      → project's current scientific state (active decision, open next-actions, recent evidence, provider availability for you)
 Objects       → the organization tree (parent/child = pure grouping). Selecting a node opens its OBJECT DETAIL (graph-centric), not a CRUD card
 Analyze       → the Project Tool Harness surface: inspect artifacts, describe/select table columns, plot X-Y, and (from the same catalog) reach remote computation — schema-driven, never domain vocabulary
+Notes         → the Project Notebook: shared, versioned working documents (create / append revision / link Project-visible context / revision history); working knowledge, never Evidence or Decision truth
 Evidence      → all Evidence records, grouped by kind, filterable by source (authority / reference type)
 Runs & Artifacts → cross-cutting view of Run/Artifact references (aggregated from evidence)
 Decisions     → the project's decision log (draft / committed / superseded)
@@ -70,6 +71,11 @@ inside object detail, not a page people browse top-down.
   was derived from it?" (closed typed tools in one ToolCatalog shared by the human
   workspace and the Agent; local results are ephemeral or explicitly persisted
   derived artifacts, never automatic project truth)
+- **Notes (Project Notebook)** — "What are we currently thinking/writing, who
+  changed it, what Project entities does it refer to, and how did it change over
+  time?" (Project-shared working documents; editing appends an immutable revision;
+  mentions are non-semantic references; a Note is never Evidence or Decision truth —
+  see `PROJECT_NOTEBOOK.md`)
 
 ## API / frontend contract
 
@@ -92,6 +98,9 @@ GET/POST            /api/projects/{project_id}/evidence        → paginated lis
 GET/PATCH           /api/projects/{project_id}/evidence/{evidence_id}            → PATCH interpretive fields only while uncited by a committed Decision
 GET/POST            /api/projects/{project_id}/decisions       → paginated list / create a Decision DRAFT
 GET/PATCH           /api/projects/{project_id}/decisions/{decision_id}           → PATCH allowed only while draft (statement, cites, selects)
+GET/POST            /api/projects/{project_id}/notes           → paginated list / create a Project Note (working knowledge, not truth)
+GET/PATCH           /api/projects/{project_id}/notes/{note_id} → detail (latest revision + resolved mentions) / rename-archive
+GET/POST            /api/projects/{project_id}/notes/{note_id}/revisions         → immutable revision history / append (base_revision_seq; stale = 409)
 GET                 /api/projects/{project_id}/providers        → capability discovery (Actor + Project lens)
 GET                 /api/projects/{project_id}/providers/{key}/schema/{capability_kind}
 ```

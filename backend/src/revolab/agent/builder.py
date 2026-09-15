@@ -37,6 +37,7 @@ from revolab.models import (
     ScientificObjectRevision,
     ScientificObjectSeries,
 )
+from revolab.notes import resolve_selected_notes
 from revolab.schemas import (
     BudgetReportRead,
     ContextSelectionCreate,
@@ -82,7 +83,13 @@ def build_context(
         raise AuthorizationError("project is not active")
 
     visible = queries.visible_resources(session, project_id)
-    explicit = bool(selection.series_ids or selection.revision_ids or selection.artifact_ids)
+    explicit = bool(
+        selection.series_ids
+        or selection.revision_ids
+        or selection.artifact_ids
+        or selection.note_ids
+        or selection.note_revision_ids
+    )
 
     # Resolve and validate the declarative selection before assembling anything.
     # An explicit `series_ids` selection expands its visible revisions; an explicit
@@ -111,6 +118,20 @@ def build_context(
             raise AuthorizationError("selected artifact is not visible in this project")
         selected_artifact_ids.add(artifact_id)
 
+    # Phase 10: explicitly selected Project Notes. Notes are NOT global resources,
+    # so they resolve through the Project-scoped Note read lens — never
+    # `visible_resources`. A note in another Project raises the same 403 as an
+    # unknown id (no existence oracle). Selected Note text stays untrusted data.
+    note_refs, notes_truncated = resolve_selected_notes(
+        session,
+        actor_id,
+        project_id,
+        selection.note_ids,
+        selection.note_revision_ids,
+        max_notes=selection.max_notes,
+        max_note_chars=selection.max_note_chars,
+    )
+
     if not explicit:
         return _implicit_context(session, project, project_id, membership, registry, selection, visible)
 
@@ -121,7 +142,7 @@ def build_context(
     series_by_id = {series.series_id: series for series in all_series}
     series_refs: list[SeriesRefRead] = []
     revision_refs: list[RevisionRefRead] = []
-    truncated = len(selected_series_ids) > selection.max_series
+    truncated = len(selected_series_ids) > selection.max_series or notes_truncated
 
     ordered_series_ids = sorted(selected_series_ids)
     for series_id in ordered_series_ids[: selection.max_series]:
@@ -262,6 +283,7 @@ def build_context(
         evidence_count=len(evidence_refs),
         decision_count=len(decision_refs),
         reference_count=len(references),
+        note_count=len(note_refs),
         truncated=truncated,
     )
 
@@ -276,6 +298,7 @@ def build_context(
         evidence=evidence_refs,
         decisions=decision_refs,
         references=references,
+        notes=note_refs,
         provider_capabilities=provider_caps,
         loaded_skill_ids=[skill.id for skill in select_skills(selection)],
         budget=budget,
