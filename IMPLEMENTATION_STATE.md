@@ -32,6 +32,21 @@ merge itself is the explicit human acceptance. The governing invariant is:
 machine-verified state at the merge head (the two human-review P1 fixes are included in
 `83f1827`).
 
+**Phase 12 (Project Search & Bounded Context Retrieval) is implemented on
+`feat/phase-12-project-search` and machine-verified**; its architectural decision is
+**Proposed — pending human acceptance** (`docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`,
+ADR-0018). It adds the first Project-wide retrieval surface — canonical Project truth →
+authorization-aware bounded lexical search → typed `SearchHit` references → workspace
+search → explicit Add-to-Agent-context through the EXISTING `ContextSelection`/`ContextBuilder`
+→ a bounded read-only Agent `project.search` Tool — without introducing RAG, embeddings,
+a vector store, Agent memory, a central copied `SearchDocument` truth, a second context
+model, or a new Core domain. The governing invariants are:
+
+> **Search discovers references; it never creates truth, widens authority, or silently
+> enlarges Agent context.**
+
+> **Retrieve first, select explicitly, then build context.**
+
 ## Implemented (Phase 1)
 
 - **Minimal authority substrate** (`revolab/domain/identity.py`):
@@ -2082,6 +2097,122 @@ canonical immutable identity contract must be re-applied. Fixed:
   without re-submitting. Mutation-verified: removing the compatibility assertion
   fails the test.
 
+## Implemented (Phase 12)
+
+- **Search as an application/query sub-boundary** (`revolab/search.py`): an
+  authorization-aware, bounded read projection over canonical rows. It owns only
+  query parsing/bounds, authorized retrieval, ranking, bounded plain-text snippets
+  and the typed `SearchHit` projection; it adds **no Core domain**, no
+  `SearchDocument` truth table, and no migration. Normative owner:
+  `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md` (ADR-0018, **Proposed**).
+- **Closed vocabulary** (`revolab/enums.py`): `SearchScope`
+  (`project_shared` / `my_conversations` / `all`), `SearchTargetKind` (a
+  retrieval/presentation classifier — deliberately NOT `ResourceKind`), and
+  `SearchMatchedField` (presentation metadata). Scope→kind membership is derived
+  from one frozen mapping (`PROJECT_SHARED_TARGET_KINDS`,
+  `MY_CONVERSATION_TARGET_KINDS`).
+- **Bounded query contract** (`revolab/schemas.py`): `SearchHitRead`,
+  `ProjectSearchResultsRead`, `ProjectSearchToolInput`, and the bounds constants
+  (query 200 chars, 8 terms, 64 chars/term, limit 1..50, snippet 240 chars, one
+  closed kind set). Over-bound input fails closed with a typed 422; a wildcard-only
+  query is not a query language. No raw SQL/`tsquery`/regex/glob/URL is accepted.
+- **Nine corpora**, each filtered/ranked/capped in ONE SQL query under the current
+  read lens: `scientific_object_series` (name/description/object_type/external
+  identities/aliases), `evidence` (label/interpretation/scope), `decision`
+  (title/statement/next_actions), `note` (title + LATEST revision body only,
+  archived excluded), `run_reference`, `artifact_reference`,
+  `literature_reference`, `external_reference` (stored identity/header metadata
+  only — never a provider call), and the Actor-private `conversation` corpus
+  (title + messages, Actor × Project scoped). Global rows are reached only through
+  `ProjectResourceLink`; Evidence/Decision rows must be current and unarchived.
+- **Authorization before disclosure**: unauthorized rows are never ranked,
+  counted, snippeted, or reported as hidden. A unique query matching only an
+  inaccessible resource is indistinguishable from no result; membership/tombstone
+  changes apply on the next query because authorization is re-derived every time.
+- **Ranking**: computed in SQL (`exact identifier → exact title → title prefix →
+  lexical`, then PostgreSQL `ts_rank` with configuration `simple`, then recency
+  and a stable identity tie-break). No ML/embedding/external ranking; no numeric
+  score is exposed (ordering is the contract).
+- **Snippets**: application-level bounded plain text (never `ts_headline` markup);
+  control characters removed, everything else inert. Hostile Markdown/HTML cannot
+  become active content.
+- **PostgreSQL / SQLite**: one shared parameterized token-substring predicate gives
+  identical semantics on both substrates; PostgreSQL adds native
+  `to_tsvector`/`ts_rank` ordering. Neither materializes the Project in Python:
+  each corpus is one bounded SQL statement with LIMIT, and only the bounded
+  candidate set is merged. **No index/migration is added**: a persisted derived
+  index would be a second representation requiring its own freshness/authorization
+  ADR (documented; `alembic check` stays drift-clean on both substrates).
+- **API** (`revolab/api.py`): `GET /api/projects/{project_id}/search` with typed
+  `q`, `scope`, `target_kinds`, `limit` query parameters, returning the bounded
+  `ProjectSearchResultsRead` envelope (no pagination, no `total_count` — a count
+  over authorized rows is itself an oracle).
+- **Explicit Search → ContextSelection handoff** (`revolab/schemas.py`,
+  `agent/builder.py`): `ContextSelectionCreate` gained the smallest canonical typed
+  fields for previously transitive-only targets — `evidence_ids`, `decision_ids`,
+  and `reference_ids` (reference identity cards only; a series/revision id there
+  fails closed, so it is not a generic resource-id bag). The builder includes
+  explicitly selected rows first and re-validates every id against the CURRENT
+  Project read lens (foreign/archived/wrong-kind fails closed even with a zero
+  budget). No `SearchContext`/`SearchMemory`/`RetrievalContext` was introduced.
+- **Agent Tool** (`revolab/tools/registry.py`, `tools/handlers.py`):
+  `project.search` — `automatic` / `local` / `read_only`, `requires_mutation=False`.
+  Its input has NO scope field, so it is structurally fixed to `PROJECT_SHARED`
+  (private conversations cannot be requested), and it calls the SAME search
+  application service the human workspace uses. It performs no durable write, does
+  not change a ContextSelection, never promotes Evidence/Decision, never executes
+  an Action Request, and never resolves provider content or artifact bytes.
+- **Workspace surface** (`frontend/src/views/Search.tsx`, `App.tsx`,
+  `views/agentContext.ts`): a dense Project search view with an explicit scope and
+  optional target-kind filter, results grouped by backend-owned target kind, per-hit
+  `Open` navigation into the EXISTING canonical surface (object detail / Notes /
+  Evidence / Decisions / Runs & Artifacts, with row selection rather than a parallel
+  detail page), and an explicit `Add to Agent context` for context-selectable kinds.
+  Conversation hits are labelled `private working memory` and never offered for
+  handoff. The Agent view shows the pending selection as removable chips before
+  sending and projects the items into the canonical `ContextSelectionCreate` typed
+  id lists. `SearchScope`/`SearchTargetKind`/`SearchMatchedField` come from the
+  generated contract (added to `scripts/generate-enums.mjs`), never hand-written.
+
+## Verified evidence (Phase 12)
+
+Commands run on this branch head (2026-09-15):
+
+```text
+ruff check backend                                  All checks passed
+mypy (strict, 54 source files)                      Success: no issues found
+pytest (SQLite)                                     469 passed, 23 skipped
+alembic upgrade head + alembic check (SQLite)       no new upgrade operations
+alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
+pytest backend/tests/test_postgres_integration.py   23 passed (migrated PostgreSQL)
+python -m revolab.export_openapi -> openapi.json    refreshed (Phase-12 schemas/path)
+frontend: npm run typecheck                         clean
+frontend: npm run test                              63 passed
+frontend: npm run build                             built
+frontend: npm run check:contracts                   clean (generation idempotent)
+playwright test (real FastAPI + DB + fake model)    9 passed
+git diff --check                                    clean
+```
+
+Phase-12 regressions (`backend/tests/test_search.py`,
+`backend/tests/test_postgres_integration.py`, `frontend/src/views/Search.test.tsx`,
+`frontend/src/views/Agent.test.tsx`, `frontend/e2e/search.spec.ts`) cover, with
+mutation-sensitive assertions: member retrieval by name/identifier/label/statement/
+latest Note body; external-identifier and alias search that is not English-stemmed;
+superseded Note revision text never presented as current and archived Note/Evidence/
+Decision excluded; stored reference hits survive provider unavailability; exact
+UUID/native-id/checksum/title/cross-Project non-leakage; cross-Actor private
+conversation isolation (service and HTTP); the Agent Tool cannot request the private
+scope; the Tool performs no durable write (statement-level listener) and does not
+alter a built context; a hostile note returned as a hit stays untrusted data and
+creates no truth/Action Request; over-bound query/limit/kind fails closed; SQL-like
+and wildcard input is inert plain text; hits/titles/snippets stay bounded; explicit
+handoff includes Evidence/Decision/reference identity cards and rejects foreign/
+archived/wrong-kind/stale ids; PostgreSQL proves native `to_tsvector`/`ts_rank`
+emission, latest-revision semantics, private isolation, bounded top-N in SQL, and
+cross-Project non-leakage; the browser slice proves search → explicit
+`Add to Agent context` → the deterministic model receives the selected Decision.
+
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
 - Remote provider tool execution inside the Agent loop (the Agent surfaces remote
@@ -2114,6 +2245,14 @@ canonical immutable identity contract must be re-applied. Fixed:
 - Rich collaborative editing (CRDT/realtime), a block-editor framework, RAG/
   embeddings/vector search over Notes, and a global full-text search are
   deferred; Phase 10 content is bounded Markdown/plain text.
+- Phase-12 deferrals (explicit, documented in `PROJECT_SEARCH_RETRIEVAL.md` §12 and
+  ADR-0018): semantic/vector retrieval, a persisted/denormalized search index
+  (including any PostgreSQL expression index), historical Note-revision search,
+  cross-Actor conversation search, external biological/Web knowledge search and
+  import, a query DSL / saved searches / faceted engine, automatic per-turn search,
+  and a cross-Project top-bar command palette. Phase 12 adds **no migration**: the
+  canonical schema plus the existing indexes are drift-clean on SQLite and
+  PostgreSQL 16, and a derived index requires its own freshness/authorization ADR.
 
 ## Working set
 

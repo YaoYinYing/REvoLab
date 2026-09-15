@@ -77,6 +77,24 @@ project." Send the skeleton, not leaves; reference headers, not content; cap the
 context budget and truncate; anything not selected is fetched on demand via a typed
 tool.
 
+**Discovery is separate from inclusion (Phase 12).** A `ContextSelection` requires
+knowing the identity you want. Search closes that gap without weakening the
+boundary:
+
+```text
+Search             discover candidate canonical references (read projection)
+ContextSelection   explicit declaration of what ONE Agent turn may read
+ContextBuilder     current canonical truth -> bounded ProjectContext
+```
+
+A SearchHit never enters context automatically. The Agent's read-only
+`project.search` Tool returns bounded `PROJECT_SHARED` hits (no private
+conversations, no writes, no selection change); the human workspace offers an
+explicit "Add to Agent context" action that reuses this same
+`ContextSelectionCreate`. Search-time authorization is a query result, never a
+cached grant: the builder re-validates every explicitly selected identity against
+current truth. Normative detail: `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`.
+
 ## Representing objects / evidence / decisions to the Agent
 
 As **typed, addressable references**, not prose dumps, and **not a third domain model**:
