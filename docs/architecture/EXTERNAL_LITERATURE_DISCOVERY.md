@@ -193,8 +193,9 @@ durable authority = "pubmed"         native_id = PMID
 Identity must **not** become `authority = "ncbi"` merely because NCBI is the
 current resolver. A future resolver could resolve the same `pubmed:12345678`
 identity without changing any stored `LiteratureReference`; the driver declares the
-authorities it can resolve (`Driver.authorities`), and the registry refuses two
-READY drivers claiming the same authority.
+authorities it can resolve (`Driver.authorities`), and the registry refuses to
+REGISTER a second driver claiming an authority an already-registered driver
+declared (a stricter, registration-time check — driver state is irrelevant).
 
 A DOI that a PubMed record happens to expose is presentation data only. Phase 13
 never silently switches identity to DOI and never creates two references for one
@@ -282,7 +283,9 @@ re-derived on every call, and search-time access is never a cached mutation gran
 - **Idempotency.** Re-importing the same publication in one Project yields the same
   reference and one link. Concurrent imports cannot leak a raw `IntegrityError`:
   the unique `(authority, native_id)` and `(project_id, resource_id)` constraints are
-  the backstop, and a losing racer rolls back and resolves to the committed winner.
+  the backstop, and EVERY link path (the create+link block, the existing-reference
+  fast path, and the loser-recovery link) is guarded, so a losing racer rolls back
+  and resolves to the committed winner.
 - **Trusted path.** Provider import uses a narrowly named trusted application/domain
   helper (`services._persist_literature_reference_from_resolver`) reachable ONLY
   after a successful provider resolve. It is never an API accepting arbitrary
@@ -307,6 +310,25 @@ re-derived on every call, and search-time access is never a cached mutation gran
   semantics. The new provider import path is explicitly and separately named
   (`POST /projects/{project_id}/literature/import`).
 
+- **Presentation field, not authority.** The import response reuses the existing
+  typed `ReferenceRead`, whose `read_only` flag is derived from current
+  stewardship. It is presentation metadata with no Project attribution and grants no
+  authority: a second Project that imports an already-stewarded public identity sees
+  `read_only = true`, which is the same honest signal the existing reference list
+  already exposes for every visible reference.
+- **Residual, contract-sanctioned.** The request-derived
+  `POST /projects/{project_id}/literature` can still pre-create an arbitrary
+  `(authority, native_id)` with a client-supplied title. That is the accepted manual
+  reference-entry path (`TODO.md` section 46). A later real provider import of the
+  same identity links that reference UNCHANGED (identity is `(authority, native_id)`,
+  never the title). This is deliberate and documented; tightening manual
+  reference-entry authority is a separate change to an accepted contract.
+- **Process-local pacing.** The request pacer is per-process (per driver instance),
+  so a multi-worker deployment paces independently per worker; the conservative
+  0.34 s default leaves headroom under NCBI's per-IP ceiling, but an operator
+  running many workers must account for the aggregate rate. The health probe shares
+  the same pacer and the same response-byte bound.
+
 ---
 
 ## 12. NCBI usage requirements are architecture requirements
@@ -329,7 +351,10 @@ read-only                no PDF, no full text, no PMC, no abstract persistence
 `tool` and `email` are **operator configuration** (`REVOLAB_NCBI_TOOL`,
 `REVOLAB_NCBI_EMAIL`), never Project data and never a hard-coded developer address.
 A half-configured deployment fails loudly at startup rather than probing NCBI
-anonymously.
+anonymously. NCBI's policy additionally requires the operator to **register** the
+`tool`/`email` values with NCBI (sending them is necessary but not sufficient);
+that registration is a deployment/operator step outside this repository and must be
+completed before a deployment is considered compliant.
 
 **No API-key feature exists in Phase 13** (explicit non-goal): the slice works
 within the official unauthenticated rate. Optional API-key support is a documented
@@ -340,7 +365,9 @@ future optimization only.
 redirect destination, HTTP method, or filesystem path. Query parameters are passed
 through httpx encoding (never string-concatenated into a URL), TLS verification is
 on, timeouts are bounded, the response is streamed under a byte ceiling, and
-redirects are not followed. The driver must never become an SSRF primitive.
+redirects are not followed, and `trust_env=False` makes the fixed-host boundary
+literal (ambient `HTTPS_PROXY`/`ALL_PROXY`/`~/.netrc` cannot reroute it). The driver
+must never become an SSRF primitive.
 
 **Untrusted provider data:** all provider text is bounded and sanitized (control and
 format characters removed, fields truncated to neutral limits); structurally

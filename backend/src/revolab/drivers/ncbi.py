@@ -154,12 +154,14 @@ class NCBILiteratureDiscoveryCapability:
         *,
         tool: str,
         email: str,
-        min_request_interval_seconds: float,
+        pacer: _Pacer,
     ) -> None:
         self._client = client
         self._tool = tool
         self._email = email
-        self._pacer = _Pacer(min_request_interval_seconds)
+        # The pacer is owned by the DRIVER so the health probe and every capability
+        # call share ONE process-local request budget for the fixed upstream.
+        self._pacer = pacer
 
     # -- discovery ----------------------------------------------------------------
 
@@ -379,7 +381,9 @@ class NCBILiteratureDiscoveryCapability:
         body = self._read_bounded(response)
         try:
             payload = json.loads(body)
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+            # `RecursionError` covers pathologically nested JSON: it is unexpected
+            # provider data, not a caller error, and must stay a typed failure.
             raise self._error(
                 CapabilityErrorKind.UNKNOWN, "provider returned a non-JSON response"
             ) from exc
@@ -396,9 +400,15 @@ class NCBILiteratureDiscoveryCapability:
             raise self._error(
                 CapabilityErrorKind.NETWORK, "the provider request timed out", retryable=True
             ) from exc
-        except httpx.TransportError as exc:
+        except httpx.HTTPError as exc:
+            # `httpx.TransportError` AND its siblings (e.g. a malformed proxy/
+            # protocol error) are provider-transport failures, never a 500.
             raise self._error(
                 CapabilityErrorKind.NETWORK, "the provider is unreachable", retryable=True
+            ) from exc
+        except Exception as exc:
+            raise self._error(
+                CapabilityErrorKind.UNKNOWN, "the provider request failed"
             ) from exc
 
     def _read_bounded(self, response: httpx.Response) -> bytes:
@@ -414,12 +424,22 @@ class NCBILiteratureDiscoveryCapability:
                         "the provider response exceeded the configured size bound",
                     )
                 chunks.append(chunk)
-        except httpx.TransportError as exc:
+        except CapabilityError:
+            raise
+        except httpx.HTTPError as exc:
+            # Includes `httpx.DecodingError` (a sibling of TransportError) raised
+            # for a malformed/truncated `Content-Encoding`: a 2xx provider body
+            # that cannot be decoded is a typed provider failure, not a 500.
             response.close()
             raise self._error(
                 CapabilityErrorKind.NETWORK,
                 "the provider response could not be read",
                 retryable=True,
+            ) from exc
+        except Exception as exc:
+            response.close()
+            raise self._error(
+                CapabilityErrorKind.UNKNOWN, "the provider response could not be read"
             ) from exc
         finally:
             response.close()
@@ -492,6 +512,10 @@ class NCBIDriver:
         self._email = ""
         self._timeout = 10.0
         self._min_interval = 0.34
+        # ONE process-local request budget shared by the health probe and every
+        # capability call (the pacer is per-process, so a multi-worker deployment
+        # paces independently per worker — documented in the architecture doc).
+        self._pacer = _Pacer(0.0)
         self.capabilities: Mapping[CapabilityKind, Any] = {}
 
     def start(self, context: DriverContext) -> None:
@@ -510,12 +534,16 @@ class NCBIDriver:
         self._min_interval = float(
             context.settings.get("ncbi_min_request_interval_seconds", 0.34)
         )
+        self._pacer = _Pacer(self._min_interval)
         # Redirects are OFF: the E-utilities host never needs one, and refusing to
-        # follow keeps the fixed-host boundary absolute.
+        # follow keeps the fixed-host boundary absolute. `trust_env=False` makes the
+        # "no caller/deployment proxy" rule literal: ambient HTTPS_PROXY/ALL_PROXY
+        # or ~/.netrc must not silently reroute the fixed upstream.
         self._client = httpx.Client(
             base_url=NCBI_EUTILS_BASE_URL,
             timeout=self._timeout,
             follow_redirects=False,
+            trust_env=False,
             transport=self._transport,
         )
         self.capabilities = {
@@ -523,7 +551,7 @@ class NCBIDriver:
                 self._client,
                 tool=self._tool,
                 email=self._email,
-                min_request_interval_seconds=self._min_interval,
+                pacer=self._pacer,
             )
         }
 
@@ -536,14 +564,18 @@ class NCBIDriver:
     def probe_health(self) -> ProviderRuntimeHealth:
         """Actor-independent runtime probe against the fixed host.
 
-        A transport failure is `UNREACHABLE`; a non-2xx response is `DEGRADED`
-        (the provider answered but unhealthy). This never raises and never leaks
-        an upstream body.
+        A transport/decoding failure is `UNREACHABLE`; a non-2xx response is
+        `DEGRADED` (the provider answered but unhealthy). The probe is paced like
+        every other request and reads at most `MAX_RESPONSE_BYTES`, so an unhealthy
+        upstream can neither exhaust the request budget nor stream an unbounded body
+        into memory. This never raises and never leaks an upstream body.
         """
         if self._client is None:
             return ProviderRuntimeHealth.UNREACHABLE
+        self._pacer.wait()
         try:
-            response = self._client.get(
+            request = self._client.build_request(
+                "GET",
                 _EINFO_PATH,
                 params={
                     "db": "pubmed",
@@ -553,11 +585,23 @@ class NCBIDriver:
                 },
                 timeout=min(self._timeout, 10.0),
             )
-        except httpx.TransportError:
+            response = self._client.send(request, stream=True)
+        except Exception:
             return ProviderRuntimeHealth.UNREACHABLE
+        try:
+            status = response.status_code
+            total = 0
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if total > MAX_RESPONSE_BYTES:
+                    return ProviderRuntimeHealth.DEGRADED
+        except Exception:
+            return ProviderRuntimeHealth.UNREACHABLE
+        finally:
+            response.close()
         return (
             ProviderRuntimeHealth.READY
-            if 200 <= response.status_code < 300
+            if 200 <= status < 300
             else ProviderRuntimeHealth.DEGRADED
         )
 

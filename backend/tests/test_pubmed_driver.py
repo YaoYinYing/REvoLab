@@ -636,3 +636,75 @@ def test_default_no_key_interval_stays_below_the_documented_ceiling() -> None:
     # default interval is strictly more conservative.
     interval = Settings().ncbi_min_request_interval_seconds
     assert interval >= 1 / 3
+
+
+# ---------------------------------------------------------------------------
+# Provider-data robustness: no unexpected provider payload may escape untyped
+# ---------------------------------------------------------------------------
+
+
+def test_undecodable_response_body_becomes_a_typed_failure() -> None:
+    """A 2xx body whose Content-Encoding cannot be decoded is provider data, not a
+    500: `httpx.DecodingError` is a sibling of `TransportError`, so it must be
+    caught explicitly."""
+    def esearch(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"not-a-gzip-stream", headers={"content-encoding": "gzip"}
+        )
+
+    driver = _driver(_by_path({"esearch.fcgi": esearch}))
+    with pytest.raises(CapabilityError) as excinfo:
+        _capability(driver).search("x", 5, _lease())
+    assert excinfo.value.kind in {
+        CapabilityErrorKind.NETWORK,
+        CapabilityErrorKind.UNKNOWN,
+    }
+
+
+def test_pathologically_nested_json_becomes_a_typed_failure() -> None:
+    body = b"[" * 20_000 + b"]" * 20_000
+
+    def esearch(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": "application/json"})
+
+    driver = _driver(_by_path({"esearch.fcgi": esearch}))
+    with pytest.raises(CapabilityError) as excinfo:
+        _capability(driver).search("x", 5, _lease())
+    assert excinfo.value.kind is CapabilityErrorKind.UNKNOWN
+
+
+def test_health_probe_never_raises_and_bounds_the_body() -> None:
+    # A decodable-but-broken body is UNREACHABLE, never an exception.
+    def bad_body(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"not-a-gzip-stream", headers={"content-encoding": "gzip"}
+        )
+
+    assert _driver(_by_path({"einfo.fcgi": bad_body})).probe_health() is (
+        ProviderRuntimeHealth.UNREACHABLE
+    )
+
+    # An oversized probe body is DEGRADED (bounded read), again without raising.
+    def oversized(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 1_200_000)
+
+    assert _driver(_by_path({"einfo.fcgi": oversized})).probe_health() is (
+        ProviderRuntimeHealth.DEGRADED
+    )
+
+
+def test_client_does_not_trust_ambient_proxy_environment(monkeypatch) -> None:
+    """The fixed-host boundary is literal: ambient proxy config must not reroute."""
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example.test:8080")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.example.test:8080")
+    seen: list[str] = []
+
+    def esearch(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.host)
+        return _json_response(_esearch_payload([]))
+
+    driver = _driver(_by_path({"esearch.fcgi": esearch}))
+    assert driver._client is not None
+    assert driver._client.trust_env is False
+    _capability(driver).search("x", 5, _lease())
+    assert seen == ["eutils.ncbi.nlm.nih.gov"]

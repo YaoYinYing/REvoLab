@@ -16,6 +16,10 @@ import {
   ROLE_OWNER,
 } from '../contracts/enums'
 
+// Presentation-only mirrors of the backend bounds. The wire contract is the
+// authority: the backend fails closed on an over-bound query/limit (and the
+// provider clamps the result count), so a drift here can never widen the
+// surface.
 const MAX_QUERY_CHARS = 300
 const IMPORTED_PAGE_SIZE = 50
 

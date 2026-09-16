@@ -2476,16 +2476,16 @@ Commands run on this branch head:
 ```text
 ruff check backend                                  All checks passed
 mypy (strict, 59 source files)                      Success: no issues found
-pytest (SQLite)                                     590 passed, 30 skipped
+pytest (SQLite)                                     596 passed, 31 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
-pytest backend/tests/test_postgres_integration.py   30 passed (migrated PostgreSQL)
-pytest backend/tests/test_pubmed_driver.py          61 passed (deterministic HTTP)
-pytest backend/tests/test_literature.py             34 passed
+pytest backend/tests/test_postgres_integration.py   31 passed (migrated PostgreSQL)
+pytest backend/tests/test_pubmed_driver.py          65 passed (deterministic HTTP)
+pytest backend/tests/test_literature.py             36 passed
 pytest backend/tests/test_literature_agent.py       12 passed
 python -m revolab.export_openapi -> openapi.json    refreshed (byte-identical after export)
 frontend: npm run typecheck                         clean
-frontend: npm run test                              79 passed
+frontend: npm run test                              82 passed
 frontend: npm run build                             built
 frontend: npm run check:contracts                   clean (generation idempotent)
 playwright test (real FastAPI + DB + fake provider) 12 passed
@@ -2520,6 +2520,95 @@ produce exactly one reference with no raw `IntegrityError`; the browser slice pr
 search → candidate not in Project Search → reload leaves nothing → import →
 Project Search finds it → Use as Evidence prefilled → Evidence created, plus the
 viewer, provider-failure, hostile-text, and repeated-import negatives.
+
+## Independent review (Phase 13)
+
+Three FRESH read-only reviewers ran in parallel on the implemented head
+(`0ce6ee7`): (A) architecture / provider / identity semantics, (B) security /
+network / trust, (C) persistence / concurrency / frontend / verification. All three
+returned **REQUEST CHANGES** with **no P0**; every valid P1 and material P2 was
+reconciled by the Primary Integrator and fixed on the same branch, each with a new
+regression. Two findings were reproduced independently by more than one reviewer.
+
+- **P1 (A, C — reproduced) — a concurrent import of an ALREADY-EXISTING global
+  reference into the same Project could leak a raw `IntegrityError`.** Only the
+  create+link block was guarded; the existing-reference fast path
+  (`services.py`) and the loser-recovery link called `persistence.link` (a
+  read-then-insert) + `commit` unguarded, so two racers of the same reference into
+  the same Project could both see "not visible" and both insert into
+  `uq_link_project_resource`; the loser's `IntegrityError` had no API handler → 500.
+  Fixed by centralizing EVERY link path in a guarded
+  `_link_literature_reference_idempotent` that rolls back and resolves to the
+  committed winner (mirroring `share_resource`). New PostgreSQL regression
+  `test_phase13_postgres_existing_reference_link_race_is_idempotent` forces both
+  racers past the visibility check with a barrier and asserts one link, no error,
+  and that the LINK-conflict recovery branch specifically ran. **Mutation-verified:**
+  the regression FAILS against the pre-fix `services.py` and passes with the fix.
+- **P1 (C) — the new standalone "Add evidence" affordance on the Evidence tab was
+  dead.** `EvidenceView` passed `targetOptions` only when a literature hand-off was
+  active, so the ordinary form had no selectable target, showed the false message
+  "no scientific object or decision…", and disabled submit even when targets
+  existed. Fixed to always pass the bounded target options. New
+  `frontend/src/views/Evidence.test.tsx` (3 tests) proves the standalone form
+  creates Evidence with the chosen target and no source, that the literature
+  hand-off prefills `source_kind=literature_reference`, and that a viewer has no
+  control. **Mutation-verified:** the standalone regression FAILS with the old
+  conditional and passes with the fix.
+- **P1 (B) — an unexpected provider body could still become an HTTP 500.**
+  `_read_bounded` caught only `httpx.TransportError`, but `httpx.DecodingError` is a
+  SIBLING of it (raised for a malformed/truncated `Content-Encoding`), and
+  `json.loads` did not catch `RecursionError` for pathologically nested JSON; both
+  escaped as 500. Fixed: `_send`/`_read_bounded` now catch `httpx.HTTPError` plus a
+  final broad guard and map to typed `CapabilityError`s, and the JSON parse catches
+  `RecursionError`. New regressions: an undecodable 2xx body and a deeply nested
+  body both become typed failures, and an end-to-end API test asserts a **502 typed
+  envelope, never a 500**, with no upstream body leaked.
+- **P1 (A) — the Accepted `PROJECT_AGENT_RUNTIME.md` still claimed the loop never
+  executes any remote tool**, contradicting the Phase-13 narrowing, and
+  `IMPLEMENTATION_STATE` claimed that file had been updated when it had not. Fixed:
+  `PROJECT_AGENT_RUNTIME.md` now documents the narrow rule (only registered remote
+  read-only reads are Agent-executable) and cites ADR-0019;
+  `AGENT_ACTION_HANDOFF.md`'s "autonomous remote-provider Agent execution" non-goal
+  is clarified to mean autonomous external ACTIONS, not bounded read-only reads.
+- **P2 (B) — `trust_env=True` let ambient `HTTPS_PROXY`/`ALL_PROXY`/`~/.netrc`
+  reroute the "fixed" host.** Fixed with `trust_env=False`, asserted by a new test
+  that sets a proxy env var and still observes the fixed host.
+- **P2 (B) — the health probe read an unbounded body, bypassed the pacer, and could
+  raise.** Fixed: the driver now owns ONE pacer shared by the probe and every
+  capability call, and the probe streams under the same response-byte ceiling and
+  returns `UNREACHABLE`/`DEGRADED` without ever raising. New test covers a broken
+  body and an oversized body.
+- **P2 (B) — the doc claimed full current-policy compliance without the
+  `tool`/`email` REGISTRATION step** the official page requires. Documented as an
+  operator/deployment obligation.
+- **P2 (B) — the import response's `read_only` field is a weak presentation
+  signal.** Documented explicitly as a bounded presentation field with no Project
+  attribution and no authority.
+- **P2 (B, A) — the pacer is per-process and the probe bypassed it.**
+  Documented as a multi-worker operator consideration.
+- **P2 (C) — the two concurrency tests could false-pass** when the barrier timed
+  out (the error was suppressed). Fixed: a barrier timeout now fails the test, and a
+  conflict-path spy asserts the loser recovery genuinely ran.
+- **P2 (A/C) — coverage gap.** The missing existing-reference link-race regression
+  above (which would have caught the P1) was added.
+- **P2 (A) — `discovery` silently dropped candidates from a different provider.**
+  Fixed to fail closed with a typed `ValidationError`; regression added.
+- **P2 (A) — smaller doc/code hygiene:** the authority-collision refusal is at
+  REGISTRATION (not READY) in the doc; `prepared_capability` added to `__all__`; the
+  Tool Harness catalog docstring mentions the Phase-13 remote read; the roadmap
+  heading blank line; the frontend query/limit constants are documented as
+  presentation mirrors of the backend bounds; the contract-sanctioned residual that
+  the manual `POST /literature` can pre-create a reference is now stated explicitly.
+
+Re-run gates after the fixes: backend **596 passed / 31 skipped**, ruff + strict
+mypy clean, PostgreSQL acceptance **31 passed**, alembic drift-clean on SQLite and
+PostgreSQL 16, OpenAPI byte-identical, frontend typecheck clean / **82 passed** /
+build + `check:contracts` clean, Playwright **12 passed**.
+
+Because the fixes materially changed the trusted import/concurrency path and the
+NCBI network boundary, TWO additional fresh read-only delta reviewers were run over
+the fix delta only (see below), keeping the total final-review count at **5**
+(inside the 3..5 budget).
 
 ## Known deferrals (explicit, not silently postponed)
 

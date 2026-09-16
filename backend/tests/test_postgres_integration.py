@@ -9,8 +9,8 @@ here: PostgreSQL semantics are architecture truth (TODO.md section 10).
 
 from __future__ import annotations
 
-import contextlib
 import os
+import threading
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
 from uuid import uuid4
@@ -1790,6 +1790,35 @@ def test_phase13_postgres_identity_unique_constraint_is_the_backstop(
     )
 
 
+def _literature_conflict_spies(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Record which concurrent-conflict recovery paths were entered.
+
+    `_persist_literature_reference_from_resolver` consults these helpers ONLY in an
+    `IntegrityError` recovery branch, so a non-zero count is proof that the loser
+    path really ran (and a barrier that timed out cannot masquerade as success).
+    """
+    from revolab import services as services_module
+
+    calls = {"identity": 0, "link": 0}
+    lock = threading.Lock()
+    real_identity = services_module._is_literature_identity_conflict
+    real_link = services_module._is_link_uniqueness_conflict
+
+    def identity(exc):
+        with lock:
+            calls["identity"] += 1
+        return real_identity(exc)
+
+    def link(exc):
+        with lock:
+            calls["link"] += 1
+        return real_link(exc)
+
+    monkeypatch.setattr(services_module, "_is_literature_identity_conflict", identity)
+    monkeypatch.setattr(services_module, "_is_link_uniqueness_conflict", link)
+    return calls
+
+
 def test_phase13_postgres_concurrent_import_creates_one_reference_without_integrity_error(
     pg_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1827,11 +1856,14 @@ def test_phase13_postgres_concurrent_import_creates_one_reference_without_integr
             and not getattr(local, "synced", False)
         ):
             local.synced = True
-            with contextlib.suppress(threading.BrokenBarrierError):
-                barrier.wait(timeout=10)
+            # A barrier timeout MUST fail the test: silently proceeding would let
+            # the race assertions pass without any loser ever hitting the unique
+            # index (a false pass). The worker records the raised error.
+            barrier.wait(timeout=10)
         return result
 
     monkeypatch.setattr(provenance_module, "find_literature_reference", synced_find)
+    conflict_calls = _literature_conflict_spies(monkeypatch)
 
     outcomes: dict[str, object] = {}
     errors: dict[str, BaseException] = {}
@@ -1865,6 +1897,8 @@ def test_phase13_postgres_concurrent_import_creates_one_reference_without_integr
     assert errors == {}
     assert len(outcomes) == 2
     assert len(set(outcomes.values())) == 1
+    # ...and the loser recovery path genuinely ran (not a barrier false-pass).
+    assert conflict_calls["identity"] + conflict_calls["link"] >= 1
     winner = next(iter(outcomes.values()))
 
     with Session(pg_engine) as verify:
@@ -1916,11 +1950,14 @@ def test_phase13_postgres_same_project_concurrent_import_links_once(
             and not getattr(local, "synced", False)
         ):
             local.synced = True
-            with contextlib.suppress(threading.BrokenBarrierError):
-                barrier.wait(timeout=10)
+            # A barrier timeout MUST fail the test: silently proceeding would let
+            # the race assertions pass without any loser ever hitting the unique
+            # index (a false pass). The worker records the raised error.
+            barrier.wait(timeout=10)
         return result
 
     monkeypatch.setattr(provenance_module, "find_literature_reference", synced_find)
+    conflict_calls = _literature_conflict_spies(monkeypatch)
 
     outcomes: list[object] = []
     errors: list[BaseException] = []
@@ -1948,6 +1985,8 @@ def test_phase13_postgres_same_project_concurrent_import_links_once(
     assert errors == []
     assert len(outcomes) == 2
     assert len(set(outcomes)) == 1
+    # The loser recovery path genuinely ran (not a barrier false-pass).
+    assert conflict_calls["identity"] + conflict_calls["link"] >= 1
     winner = outcomes[0]
 
     with Session(pg_engine) as verify:
@@ -1966,6 +2005,117 @@ def test_phase13_postgres_same_project_concurrent_import_links_once(
                 .where(
                     ProjectResourceLink.project_id == project_id,
                     ProjectResourceLink.resource_id == winner,
+                )
+            )
+            == 1
+        )
+
+
+def test_phase13_postgres_existing_reference_link_race_is_idempotent(
+    pg_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent import of an ALREADY-EXISTING global reference into the SAME
+    Project must resolve to ONE link with no raw `IntegrityError`.
+
+    This exercises the existing-reference fast path (which the create-path races
+    above do not): the link insert is forced to interleave AFTER both racers observe
+    "not visible", so the `(project_id, resource_id)` unique constraint is genuinely
+    exercised and the recovery branch must handle it.
+    """
+    from revolab.domain import persistence as persistence_module
+    from revolab.models import LiteratureReference, ProjectResourceLink
+    from revolab.testing.fake_literature import FAKE_LITERATURE_AUTHORITY
+
+    tag = uuid4().hex[:8]
+    authority = FAKE_LITERATURE_AUTHORITY
+    native_id = f"link-race-{tag}"
+
+    with Session(pg_engine) as setup:
+        actor = services.create_actor(setup)
+        project_a = services.create_project(setup, actor, f"Seed A {tag}")
+        project_b = services.create_project(setup, actor, f"Seed race B {tag}")
+        actor_id = actor
+        project_a_id = project_a.id
+        project_b_id = project_b.id
+        # Pre-create the global reference AND link it into project A, so the racers
+        # take the existing-reference path rather than the create path.
+        seeded = services._persist_literature_reference_from_resolver(
+            setup, actor_id, project_a_id, authority, native_id, title="Seeded"
+        )
+        seeded_id = seeded.literature_id
+
+    barrier = threading.Barrier(2)
+    local = threading.local()
+    real_is_visible = persistence_module.is_visible
+
+    def synced_link(session, project_id, resource_id, *, folder=None):
+        # Mirror `persistence.link`, but interleave both racers AFTER the visibility
+        # check so the unique-constraint loser path is deterministic.
+        if not real_is_visible(session, project_id, resource_id):
+            if not getattr(local, "synced", False):
+                local.synced = True
+                barrier.wait(timeout=10)
+            session.add(
+                ProjectResourceLink(
+                    project_id=project_id, resource_id=resource_id, folder=folder
+                )
+            )
+
+    monkeypatch.setattr(persistence_module, "link", synced_link)
+    conflict_calls = _literature_conflict_spies(monkeypatch)
+
+    outcomes: list[object] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        try:
+            with Session(pg_engine) as session:
+                row = services._persist_literature_reference_from_resolver(
+                    session, actor_id, project_b_id, authority, native_id, title="Raced"
+                )
+                with lock:
+                    outcomes.append(row.literature_id)
+        except BaseException as exc:
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+    # No raw IntegrityError reached the caller, and both racers resolved to the SAME
+    # seeded reference.
+    assert errors == []
+    assert len(outcomes) == 2
+    assert set(outcomes) == {seeded_id}
+    # The LINK-conflict recovery specifically ran (an identity conflict is
+    # impossible here: the reference already existed).
+    assert conflict_calls["link"] >= 1
+    assert conflict_calls["identity"] == 0
+
+    with Session(pg_engine) as verify:
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(LiteratureReference)
+                .where(
+                    LiteratureReference.authority == authority,
+                    LiteratureReference.native_id == native_id,
+                )
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ProjectResourceLink)
+                .where(
+                    ProjectResourceLink.project_id == project_b_id,
+                    ProjectResourceLink.resource_id == seeded_id,
                 )
             )
             == 1

@@ -290,6 +290,7 @@ __all__ = [
     "get_run",
     "list_artifacts",
     "list_task_kinds",
+    "prepared_capability",
     "resolve_artifact",
     "resolve_artifact_preview",
     "submit_compute",

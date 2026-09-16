@@ -910,6 +910,29 @@ def _is_literature_identity_conflict(exc: IntegrityError) -> bool:
     )
 
 
+def _link_literature_reference_idempotent(
+    session: Session, project_id: UUID, literature_id: UUID
+) -> None:
+    """Link an already-existing global reference into a Project idempotently.
+
+    `persistence.link` is read-then-insert, so two concurrent imports of the SAME
+    reference into the SAME Project can both observe "not visible" and both insert
+    into `uq_link_project_resource`. This guard makes the loser resolve to the
+    committed winner instead of leaking a raw `IntegrityError` to the caller.
+    """
+    try:
+        persistence.link(session, project_id, literature_id)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if not _is_link_uniqueness_conflict(exc):
+            raise
+        if not persistence.is_visible(session, project_id, literature_id):
+            raise ConflictError(
+                "literature link conflicted with a concurrent import; retry"
+            ) from exc
+
+
 def _persist_literature_reference_from_resolver(
     session: Session,
     actor_id: UUID,
@@ -937,16 +960,15 @@ def _persist_literature_reference_from_resolver(
     stored title is never overwritten.
 
     Concurrency: the unique `(authority, native_id)` and
-    `(project_id, resource_id)` constraints are the real guard. A losing racer
-    rolls back and resolves to the committed winner, so no raw `IntegrityError`
-    reaches the API.
+    `(project_id, resource_id)` constraints are the real guard. EVERY link and
+    create+link path below is guarded, so a losing racer rolls back and resolves to
+    the committed winner and no raw `IntegrityError` reaches the API.
     """
     mutation_capable_membership(session, actor_id, project_id)
     bounded_title = title[:MAX_LITERATURE_TITLE_CHARS] if title else None
     existing = provenance.find_literature_reference(session, authority, native_id)
     if existing is not None:
-        persistence.link(session, project_id, existing.literature_id)
-        session.commit()
+        _link_literature_reference_idempotent(session, project_id, existing.literature_id)
         session.refresh(existing)
         return existing
     try:
@@ -970,9 +992,7 @@ def _persist_literature_reference_from_resolver(
             raise ConflictError(
                 "literature import conflicted with a concurrent import; retry"
             ) from exc
-        if not persistence.is_visible(session, project_id, winner.literature_id):
-            persistence.link(session, project_id, winner.literature_id)
-            session.commit()
+        _link_literature_reference_idempotent(session, project_id, winner.literature_id)
         session.refresh(winner)
         return winner
     session.refresh(row)

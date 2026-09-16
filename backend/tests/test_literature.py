@@ -874,3 +874,116 @@ def test_api_import_returns_the_existing_typed_reference_contract(client):
         assert "articleids" not in imported
     finally:
         _clear_overrides()
+
+
+# ---------------------------------------------------------------------------
+# Provider-data robustness at the HTTP boundary (no unexpected payload -> 500)
+# ---------------------------------------------------------------------------
+
+
+def _ncbi_registry(handler):
+    """A REAL NCBIDriver over an injected deterministic HTTP transport."""
+    import httpx
+
+    from revolab.drivers.ncbi import NCBIDriver
+
+    registry = DriverRegistry()
+    registry.register(NCBIDriver(transport=httpx.MockTransport(handler)))
+    registry.start_all(
+        DriverContext(
+            environment="test",
+            settings=MappingProxyType(
+                {
+                    "ncbi_tool": "revolab-test",
+                    "ncbi_email": "operator@example.test",
+                    "ncbi_timeout_seconds": 5.0,
+                    "ncbi_min_request_interval_seconds": 0.0,
+                }
+            ),
+        )
+    )
+    return registry
+
+
+def test_api_discover_maps_an_undecodable_provider_body_to_a_typed_error(client):
+    """TODO.md section 14: unexpected provider payload MUST become a typed
+    capability failure, never a 500."""
+    import httpx
+
+    from revolab import api as api_module
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("einfo.fcgi"):
+            return httpx.Response(200, json={"ok": True})
+        return httpx.Response(
+            200, content=b"not-a-gzip-stream", headers={"content-encoding": "gzip"}
+        )
+
+    _override_registry(client, api_module, _ncbi_registry(handler), InMemorySecretStore())
+    try:
+        actor = _api_actor(client)
+        project = _api_project(client, actor)
+        response = client.get(
+            f"/api/projects/{project}/literature/discover",
+            params={"provider_key": "ncbi", "q": "enzyme"},
+            headers={"X-Actor-Id": actor},
+        )
+        assert response.status_code != 500
+        assert response.status_code == 502
+        assert "detail" in response.json()
+        # No upstream body leaks into the envelope.
+        assert "not-a-gzip" not in response.text
+    finally:
+        _clear_overrides()
+
+
+def test_discovery_fails_closed_on_a_candidate_from_a_different_provider(session):
+    """A miswired driver must not silently degrade to an empty candidate list."""
+
+    class _WrongProviderCapability:
+        provider_key = FAKE_LITERATURE_PROVIDER_KEY
+        kind = CapabilityKind.LITERATURE_DISCOVERY
+
+        def search(self, query, limit, credentials):
+            from revolab.capabilities import LiteratureCandidate, LiteratureSearchResult
+
+            return LiteratureSearchResult(
+                provider_key=FAKE_LITERATURE_PROVIDER_KEY,
+                candidates=(
+                    LiteratureCandidate(
+                        provider_key="someone-else",
+                        authority=FAKE_LITERATURE_AUTHORITY,
+                        native_id="1",
+                        title="Wrong provider",
+                    ),
+                ),
+            )
+
+        def resolve(self, authority, native_id, credentials):  # pragma: no cover - unused
+            raise AssertionError("resolve must not be used")
+
+    class _WrongProviderDriver:
+        name = FAKE_LITERATURE_PROVIDER_KEY
+        display_name = "Wrong provider"
+        description = None
+        authorities = (FAKE_LITERATURE_AUTHORITY,)
+        required_credential_kinds: tuple[str, ...] = ()
+        capabilities: ClassVar[dict] = {
+            CapabilityKind.LITERATURE_DISCOVERY: _WrongProviderCapability()
+        }
+
+        def start(self, context):
+            pass
+
+        def stop(self):
+            pass
+
+        def probe_health(self):
+            from revolab.enums import ProviderRuntimeHealth
+
+            return ProviderRuntimeHealth.READY
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    with pytest.raises(ValidationError):
+        _discover(session, _registry(_WrongProviderDriver()), actor, project)

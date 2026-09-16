@@ -98,7 +98,7 @@ export function EvidenceView({
           <EvidenceForm
             actorId={actorId}
             projectId={projectId}
-            targetOptions={evidenceSource ? targetOptions : null}
+            targetOptions={targetOptions}
             sourceKind={sourceKind}
             sourceId={evidenceSource?.source_id ?? null}
             sourceLabel={evidenceSource?.label ?? null}

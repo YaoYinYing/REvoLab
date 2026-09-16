@@ -94,11 +94,13 @@ def discover_literature(
             session, actor_id, project_id, CapabilityKind.LITERATURE_DISCOVERY
         ),
     )
-    candidates = [
-        _candidate_read(candidate)
-        for candidate in result.candidates[:bounded_limit]
-        if candidate.provider_key == provider_key
-    ]
+    candidates = []
+    for candidate in result.candidates[:bounded_limit]:
+        if candidate.provider_key != provider_key:
+            # A candidate attributed to a different provider is structurally
+            # impossible: fail closed rather than silently degrade to a short list.
+            raise ValidationError("provider returned a candidate from a different provider")
+        candidates.append(_candidate_read(candidate))
     return LiteratureDiscoveryResultsRead(
         provider_key=provider_key,
         query=bounded_query,

@@ -142,10 +142,20 @@ never_agent       membership / sharing / credential  → never projected as a To
 always a **DRAFT**; commit remains the separate promotion gate
 (`POST /api/projects/{project_id}/decisions/{decision_id}/commit`). Remote
 `explicit_action` (e.g. `{provider}.compute.submit`) becomes a durable Action
-Request (`AGENT_ACTION_HANDOFF.md`, ADR-0017); remote automatic/policy tools are
-surfaced in the catalog but the loop does **not** autonomously cross the external
-boundary to execute them — they remain on the existing human capability endpoints
-(documented deferral).
+Request (`AGENT_ACTION_HANDOFF.md`, ADR-0017).
+
+**Phase-13 narrowing (ADR-0019).** The Phase-8 rule above was that NO remote tool is
+autonomously executed by the loop. Phase 13 deliberately narrows — without
+abandoning — that rule: a remote tool is now Agent-executable ONLY when it is a
+registered remote READ-ONLY read in `revolab.tools.remote_reads` (matched by the
+stable capability SUFFIX, never by provider key) AND the catalog projects it with
+`autonomy=automatic` and `side_effect_class=read_only`. Today that is exactly one
+tool, `{provider}.literature.search`, which calls the same application discovery
+service the human workspace uses, persists nothing, and returns bounded untrusted
+candidates. Every OTHER remote automatic/policy tool (including every remote compute
+read) is still omitted from the model tool list and refused if named, and all remote
+mutating work still flows through the human capability endpoints or a durable Action
+Request. Normative semantics: `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md`.
 
 ## Durable explicit actions
 

@@ -4,7 +4,8 @@ One Actor in one Project resolves exactly one ToolCatalog, consumed by both the
 human workspace and the Agent (TODO.md section 16). Local tools are the closed
 `LocalToolRegistry`; remote tools are the existing Provider capabilities
 projected through the non-secret Provider Catalog (REvoCompute compute +
-artifact resolution). Unavailable provider capabilities are omitted entirely;
+artifact resolution, and — since Phase 13 — provider literature discovery, which
+is the ONE registered remote read-only read the Agent may execute). Unavailable provider capabilities are omitted entirely;
 local tools are always listed with their current availability. This is a
 read-only projection: it never invokes anything.
 """

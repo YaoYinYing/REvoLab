@@ -440,6 +440,7 @@ collaboration/sharing and the agent.
 ---
 
 ## Final architecture invariants (enter CLAUDE.md)
+
 These are derived from the whole design; they are the concisely load-bearing rules:
 
 > 1. **Project organization is not scientific semantics.** Navigation/folders are
