@@ -2191,13 +2191,13 @@ Commands run on this branch head (2026-09-15):
 ```text
 ruff check backend                                  All checks passed
 mypy (strict, 54 source files)                      Success: no issues found
-pytest (SQLite)                                     478 passed, 24 skipped
+pytest (SQLite)                                     481 passed, 24 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
 pytest backend/tests/test_postgres_integration.py   24 passed (migrated PostgreSQL)
 python -m revolab.export_openapi -> openapi.json    refreshed (byte-identical after export)
 frontend: npm run typecheck                         clean
-frontend: npm run test                              65 passed
+frontend: npm run test                              66 passed
 frontend: npm run build                             built
 frontend: npm run check:contracts                   clean (generation idempotent)
 playwright test (real FastAPI + DB + fake model)    9 passed
@@ -2276,14 +2276,52 @@ regression:
   wire, the total-returned-text ceiling, and the revision-implied foreign-series
   case; removed the unused frontend export.
 
-The reconciled fixes materially changed authorization/selection semantics and the
-search-query architecture, so TODO.md section 44's optional delta review applies to
-this fix delta. It is **not claimed as performed** here: this round stopped at three
-completed first-round reviews (the minimum) by explicit instruction, and the fix
-delta is currently evidenced by the full re-run of every machine gate plus the new
-mutation-sensitive regressions listed above. The delta review remains available
-within the 3..5 reviewer budget for a later round or the human reviewer; no
-unperformed review is recorded as done.
+### Delta review (round 2) — TODO.md section 44
+
+Because the reconciled fixes materially changed authorization/selection semantics,
+the search query architecture, the wire contract and the frontend surface, TWO
+additional FRESH read-only delta reviewers examined the fix delta
+(`b26524d..0ea18ac`), the previously violated invariants and the added regressions.
+Combined with the three first-round reviewers the total final-review count is
+**5**, inside the 3..5 budget. Both returned **APPROVE WITH FINDINGS / REQUEST
+CHANGES**, **no P0**. All valid findings were fixed on the same branch:
+
+- **P1 (E) — the scope/kind mismatch was only half-fixed.** The kind control still
+  offered the eight Project-shared kinds inside `MY_CONVERSATIONS`, so choosing one
+  and submitting produced a 422. Fixed: the control now offers exactly the current
+  scope's kinds (conversation only in `MY_CONVERSATIONS`; conversation excluded from
+  `PROJECT_SHARED`; all kinds under `ALL`) and a scope change clears any kind the new
+  scope disallows in BOTH directions. New unit regression covers the full matrix.
+- **P1 (E, also D-P2-1) — the series corpus omitted `identity_column=series.series_id`**,
+  so an exact-UUID series hit ranked 3 while the docs/state claimed rank 0. Fixed,
+  and the positive regression is now order-sensitive: a Decision whose statement
+  merely QUOTES the series UUID must rank BELOW the identity itself.
+- **P2 (E) — `_resolve_kinds` raised `AttributeError`** for a raw-string target kind.
+  Fixed by coercing each element through `SearchTargetKind` and raising the typed
+  validation error (mirroring the scope coercion).
+- **P2 (D) — the identity tie-break had no mutation-sensitive regression.** Added a
+  test that inserts tied rows in descending identity order and asserts the exact
+  top-N subset; it FAILS when `identity.asc()` is removed (mutation-verified).
+- **P2 (D) — the `status` mapping had no backend regression.** Added a test asserting
+  `DRAFT`/`COMMITTED`/`None` on the hit; it FAILS when the mapping is removed
+  (mutation-verified).
+- **P2 (D) — the total-text test was vacuous.** Rewritten to drive `limit` maximal
+  hits and assert an independently written literal ceiling; it FAILS when the snippet
+  cap is raised (mutation-verified).
+- **P2 (D) — exact-UUID negatives were incomplete.** Added lifecycle negatives
+  (archived series/Evidence/Decision/Note, revoked Run/Artifact) and a cross-Actor
+  conversation UUID negative in every scope.
+- **P2 (D) — `artifact_ids` vs `reference_ids` lifecycle asymmetry.** Documented as a
+  deliberate Phase-12 boundary: the Phase-8 `artifact_ids` contract is unchanged and
+  the Phase-12 search hand-off maps artifact hits to the lifecycle-checked
+  `reference_ids`; making `artifact_ids` uniform is a separate change to an accepted
+  contract.
+- Delta reviewers also reproduced the gates independently: ruff/mypy clean, SQLite
+  suite green, PostgreSQL acceptance green, OpenAPI byte-identical, no determinism or
+  authorization defect beyond the above; the round-1 mutation harness confirmed the
+  earlier fixes are regression-guarded (each revert fails its regression).
+
+## Known deferrals (explicit, not silently postponed)
 
 ## Known deferrals (explicit, not silently postponed)
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).

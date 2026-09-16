@@ -195,6 +195,52 @@ describe('Search view (Phase 12)', () => {
     })
   })
 
+  it('never offers or sends a target kind the selected scope does not allow', async () => {
+    const user = userEvent.setup()
+    render(
+      <SearchView
+        actorId="actor-1"
+        projectId="project-1"
+        onOpenHit={vi.fn()}
+        onAddToAgentContext={vi.fn()}
+      />,
+    )
+
+    // Shared scope: only the private conversation kind is unavailable.
+    const sharedOptions = Array.from(
+      screen.getByLabelText('Search target kind').querySelectorAll('option'),
+    ).map((option) => option.getAttribute('value'))
+    expect(sharedOptions).toContain('evidence')
+    expect(sharedOptions).not.toContain('conversation')
+
+    // Private scope: ONLY the Actor-private conversation kind is offered.
+    await user.selectOptions(screen.getByLabelText('Search scope'), 'my_conversations')
+    const privateOptions = Array.from(
+      screen.getByLabelText('Search target kind').querySelectorAll('option'),
+    ).map((option) => option.getAttribute('value'))
+    expect(privateOptions).toEqual(['', 'conversation'])
+
+    // A shared kind selected before the switch is cleared, not submitted.
+    await user.type(screen.getByLabelText('Search project context'), 'my private note')
+    await user.selectOptions(screen.getByLabelText('Search target kind'), 'conversation')
+    await user.click(screen.getByRole('button', { name: /Search/ }))
+    expect(mockedSearch).toHaveBeenLastCalledWith('actor-1', 'project-1', {
+      q: 'my private note',
+      scope: 'my_conversations',
+      target_kinds: ['conversation'],
+      limit: 20,
+    })
+
+    // Switching back to the shared scope clears the now-invalid private kind.
+    await user.selectOptions(screen.getByLabelText('Search scope'), 'project_shared')
+    await user.click(screen.getByRole('button', { name: /Search/ }))
+    expect(mockedSearch).toHaveBeenLastCalledWith('actor-1', 'project-1', {
+      q: 'my private note',
+      scope: 'project_shared',
+      limit: 20,
+    })
+  })
+
   it('renders the canonical Decision status on a Decision hit', () => {
     mockedSearch.mockReturnValue({
       data: results([

@@ -3000,6 +3000,7 @@ export interface components {
             private: boolean;
             /** Snippet */
             snippet?: string | null;
+            /** @description Canonical Decision lifecycle status (draft/committed) for a decision hit; null for every other target kind. Presentation only: never a search-relevance score, confidence, or authorization property. */
             status?: components["schemas"]["DecisionStatus"] | null;
             /**
              * Target Id

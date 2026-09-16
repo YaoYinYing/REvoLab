@@ -11,9 +11,8 @@ import {
   SEARCH_SCOPE_MY_CONVERSATIONS,
   SEARCH_SCOPE_PROJECT_SHARED,
   SEARCH_SCOPES,
-  SEARCH_TARGET_KINDS,
 } from '../contracts/enums'
-import { contextItemFromHit, targetKindLabel } from './agentContext'
+import { contextItemFromHit, kindsForScope, targetKindLabel } from './agentContext'
 
 const RESULT_LIMIT = 20
 const QUERY_MAX = 200
@@ -100,11 +99,11 @@ export function SearchView({
 
   function changeScope(next: SearchScope) {
     setScope(next)
-    // A scope change invalidates the previous result set AND a target kind that
-    // the new scope does not allow (the conversation kind is private-only): never
-    // show a private/shared hit under the other scope, and never send a request
-    // that the backend must reject.
-    if (next === SEARCH_SCOPE_PROJECT_SHARED && kind === 'conversation') {
+    // A scope change invalidates the previous result set AND any target kind the
+    // new scope does not allow (in BOTH directions: `conversation` is private-only
+    // and the shared kinds are unavailable in MY_CONVERSATIONS). Never send a
+    // request the backend must reject.
+    if (kind && !kindsForScope(next).includes(kind)) {
       setKind('')
     }
     setRequest(null)
@@ -163,9 +162,7 @@ export function SearchView({
               }}
             >
               <option value="">All kinds</option>
-              {SEARCH_TARGET_KINDS.filter(
-                (option) => option !== 'conversation' || privateScope,
-              ).map((option) => (
+              {kindsForScope(scope).map((option) => (
                 <option key={option} value={option}>
                   {targetKindLabel(option)}
                 </option>

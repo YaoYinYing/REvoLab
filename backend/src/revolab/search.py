@@ -363,7 +363,15 @@ def _resolve_kinds(
     if not target_kinds:
         raise ValidationError("at least one target kind must be requested")
     seen: list[SearchTargetKind] = []
-    for kind in target_kinds:
+    for raw_kind in target_kinds:
+        try:
+            kind = (
+                raw_kind
+                if isinstance(raw_kind, SearchTargetKind)
+                else SearchTargetKind(raw_kind)
+            )
+        except ValueError as exc:
+            raise ValidationError(f"unknown search target kind {raw_kind!r}") from exc
         if kind not in allowed:
             raise ValidationError(
                 f"target kind {kind.value!r} is not available in this search scope"
@@ -580,7 +588,9 @@ def _series_corpus(
         .where(ext_own)
         .where(func.lower(identity.native_id) == query.lower)
     )
-    rank = _rank_case(query, name_lower, identity_exact=ext_exact)
+    rank = _rank_case(
+        query, name_lower, identity_exact=ext_exact, identity_column=series.series_id
+    )
     text_rank = _text_rank(postgres, query.raw, _text_expr(series.name, series.description))
     statement = _ordered(
         select(

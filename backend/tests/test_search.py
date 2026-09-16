@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from types import MappingProxyType
+from uuid import UUID
 
 import pytest
 from sqlalchemy import event, func, select
@@ -29,6 +30,7 @@ from revolab.content_store import ContentStore
 from revolab.domain.errors import AuthorizationError, ValidationError
 from revolab.drivers import DriverContext, DriverRegistry
 from revolab.enums import (
+    DecisionStatus,
     Role,
     SearchMatchedField,
     SearchScope,
@@ -950,11 +952,21 @@ def test_owning_project_finds_global_resource_by_exact_uuid(session):
     run = services.create_run_reference(
         session, owner_a, project_a.id, "revocompute", "run-uuid", task_type="folding"
     )
+    # A row that merely QUOTES the UUID in its text must rank BELOW the identity
+    # itself: this makes the exact-UUID rank-0 contract order-sensitive.
+    _decision(
+        session,
+        owner_a,
+        project_a,
+        title="Decision quoting an object id",
+        statement=f"see {series} for details",
+    )
 
-    # An exact canonical UUID IS a search term in the owning Project...
-    assert [hit.target_id for hit in _search(session, owner_a, project_a, str(series)).hits] == [
-        series
-    ]
+    # An exact canonical UUID IS a search term in the owning Project, and the
+    # canonical identity ranks FIRST...
+    series_hits = _search(session, owner_a, project_a, str(series)).hits
+    assert series_hits[0].target_id == series
+    assert series_hits[0].target_kind is SearchTargetKind.SCIENTIFIC_OBJECT_SERIES
     assert _search(session, owner_a, project_a, str(run.run_id)).hits[0].target_id == run.run_id
     # ...and still resolves to nothing in a Project that does not link it.
     assert _search(session, owner_b, project_b, str(series)).hits == []
@@ -1083,26 +1095,6 @@ def test_agent_search_tool_rejects_conversation_target_kind(session, tmp_path):
         )
 
 
-def test_total_returned_text_is_bounded(session):
-    from revolab.schemas import MAX_SEARCH_TOTAL_TEXT_CHARS
-
-    actor = _actor(session)
-    project = _project(session, actor)
-    for index in range(30):
-        _decision(
-            session,
-            actor,
-            project,
-            title=f"Bounded text {index:02d} " + "t" * 150,
-            statement="bounded " + "x" * 500,
-        )
-
-    result = _search(session, actor, project, "bounded", limit=MAX_SEARCH_LIMIT)
-
-    total = sum(len(hit.title) + len(hit.snippet or "") for hit in result.hits)
-    assert total <= MAX_SEARCH_TOTAL_TEXT_CHARS
-
-
 def test_case_folding_matches_ascii_case_insensitively_on_sqlite(session):
     actor = _actor(session)
     project = _project(session, actor)
@@ -1158,3 +1150,149 @@ def test_search_api_target_kinds_filter_over_the_wire(client):
         headers=_headers(actor),
     )
     assert rejected.status_code == 422
+
+
+def _tied_decision(session, project, *, decision_id, created_at, token):
+    """A raw Decision row so the test can control identity + identical sort keys."""
+    row = Decision(
+        id=decision_id,
+        project_id=project.id,
+        title=f"tied {token}",
+        statement=f"tied {token} wording",
+        status="draft",
+        next_actions=[],
+        draft_cites=[],
+        draft_selects=[],
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    session.add(row)
+    return row
+
+
+def test_tied_top_n_is_deterministic_by_canonical_identity(session):
+    """Mutation-sensitive guard for the SQL identity tie-break.
+
+    Five rows share (rank, text-rank, created_at); the canonical identity must
+    decide WHICH top-N is returned. Inserted in DESCENDING identity order, so
+    removing `identity.asc()` from the SQL ORDER BY selects the wrong subset.
+    """
+    actor = _actor(session)
+    project = _project(session, actor)
+    token = "tiedguard"
+    stamp = datetime(2026, 1, 1, tzinfo=UTC)
+    ids = [UUID(int=value) for value in (100, 200, 300, 400, 500)]
+    for value in reversed(ids):
+        _tied_decision(session, project, decision_id=value, created_at=stamp, token=token)
+    session.commit()
+
+    result = _search(session, actor, project, token, limit=3)
+
+    assert [hit.target_id for hit in result.hits] == ids[:3]
+    assert result.truncated is True
+
+
+def test_decision_status_is_returned_on_the_hit(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    draft = _decision(
+        session, actor, project, title="Status draft finding", statement="status draft statement"
+    )
+    committed = _decision(
+        session,
+        actor,
+        project,
+        title="Status committed finding",
+        statement="status committed statement",
+    )
+    services.commit_decision(session, actor, project.id, committed.id)
+    series = _object(session, actor, project, name="Status series finding")
+
+    by_id = {hit.target_id: hit for hit in _search(session, actor, project, "status").hits}
+    assert by_id[draft.id].status == DecisionStatus.DRAFT
+    assert by_id[committed.id].status == DecisionStatus.COMMITTED
+    # Non-Decision hits never carry a Decision lifecycle status.
+    assert by_id[series].status is None
+
+
+def test_total_returned_text_is_bounded(session):
+    """Non-vacuous: the fixture drives `limit` hits with maximal title/snippet
+    lengths and asserts an INDEPENDENT literal ceiling, so raising any per-field
+    cap breaks it."""
+    actor = _actor(session)
+    project = _project(session, actor)
+    token = "maxtoken"
+    filler = "f" * 180
+    for index in range(MAX_SEARCH_LIMIT):
+        _decision(
+            session,
+            actor,
+            project,
+            title=f"{filler}{index:04d}",  # 200 chars, no token
+            statement=f"{token} " + "s" * 400,  # snippet clamps to 240
+        )
+
+    result = _search(session, actor, project, token, limit=MAX_SEARCH_LIMIT)
+
+    assert len(result.hits) == MAX_SEARCH_LIMIT
+    total = sum(len(hit.title) + len(hit.snippet or "") for hit in result.hits)
+    assert 20_000 < total <= 22_000  # literal, independently specified ceiling
+
+
+def test_exact_uuid_negative_cases_lifecycle_and_cross_actor(session):
+    """TODO.md section 15: an exact UUID never reaches a row the current actor /
+    Project may not read, including lifecycle-excluded and cross-Actor rows."""
+    owner = _actor(session)
+    other = _actor(session)
+    project = _project(session, owner)
+    services.add_membership(session, owner, project.id, other, Role.MEMBER.value)
+
+    archived_series = _object(session, owner, project, name="Archived series")
+    # Evidence targets its own series: a series referenced by Evidence cannot be
+    # archived by canonical domain policy, and these are independent fixtures.
+    evidence_series = _object(session, owner, project, name="Evidence series")
+    archived_evidence = _evidence(session, owner, project, evidence_series, label="Archived ev")
+    archived_decision = _decision(
+        session, owner, project, title="Archived decision", statement="archived statement"
+    )
+    archived_note = _note(session, owner, project, title="Archived note", body="archived body")
+    revoked_run = services.create_run_reference(
+        session, owner, project.id, "revocompute", "run-revoked-uuid", task_type="folding"
+    )
+    revoked_artifact = services.create_artifact_reference(
+        session, owner, project.id, "revocompute", "artifact-revoked-uuid", content_type="text/csv"
+    )
+    private_conversation = _conversation(
+        session, owner, project, title="Owner private", message="owner private phrase"
+    )
+
+    services.archive_series(session, owner, project.id, archived_series)
+    archived_evidence.archived_at = datetime.now(UTC)
+    archived_decision.archived_at = datetime.now(UTC)
+    patch_note(session, owner, project.id, archived_note.id, archive=True)
+    revoked_run.revoked_at = datetime.now(UTC)
+    revoked_artifact.revoked_at = datetime.now(UTC)
+    session.commit()
+
+    for target in (
+        archived_series,
+        archived_evidence.id,
+        archived_decision.id,
+        archived_note.id,
+        revoked_run.run_id,
+        revoked_artifact.artifact_id,
+    ):
+        assert _search(session, owner, project, str(target)).hits == []
+
+    # Another member of the same Project can never reach the owner's conversation,
+    # by UUID or by phrase, in any scope.
+    assert _search(session, other, project, str(private_conversation.id)).hits == []
+    assert (
+        _search(
+            session, other, project, str(private_conversation.id), scope=SearchScope.ALL
+        ).hits
+        == []
+    )
+    assert _search(session, owner, project, str(private_conversation.id), scope=SearchScope.ALL).hits[
+        0
+    ].target_id == private_conversation.id

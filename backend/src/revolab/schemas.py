@@ -784,7 +784,14 @@ class SearchHitRead(BaseModel):
     # Lifecycle presentation for a Decision hit (draft vs committed). It is the
     # canonical Decision status, never a search-relevance or confidence value;
     # other target kinds leave it null.
-    status: DecisionStatus | None = None
+    status: DecisionStatus | None = Field(
+        default=None,
+        description=(
+            "Canonical Decision lifecycle status (draft/committed) for a decision "
+            "hit; null for every other target kind. Presentation only: never a "
+            "search-relevance score, confidence, or authorization property."
+        ),
+    )
 
 
 class ProjectSearchResultsRead(BaseModel):

@@ -1,5 +1,10 @@
 import type { ContextSelectionCreate } from '../api/backend'
-import type { SearchHitRead, SearchTargetKind } from '../api/types'
+import type { SearchHitRead, SearchScope, SearchTargetKind } from '../api/types'
+import {
+  SEARCH_SCOPE_ALL,
+  SEARCH_SCOPE_MY_CONVERSATIONS,
+  SEARCH_TARGET_KINDS,
+} from '../contracts/enums'
 
 /** The canonical selection body type without the route's nullable wrapper. */
 type Selection = NonNullable<ContextSelectionCreate>
@@ -95,4 +100,22 @@ export function targetKindLabel(kind: SearchTargetKind): string {
     default:
       return kind
   }
+}
+
+/**
+ * Target kinds the backend makes available in one scope.
+ *
+ * The BACKEND is authoritative and fails closed (an out-of-scope kind is a typed
+ * 422); this mirror only keeps the control from offering a kind the current scope
+ * cannot use. `conversation` is the one Actor-private kind, so it is the only kind
+ * in MY_CONVERSATIONS and is absent from PROJECT_SHARED.
+ */
+const PRIVATE_ONLY_TARGET_KINDS: readonly SearchTargetKind[] = ['conversation']
+
+export function kindsForScope(scope: SearchScope): SearchTargetKind[] {
+  if (scope === SEARCH_SCOPE_MY_CONVERSATIONS) {
+    return SEARCH_TARGET_KINDS.filter((kind) => PRIVATE_ONLY_TARGET_KINDS.includes(kind))
+  }
+  if (scope === SEARCH_SCOPE_ALL) return [...SEARCH_TARGET_KINDS]
+  return SEARCH_TARGET_KINDS.filter((kind) => !PRIVATE_ONLY_TARGET_KINDS.includes(kind))
 }

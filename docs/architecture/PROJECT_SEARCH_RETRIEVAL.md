@@ -305,6 +305,14 @@ authorization is a query result, never a cached grant.
 Conversation hits are private working memory and are never selectable into shared
 Agent context.
 
+`reference_ids` also honors the reference's own lifecycle flag, so a revoked
+reference is never admitted as current context. `artifact_ids` is the narrower
+Phase-8 field whose accepted contract is unchanged (it still surfaces the identity
+card, including `revoked_at`, for an explicitly selected artifact); the Phase-12
+search hand-off maps `artifact_reference` hits to `reference_ids`, so the search
+path always gets the lifecycle-checked behavior. Making `artifact_ids` uniform is a
+separate, deliberate change to an accepted Phase-8 contract, not part of Phase 12.
+
 An explicit evidence/decision/reference selection is honored regardless of the
 `include_*` category switches (an explicit identity is a stronger declaration than a
 category toggle and is never silently dropped), and it fails closed for a stale,
