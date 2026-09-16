@@ -146,12 +146,14 @@ class CapabilityKind(StrEnum):
     """Core-owned closed capability vocabulary (ADR-0012). Core categorizes
     realized capabilities by these kinds; it never parses provider vocabulary.
 
-    Only the two realized capability kinds exist. Any additional kind is added
-    only when a concrete, provider-neutral use case forces it — never pre-
-    projected as speculative vocabulary."""
+    Only realized capability kinds exist. Any additional kind is added only when a
+    concrete, provider-neutral use case forces it — never pre-projected as
+    speculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a
+    real provider (NCBI PubMed) now realizes it."""
 
     COMPUTE = "compute"
     ARTIFACT_RESOLUTION = "artifact_resolution"
+    LITERATURE_DISCOVERY = "literature_discovery"
 
 
 class ProviderRuntimeHealth(StrEnum):

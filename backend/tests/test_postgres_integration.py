@@ -9,6 +9,7 @@ here: PostgreSQL semantics are architecture truth (TODO.md section 10).
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Iterator, Mapping
 from types import MappingProxyType
@@ -1669,3 +1670,395 @@ def test_phase12_postgres_unicode_case_folding(pg_session: Session) -> None:
     result = search_service.search(pg_session, actor, project.id, query=f"CAF\u00c9 KINASE {tag}")
 
     assert series in {hit.target_id for hit in result.hits}
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 — external literature discovery & explicit import on PostgreSQL
+#
+# PostgreSQL is the final persistence truth: the global unique
+# (authority, native_id) identity and the per-Project link uniqueness must hold
+# under a genuine concurrent race, and no raw IntegrityError may reach the caller.
+# ---------------------------------------------------------------------------
+
+
+def _literature_registry():
+    from revolab.testing.fake_literature import FakeLiteratureDriver
+
+    registry = DriverRegistry()
+    registry.register(FakeLiteratureDriver())
+    registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
+    return registry
+
+
+def _seed_literature(registry, authority, native_id, title="Seeded publication"):
+    """Register one exact candidate in the in-process fake provider's state."""
+    from revolab.capabilities import LiteratureCandidate
+
+    handle = registry.get("fakeliterature")
+    handle.driver.state.seed(
+        LiteratureCandidate(
+            provider_key="fakeliterature",
+            authority=authority,
+            native_id=native_id,
+            title=title,
+        )
+    )
+
+
+def _import_literature(session, registry, actor, project_id, authority, native_id):
+    from revolab import literature as literature_service
+
+    _seed_literature(registry, authority, native_id, title=f"Seeded {native_id}")
+    return literature_service.import_literature(
+        session,
+        registry,
+        InMemorySecretStore(),
+        actor,
+        project_id,
+        provider_key="fakeliterature",
+        authority=authority,
+        native_id=native_id,
+    )
+
+
+def test_phase13_postgres_cross_project_import_reuses_one_global_reference(
+    pg_session: Session,
+) -> None:
+    from revolab.models import LiteratureReference, ProjectResourceLink
+    from revolab.testing.fake_literature import FAKE_LITERATURE_AUTHORITY
+
+    tag = uuid4().hex[:8]
+    owner_a = services.create_actor(pg_session)
+    owner_b = services.create_actor(pg_session)
+    project_a = services.create_project(pg_session, owner_a, f"Lit A {tag}")
+    project_b = services.create_project(pg_session, owner_b, f"Lit B {tag}")
+    registry = _literature_registry()
+
+    authority = FAKE_LITERATURE_AUTHORITY
+    native_id = f"shared-{tag}"
+    row_a = _import_literature(pg_session, registry, owner_a, project_a.id, authority, native_id)
+    row_b = _import_literature(pg_session, registry, owner_b, project_b.id, authority, native_id)
+
+    assert row_a.literature_id == row_b.literature_id
+    assert (
+        pg_session.scalar(
+            select(func.count())
+            .select_from(LiteratureReference)
+            .where(
+                LiteratureReference.authority == authority,
+                LiteratureReference.native_id == native_id,
+            )
+        )
+        == 1
+    )
+    links = pg_session.scalars(
+        select(ProjectResourceLink).where(
+            ProjectResourceLink.resource_id == row_a.literature_id
+        )
+    ).all()
+    assert {link.project_id for link in links} == {project_a.id, project_b.id}
+
+
+def test_phase13_postgres_identity_unique_constraint_is_the_backstop(
+    pg_session: Session,
+) -> None:
+    from revolab.domain import provenance
+    from revolab.models import LiteratureReference
+
+    authority = "fakepubmed"
+    native_id = f"dup-{uuid4().hex[:8]}"
+    provenance.create_literature_reference_row(
+        pg_session, authority, native_id, title="first"
+    )
+    pg_session.commit()
+    with pytest.raises(IntegrityError):
+        provenance.create_literature_reference_row(
+            pg_session, authority, native_id, title="second"
+        )
+        pg_session.flush()
+    pg_session.rollback()
+    assert (
+        pg_session.scalar(
+            select(func.count())
+            .select_from(LiteratureReference)
+            .where(
+                LiteratureReference.authority == authority,
+                LiteratureReference.native_id == native_id,
+            )
+        )
+        == 1
+    )
+
+
+def test_phase13_postgres_concurrent_import_creates_one_reference_without_integrity_error(
+    pg_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from revolab.domain import provenance as provenance_module
+    from revolab.models import LiteratureReference, ProjectResourceLink
+    from revolab.testing.fake_literature import FAKE_LITERATURE_AUTHORITY
+
+    tag = uuid4().hex[:8]
+    with Session(pg_engine) as setup:
+        actor = services.create_actor(setup)
+        project_a = services.create_project(setup, actor, f"Race A {tag}")
+        project_b = services.create_project(setup, actor, f"Race B {tag}")
+        actor_id = actor
+        project_a_id = project_a.id
+        project_b_id = project_b.id
+
+    authority = FAKE_LITERATURE_AUTHORITY
+    native_id = f"race-{tag}"
+
+    barrier = threading.Barrier(2)
+    real_find = provenance_module.find_literature_reference
+    local = threading.local()
+
+    def synced_find(session, a, n):
+        result = real_find(session, a, n)
+        # Force BOTH racers past their initial "not found" check before either
+        # inserts, so the unique constraint is genuinely exercised. Each thread
+        # syncs only on its FIRST lookup (post-rollback lookups must not block).
+        if (
+            result is None
+            and a == authority
+            and n == native_id
+            and not getattr(local, "synced", False)
+        ):
+            local.synced = True
+            with contextlib.suppress(threading.BrokenBarrierError):
+                barrier.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(provenance_module, "find_literature_reference", synced_find)
+
+    outcomes: dict[str, object] = {}
+    errors: dict[str, BaseException] = {}
+    lock = threading.Lock()
+
+    def worker(name: str, project_id) -> None:
+        try:
+            with Session(pg_engine) as session:
+                row = services._persist_literature_reference_from_resolver(
+                    session, actor_id, project_id, authority, native_id, title="Raced"
+                )
+                # Force the materialization of the identity before the session closes.
+                assert row.literature_id is not None
+                with lock:
+                    outcomes[name] = row.literature_id
+        except BaseException as exc:
+            with lock:
+                errors[name] = exc
+
+    threads = [
+        threading.Thread(target=worker, args=("a", project_a_id)),
+        threading.Thread(target=worker, args=("b", project_b_id)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+    # No raw IntegrityError (or anything else) reached the caller.
+    assert errors == {}
+    assert len(outcomes) == 2
+    assert len(set(outcomes.values())) == 1
+    winner = next(iter(outcomes.values()))
+
+    with Session(pg_engine) as verify:
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(LiteratureReference)
+                .where(
+                    LiteratureReference.authority == authority,
+                    LiteratureReference.native_id == native_id,
+                )
+            )
+            == 1
+        )
+        links = verify.scalars(
+            select(ProjectResourceLink).where(ProjectResourceLink.resource_id == winner)
+        ).all()
+        assert {link.project_id for link in links} == {project_a_id, project_b_id}
+
+
+def test_phase13_postgres_same_project_concurrent_import_links_once(
+    pg_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from revolab.domain import provenance as provenance_module
+    from revolab.models import LiteratureReference, ProjectResourceLink
+    from revolab.testing.fake_literature import FAKE_LITERATURE_AUTHORITY
+
+    tag = uuid4().hex[:8]
+    with Session(pg_engine) as setup:
+        actor = services.create_actor(setup)
+        project = services.create_project(setup, actor, f"Same Race {tag}")
+        actor_id = actor
+        project_id = project.id
+
+    authority = FAKE_LITERATURE_AUTHORITY
+    native_id = f"same-{tag}"
+    barrier = threading.Barrier(2)
+    real_find = provenance_module.find_literature_reference
+    local = threading.local()
+
+    def synced_find(session, a, n):
+        result = real_find(session, a, n)
+        if (
+            result is None
+            and a == authority
+            and n == native_id
+            and not getattr(local, "synced", False)
+        ):
+            local.synced = True
+            with contextlib.suppress(threading.BrokenBarrierError):
+                barrier.wait(timeout=10)
+        return result
+
+    monkeypatch.setattr(provenance_module, "find_literature_reference", synced_find)
+
+    outcomes: list[object] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        try:
+            with Session(pg_engine) as session:
+                row = services._persist_literature_reference_from_resolver(
+                    session, actor_id, project_id, authority, native_id, title="Raced once"
+                )
+                with lock:
+                    outcomes.append(row.literature_id)
+        except BaseException as exc:
+            with lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+    assert errors == []
+    assert len(outcomes) == 2
+    assert len(set(outcomes)) == 1
+    winner = outcomes[0]
+
+    with Session(pg_engine) as verify:
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(LiteratureReference)
+                .where(LiteratureReference.native_id == native_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ProjectResourceLink)
+                .where(
+                    ProjectResourceLink.project_id == project_id,
+                    ProjectResourceLink.resource_id == winner,
+                )
+            )
+            == 1
+        )
+
+
+def test_phase13_postgres_evidence_source_integrity_and_search_visibility(
+    pg_session: Session,
+) -> None:
+    from revolab import search as search_service
+    from revolab.enums import EvidenceKind, ResourceKind
+    from revolab.models import Evidence
+    from revolab.testing.fake_literature import FAKE_LITERATURE_AUTHORITY
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Lit search {tag}")
+    registry = _literature_registry()
+    native_id = f"evidence-{tag}"
+    row = _import_literature(
+        pg_session, registry, actor, project.id, FAKE_LITERATURE_AUTHORITY, native_id
+    )
+
+    # Import alone creates zero Evidence.
+    assert (
+        pg_session.scalar(
+            select(func.count()).select_from(Evidence).where(Evidence.project_id == project.id)
+        )
+        == 0
+    )
+    # The imported publication is visible to Phase-12 Project search.
+    hits = search_service.search(pg_session, actor, project.id, query=native_id)
+    assert row.literature_id in {hit.target_id for hit in hits.hits}
+
+    decision = services.create_decision(
+        pg_session, actor, project.id, title=f"Adopt {tag}", statement="s"
+    )
+    evidence = services.create_evidence(
+        pg_session,
+        actor,
+        project.id,
+        kind=EvidenceKind.LITERATURE.value,
+        source_kind=ResourceKind.LITERATURE_REFERENCE.value,
+        source_id=row.literature_id,
+        target_kind="decision",
+        target_id=decision.id,
+    )
+    assert evidence.source_resource_id == row.literature_id
+    assert (
+        pg_session.scalar(
+            select(func.count()).select_from(Evidence).where(Evidence.project_id == project.id)
+        )
+        == 1
+    )
+
+
+def test_phase13_postgres_authorization_negatives(pg_session: Session) -> None:
+    from revolab import literature as literature_service
+    from revolab.domain.errors import AuthorizationError
+    from revolab.models import LiteratureReference
+    from revolab.testing.fake_literature import FAKE_LITERATURE_AUTHORITY
+
+    tag = uuid4().hex[:8]
+    owner = services.create_actor(pg_session)
+    viewer = services.create_actor(pg_session)
+    stranger = services.create_actor(pg_session)
+    project = services.create_project(pg_session, owner, f"Lit authz {tag}")
+    services.add_membership(pg_session, owner, project.id, viewer, Role.VIEWER.value)
+    registry = _literature_registry()
+    authority = FAKE_LITERATURE_AUTHORITY
+    native_id = f"authz-{tag}"
+
+    # A viewer may discover...
+    discovered = literature_service.discover_literature(
+        pg_session,
+        registry,
+        InMemorySecretStore(),
+        viewer,
+        project.id,
+        provider_key="fakeliterature",
+        query="kinase",
+    )
+    assert discovered.candidates
+    # ...but must not import.
+    with pytest.raises(AuthorizationError):
+        _import_literature(pg_session, registry, viewer, project.id, authority, native_id)
+    with pytest.raises(AuthorizationError):
+        _import_literature(pg_session, registry, stranger, project.id, authority, native_id)
+    assert (
+        pg_session.scalar(
+            select(func.count())
+            .select_from(LiteratureReference)
+            .where(LiteratureReference.native_id == native_id)
+        )
+        == 0
+    )

@@ -12,7 +12,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, model_validator
 
-from revolab.capabilities import LEGAL_COMPUTE_INPUT_KINDS
+from revolab.capabilities import (
+    DEFAULT_LITERATURE_RESULT_LIMIT,
+    LEGAL_COMPUTE_INPUT_KINDS,
+    MAX_LITERATURE_QUERY_CHARS,
+    MAX_LITERATURE_RESULT_LIMIT,
+)
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
     PROVIDER_KEY_PATTERN,
@@ -573,6 +578,77 @@ class ComputeArtifactRead(BaseModel):
     checksum: str | None = None
     version_id: str | None = None
     revoked_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# External literature discovery + explicit import (Phase 13) — provider-neutral.
+#
+# A `LiteratureCandidateRead` is EPHEMERAL external discovery data: bounded
+# bibliographic presentation fields returned by a read-only provider lookup. It is
+# deliberately NOT a `ReferenceRead`/`SearchHit` and is never persisted. After an
+# explicit import the durable `LiteratureReference` is returned through the
+# existing `ReferenceRead` contract, so there is no second reference shape.
+# ---------------------------------------------------------------------------
+
+
+class LiteratureCandidateRead(BaseModel):
+    """One bounded, untrusted external discovery candidate (never Project truth)."""
+
+    provider_key: str
+    authority: str
+    native_id: str
+    title: str | None = None
+    authors: list[str] = Field(default_factory=list)
+    journal: str | None = None
+    publication_year: int | None = None
+    doi: str | None = None
+
+
+class LiteratureDiscoveryResultsRead(BaseModel):
+    """The bounded envelope of one external discovery search.
+
+    Deliberately exposes no total count and no relevance score: ordered top-N
+    candidates are the contract, and the query/search text stays opaque provider
+    grammar that Core never parses.
+    """
+
+    provider_key: str
+    query: str
+    candidates: list[LiteratureCandidateRead] = Field(default_factory=list)
+
+
+class LiteratureSearchToolInput(BaseModel):
+    """Canonical input for the Agent-facing read-only literature search Tool.
+
+    Deliberately has NO provider endpoint, url, host, scope, or import field. The
+    provider is the one named by the Tool's own descriptor (the canonical Tool id
+    is the authority, exactly like remote explicit actions); the query is opaque
+    provider search text and the limit is bounded. The Tool can never import or
+    persist anything.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=MAX_LITERATURE_QUERY_CHARS)
+    limit: int = Field(
+        default=DEFAULT_LITERATURE_RESULT_LIMIT, ge=1, le=MAX_LITERATURE_RESULT_LIMIT
+    )
+
+
+class LiteratureImportCreate(BaseModel):
+    """Explicit human import request: stable identity ONLY.
+
+    The client supplies enough to RE-RESOLVE the candidate at the current provider
+    (`provider_key` + durable `(authority, native_id)`) and nothing that will be
+    persisted. A title/authors/journal supplied here would be untrusted
+    browser-provided metadata and is therefore not part of the contract at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_key: str = Field(pattern=PROVIDER_KEY_PATTERN)
+    authority: str = Field(min_length=1, max_length=100)
+    native_id: str = Field(min_length=1, max_length=300)
 
 
 # ---------------------------------------------------------------------------

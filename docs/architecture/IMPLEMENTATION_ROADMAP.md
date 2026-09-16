@@ -392,8 +392,54 @@ collaboration/sharing and the agent.
 
 ---
 
-## Final architecture invariants (enter CLAUDE.md)
+### Phase 13 — External Literature Discovery & Explicit Import
 
+- **Goal:** build REvoLab's first real external-knowledge vertical slice —
+  discover publications REvoLab does not yet know, and let a human explicitly make
+  one Project context — without merging discovery into Project Search, persisting
+  candidates, or letting the Agent import.
+- **Owned domains:** Provider / Capability (the new `LITERATURE_DISCOVERY`
+  capability kind + the NCBI PubMed driver) + application orchestration (the
+  discovery/import sub-boundary; normative owner:
+  `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md`, ADR-0019). The durable
+  `LiteratureReference` stays owned by Evidence/Provenance and the link by Project,
+  so **no Core domain and no DAG change**.
+- **Vertical slice:** NCBI PubMed read-only discovery over the fixed official
+  E-utilities host (ESearch + ONE batched ESummary; `tool`/`email` operator
+  identification; conservative no-key pacing) → provider-neutral
+  `LiteratureDiscoveryCapability` → bounded ephemeral `LiteratureCandidate` →
+  explicit human `Import to Project` → CURRENT provider re-resolution of the stable
+  `(authority=pubmed, native_id=PMID)` identity → canonical global
+  `LiteratureReference` + `ProjectResourceLink` → Phase-12 Project Search visibility
+  → explicit `Use as Evidence` through the EXISTING Evidence operation → the
+  existing Decision draft/commit flow. The Agent gains ONE read-only remote Tool
+  (`{provider}.literature.search`, `automatic`/`remote`/`read_only`).
+- **Acceptance evidence:** the real driver maps a bounded ESearch + batched ESummary
+  into typed candidates and never leaks provider field names; malformed/oversized/
+  unexpected payloads, timeouts, and HTTP failures become typed `CapabilityError`s;
+  the caller cannot supply a URL/host; discovery writes nothing; a viewer may
+  discover but not import; import re-resolves rather than trusting candidate
+  metadata; a tampered client title is structurally impossible; resolve identity
+  mismatch fails closed; repeated import is idempotent; two Projects share ONE global
+  reference; the generic manual-reference share authority is unweakened; concurrent
+  import produces no duplicate and no raw `IntegrityError` (PostgreSQL); import alone
+  creates zero Evidence; explicit Evidence creation uses the imported reference;
+  provider outage after import invalidates nothing; the imported reference becomes
+  Project-searchable; the pre-import candidate does not; the Agent literature search
+  persists nothing and cannot import; hostile provider text changes neither
+  authority nor the ToolCatalog; OpenAPI/TS contracts, frontend tests/build, and the
+  Playwright slice are green; Alembic drift stays clean (no migration).
+- **Non-goals:** semantic/vector retrieval, embeddings, pgvector, RAG, a generic
+  knowledge-provider framework, UniProt/RCSB entity import, DOI/PMID identity
+  reconciliation, full-text/PDF/abstract ingestion, persistent external-search
+  caches, saved searches/alerts, systematic-review workflow, citation graphs,
+  background crawling, literature pagination, an Agent import Tool / `ActionRequest`
+  generalization, NCBI API-key support, external Web search, and provider
+  configuration UI.
+
+---
+
+## Final architecture invariants (enter CLAUDE.md)
 These are derived from the whole design; they are the concisely load-bearing rules:
 
 > 1. **Project organization is not scientific semantics.** Navigation/folders are

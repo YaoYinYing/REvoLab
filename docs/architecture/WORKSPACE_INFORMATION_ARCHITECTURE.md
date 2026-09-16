@@ -64,6 +64,22 @@ cross-Project command palette; it is **not** implemented in Phase 12, and any
 implementation must obey the same authorization projection described there.
 Normative retrieval semantics: `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`.
 
+**Literature (Phase 13, implemented):** the `Literature` nav entry is the external
+discovery surface. It is deliberately SEPARATE from `Search`: `Search` retrieves what
+REvoLab already knows, while `Literature` discovers publications it does not yet
+know. The provider is chosen from the Provider Catalog filtered by the backend-owned
+`literature_discovery` capability kind (never by a hard-coded provider key); a
+bounded query returns external candidates labelled `external · not yet in Project`,
+each with a citation line and its `authority:native_id` identity. An explicit
+`Import to Project` (owner/member only) re-resolves the identity server-side and
+creates the canonical `LiteratureReference` + `ProjectResourceLink`, after which the
+publication appears under `Imported literature` and becomes visible to `Search`. An
+explicit `Use as Evidence` hands the imported reference into the EXISTING Evidence
+creation surface prefilled with `source_kind = literature_reference`; import alone
+never creates Evidence. A viewer sees the discovery surface but no import/interpret
+control. Normative semantics: `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md`
+(ADR-0019).
+
 ## Key pages (what each answers scientifically)
 
 - **Project Overview** — "What is this project's current state, and what should I do

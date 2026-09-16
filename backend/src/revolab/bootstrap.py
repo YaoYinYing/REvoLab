@@ -20,6 +20,10 @@ def build_driver_context(settings: Settings) -> DriverContext:
     settings_map: dict[str, Any] = {
         "revocompute_base_url": settings.revocompute_base_url,
         "revocompute_timeout_seconds": settings.revocompute_timeout_seconds,
+        "ncbi_tool": settings.ncbi_tool,
+        "ncbi_email": settings.ncbi_email,
+        "ncbi_timeout_seconds": settings.ncbi_timeout_seconds,
+        "ncbi_min_request_interval_seconds": settings.ncbi_min_request_interval_seconds,
     }
     return DriverContext(
         environment=settings.environment,
@@ -43,3 +47,24 @@ def install_drivers(registry: DriverRegistry, context: DriverContext, settings: 
         from revolab.testing.fake_compute import FakeComputeDriver
 
         registry.register(FakeComputeDriver())
+    # Phase-13 NCBI PubMed literature discovery. Registered only when the required
+    # operator identity/contact are configured; a HALF-configured deployment is a
+    # deployment error and fails loudly here rather than probing NCBI anonymously.
+    ncbi_configured = bool(settings.ncbi_tool) or bool(settings.ncbi_email)
+    if ncbi_configured:
+        if not (settings.ncbi_tool and settings.ncbi_email):
+            raise RuntimeError(
+                "NCBI literature discovery requires BOTH REVOLAB_NCBI_TOOL and "
+                "REVOLAB_NCBI_EMAIL"
+            )
+        from revolab.drivers.ncbi import NCBIDriver
+
+        registry.register(NCBIDriver())
+    if settings.e2e_fake_literature:
+        if settings.environment == "production":
+            raise RuntimeError(
+                "the in-process fake literature provider must not be enabled in production"
+            )
+        from revolab.testing.fake_literature import FakeLiteratureDriver
+
+        registry.register(FakeLiteratureDriver())

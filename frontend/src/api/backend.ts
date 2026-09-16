@@ -44,6 +44,8 @@ type NoteRevisionCreate = NonNullable<
     paths['/api/projects/{project_id}/notes/{note_id}/revisions']['post']['requestBody']
   >['content']['application/json']
 >
+type LiteratureImportCreate =
+  paths['/api/projects/{project_id}/literature/import']['post']['requestBody']['content']['application/json']
 
 /**
  * The typed wire query of the Project search endpoint. `target_kinds` is derived
@@ -63,6 +65,7 @@ export type {
   DecisionCreate,
   DecisionPatch,
   EvidenceCreate,
+  LiteratureImportCreate,
   MembershipCreate,
   MembershipUpdate,
   NoteCreate,
@@ -75,6 +78,14 @@ export type {
   ResourceShareCreate,
   ToolInvocationCreate,
 }
+
+/**
+ * The typed wire query of the external literature discovery endpoint. `query`
+ * is opaque provider search text; Core never parses provider grammar.
+ */
+export type LiteratureDiscoveryQuery = NonNullable<
+  paths['/api/projects/{project_id}/literature/discover']['get']['parameters']['query']
+>
 
 /**
  * Project-scoped API facade: every call names resources through a Project and
@@ -224,6 +235,29 @@ export function projectApi(actorId: string) {
       api.GET('/api/projects/{project_id}/providers', {
         headers,
         params: { path: { project_id: projectId } },
+      }),
+
+    /**
+     * Bounded read-only external literature discovery (Phase 13). Returns
+     * EPHEMERAL candidates — never Project truth, never a `SearchHit`. It
+     * persists nothing, so the caller must not treat the result as durable.
+     */
+    discoverLiterature: (projectId: string, query: LiteratureDiscoveryQuery) =>
+      api.GET('/api/projects/{project_id}/literature/discover', {
+        headers,
+        params: { path: { project_id: projectId }, query },
+      }),
+
+    /**
+     * Explicit human import of ONE publication by stable identity. The server
+     * re-resolves it at the current provider; the browser never supplies the
+     * title/authors that will be persisted.
+     */
+    importLiterature: (projectId: string, body: LiteratureImportCreate) =>
+      api.POST('/api/projects/{project_id}/literature/import', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
       }),
 
     listComputeTaskKinds: (projectId: string, providerKey: string) =>

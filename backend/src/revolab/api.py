@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from revolab import actions as action_service
+from revolab import literature as literature_service
 from revolab import queries, schemas, services
 from revolab import search as search_service
 from revolab.agent.builder import build_context
@@ -41,7 +42,14 @@ from revolab.agent.conversations import (
 )
 from revolab.agent.model_backend import ModelBackend, OpenAICompatModelBackend
 from revolab.agent.runtime import AgentLoopBounds, AgentTurnRunner
-from revolab.capabilities import CapabilityError, ExternalArtifactRef, InputBinding
+from revolab.capabilities import (
+    DEFAULT_LITERATURE_RESULT_LIMIT,
+    MAX_LITERATURE_QUERY_CHARS,
+    MAX_LITERATURE_RESULT_LIMIT,
+    CapabilityError,
+    ExternalArtifactRef,
+    InputBinding,
+)
 from revolab.config import get_settings
 from revolab.content_store import ContentStore
 from revolab.db import get_session
@@ -783,6 +791,91 @@ def create_literature(
         session, actor_id, project_id, payload.authority, payload.native_id, title=payload.title
     )
     return _reference_read(row.literature_id, ResourceKind.LITERATURE_REFERENCE, row)
+
+
+# ---------------------------------------------------------------------------
+# External literature discovery + explicit import (Phase 13)
+#
+# Discovery is a READ: a viewer may discover literature when ordinary read policy
+# permits, and it never returns a `SearchHit` or a Project resource. Import is an
+# explicit owner/member command that RE-RESOLVES the stable identity at the
+# CURRENT provider before creating/linking the canonical global LiteratureReference.
+# The existing request-derived `POST /literature` above is deliberately preserved
+# with its share-authority semantics; it is NOT repurposed into trusted import.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/projects/{project_id}/literature/discover",
+    response_model=schemas.LiteratureDiscoveryResultsRead,
+)
+def discover_literature(
+    project_id: UUID,
+    provider_key: str = Query(..., pattern=PROVIDER_KEY_PATTERN),
+    q: str = Query(..., min_length=1, max_length=MAX_LITERATURE_QUERY_CHARS),
+    limit: int = Query(
+        DEFAULT_LITERATURE_RESULT_LIMIT, ge=1, le=MAX_LITERATURE_RESULT_LIMIT
+    ),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.LiteratureDiscoveryResultsRead:
+    """Read-only bounded external literature discovery (no persistence).
+
+    `q` is opaque provider search text: Core never parses PubMed `[Title]`/
+    `[MeSH]` grammar — provider vocabulary stays behind the driver.
+    """
+    return literature_service.discover_literature(
+        session,
+        registry,
+        store,
+        actor_id,
+        project_id,
+        provider_key=provider_key,
+        query=q,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/literature/import",
+    response_model=schemas.ReferenceRead,
+    status_code=201,
+)
+def import_literature(
+    project_id: UUID,
+    payload: schemas.LiteratureImportCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.ReferenceRead:
+    """Explicitly import one publication into Project context (idempotent).
+
+    The request carries stable identity only; the server re-resolves it at the
+    current provider and persists ONLY the canonical global LiteratureReference +
+    this Project's `ProjectResourceLink`. Import creates no Evidence.
+    """
+    row = literature_service.import_literature(
+        session,
+        registry,
+        store,
+        actor_id,
+        project_id,
+        provider_key=payload.provider_key,
+        authority=payload.authority,
+        native_id=payload.native_id,
+    )
+    return _literature_import_read(session, project_id, row)
+
+
+def _literature_import_read(
+    session: Session, project_id: UUID, row: Any
+) -> schemas.ReferenceRead:
+    data = _reference_read(row.literature_id, ResourceKind.LITERATURE_REFERENCE, row)
+    data["read_only"] = queries.read_only(session, project_id, row.literature_id)
+    return schemas.ReferenceRead(**data)
 
 
 @router.post("/projects/{project_id}/external-references", status_code=201)

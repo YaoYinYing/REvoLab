@@ -101,7 +101,7 @@ capability kind is deliberately absent until forced by a real provider.
 ```python
 class Capability(Protocol):            # base
     provider_key: str
-    kind: CapabilityKind               # COMPUTE | ARTIFACT_RESOLUTION
+    kind: CapabilityKind               # COMPUTE | ARTIFACT_RESOLUTION | LITERATURE_DISCOVERY
 
 class ComputeCapability(Capability, Protocol):            # REvoCompute (batch)
     def list_task_kinds(self, credentials: CredentialLease) -> list[TaskKindRef]: ...
@@ -120,8 +120,21 @@ class ArtifactResolutionCapability(Capability, Protocol):  # pure read
     def resolve(self, ext_ref, rev=None, credentials: CredentialLease) -> ArtifactHandle: ...
 ```
 
-`ComputeCapability` and `ArtifactResolutionCapability` are the only realized
-protocols (both implemented by the REvoCompute driver).
+`ComputeCapability` and `ArtifactResolutionCapability` are realized by the
+REvoCompute driver; `LiteratureDiscoveryCapability` was added by Phase 13 and is
+realized by the NCBI PubMed driver:
+
+```python
+class LiteratureDiscoveryCapability(Capability, Protocol):   # NCBI PubMed (read-only)
+    def search(self, query, limit, credentials: CredentialLease) -> LiteratureSearchResult: ...
+    def resolve(self, authority, native_id, credentials: CredentialLease) -> LiteratureCandidate: ...
+```
+
+`LITERATURE_DISCOVERY` is deliberately narrow: `search` returns EPHEMERAL
+provider-neutral candidates and `resolve` re-reads ONE publication by its durable
+`(authority, native_id)` identity. Neither persists anything. A candidate is never
+a `LiteratureReference`, a `SearchHit`, Evidence, or Project truth. Normative
+semantics: `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
 
 ## Schema-as-data discovery
 

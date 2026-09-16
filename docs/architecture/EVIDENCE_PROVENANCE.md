@@ -63,6 +63,26 @@ ArtifactReference
 - `ContentStore` is a **Core shared storage primitive**; the owning domain for the
   *artifact record + provenance* remains Evidence/Provenance (see `DOMAIN_BOUNDARIES.md`).
 
+## External discovery: candidate = remote read, reference = durable identity
+
+Phase 13 separates three things that are easy to conflate:
+
+```text
+LiteratureCandidate   ephemeral, untrusted output of a REMOTE read-only lookup
+LiteratureReference   the durable `(authority, native_id)` citation identity card
+Evidence              the Project's interpreted claim ABOUT that publication
+```
+
+`LiteratureReference` stays a small global identity card (`authority`, `native_id`,
+`title`); Phase 13 adds no provider payload, abstract, or metadata column. Authority
+(`pubmed`) is not the resolver/provider (`ncbi`): a future resolver could resolve
+the same identity unchanged. Discovery persists nothing; only an explicit human
+Import creates the reference + `ProjectResourceLink`, and import never creates
+Evidence. Provider outage never invalidates a stored reference. Normative semantics:
+`docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
+
+---
+
 ## Reference = fact, Evidence = interpreted claim
 
 - **Is a RunReference itself Evidence?** **No.** A run record is the provenance

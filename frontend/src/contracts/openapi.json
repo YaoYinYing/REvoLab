@@ -500,10 +500,11 @@
         "type": "string"
       },
       "CapabilityKind": {
-        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly the two realized capability kinds exist. Any additional kind is added\nonly when a concrete, provider-neutral use case forces it \u2014 never pre-\nprojected as speculative vocabulary.",
+        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly realized capability kinds exist. Any additional kind is added only when a\nconcrete, provider-neutral use case forces it \u2014 never pre-projected as\nspeculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a\nreal provider (NCBI PubMed) now realizes it.",
         "enum": [
           "compute",
-          "artifact_resolution"
+          "artifact_resolution",
+          "literature_discovery"
         ],
         "title": "CapabilityKind",
         "type": "string"
@@ -2489,6 +2490,137 @@
           "target_id"
         ],
         "title": "InputConsumedCreate",
+        "type": "object"
+      },
+      "LiteratureCandidateRead": {
+        "description": "One bounded, untrusted external discovery candidate (never Project truth).",
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doi"
+          },
+          "journal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Journal"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "provider_key": {
+            "title": "Provider Key",
+            "type": "string"
+          },
+          "publication_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Year"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "provider_key",
+          "authority",
+          "native_id"
+        ],
+        "title": "LiteratureCandidateRead",
+        "type": "object"
+      },
+      "LiteratureDiscoveryResultsRead": {
+        "description": "The bounded envelope of one external discovery search.\n\nDeliberately exposes no total count and no relevance score: ordered top-N\ncandidates are the contract, and the query/search text stays opaque provider\ngrammar that Core never parses.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/LiteratureCandidateRead"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "provider_key": {
+            "title": "Provider Key",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_key",
+          "query"
+        ],
+        "title": "LiteratureDiscoveryResultsRead",
+        "type": "object"
+      },
+      "LiteratureImportCreate": {
+        "additionalProperties": false,
+        "description": "Explicit human import request: stable identity ONLY.\n\nThe client supplies enough to RE-RESOLVE the candidate at the current provider\n(`provider_key` + durable `(authority, native_id)`) and nothing that will be\npersisted. A title/authors/journal supplied here would be untrusted\nbrowser-provided metadata and is therefore not part of the contract at all.",
+        "properties": {
+          "authority": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Authority",
+            "type": "string"
+          },
+          "native_id": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Native Id",
+            "type": "string"
+          },
+          "provider_key": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+            "title": "Provider Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_key",
+          "authority",
+          "native_id"
+        ],
+        "title": "LiteratureImportCreate",
         "type": "object"
       },
       "LiteratureReferenceCreate": {
@@ -7661,6 +7793,163 @@
           }
         },
         "summary": "Create Literature"
+      }
+    },
+    "/api/projects/{project_id}/literature/discover": {
+      "get": {
+        "description": "Read-only bounded external literature discovery (no persistence).\n\n`q` is opaque provider search text: Core never parses PubMed `[Title]`/\n`[MeSH]` grammar \u2014 provider vocabulary stays behind the driver.",
+        "operationId": "discover_literature_api_projects__project_id__literature_discover_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Provider Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 300,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiteratureDiscoveryResultsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover Literature"
+      }
+    },
+    "/api/projects/{project_id}/literature/import": {
+      "post": {
+        "description": "Explicitly import one publication into Project context (idempotent).\n\nThe request carries stable identity only; the server re-resolves it at the\ncurrent provider and persists ONLY the canonical global LiteratureReference +\nthis Project's `ProjectResourceLink`. Import creates no Evidence.",
+        "operationId": "import_literature_api_projects__project_id__literature_import_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LiteratureImportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Literature"
       }
     },
     "/api/projects/{project_id}/members": {

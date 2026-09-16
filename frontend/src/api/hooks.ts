@@ -1,4 +1,10 @@
-import { projectApi, type ContextSelectionCreate, type ProjectApi, type SearchQuery } from './backend'
+import {
+  projectApi,
+  type ContextSelectionCreate,
+  type LiteratureDiscoveryQuery,
+  type ProjectApi,
+  type SearchQuery,
+} from './backend'
 import { apiErrorMessage } from './client'
 import type {
   ActionRequestRead,
@@ -9,6 +15,7 @@ import type {
   ComputeTaskKindSchemaRead,
   DecisionRead,
   EvidenceRead,
+  LiteratureDiscoveryResultsRead,
   MembershipRead,
   NoteDetailRead,
   NoteRead,
@@ -239,6 +246,33 @@ export function useProjectSearch(
             .searchProject(projectId, request)
             .then((res) =>
               value<ProjectSearchResultsRead>(res as ApiResult<ProjectSearchResultsRead>),
+            )
+        : Promise.resolve(null),
+    [actorId, projectId, requestKey],
+  )
+}
+
+/**
+ * Bounded read-only external literature discovery (Phase 13). `request === null`
+ * means "nothing submitted yet" — discovery is an explicit user action, and a
+ * page reload legitimately requires searching again (candidates are never
+ * cached). The result is EPHEMERAL external data, never Project context.
+ */
+export function useLiteratureDiscovery(
+  actorId: string | null,
+  projectId: string | null,
+  request: LiteratureDiscoveryQuery | null,
+): AsyncState<LiteratureDiscoveryResultsRead | null> {
+  const requestKey = JSON.stringify(request ?? {})
+  return useAsync(
+    () =>
+      actorId && projectId && request
+        ? projectApi(actorId)
+            .discoverLiterature(projectId, request)
+            .then((res) =>
+              value<LiteratureDiscoveryResultsRead>(
+                res as ApiResult<LiteratureDiscoveryResultsRead>,
+              ),
             )
         : Promise.resolve(null),
     [actorId, projectId, requestKey],

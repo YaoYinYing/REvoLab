@@ -32,10 +32,12 @@ merge itself is the explicit human acceptance. The governing invariant is:
 machine-verified state at the merge head (the two human-review P1 fixes are included in
 `83f1827`).
 
-**Phase 12 (Project Search & Bounded Context Retrieval) is implemented on
-`feat/phase-12-project-search` and machine-verified**; its architectural decision is
-**Proposed — pending human acceptance** (`docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`,
-ADR-0018). It adds the first Project-wide retrieval surface — canonical Project truth →
+**Phase 12 (Project Search & Bounded Context Retrieval) is merged into `main`**
+(PR #13, squash commit `12cd29b`,
+`feat(phase 12): add bounded project search and retrieval`); its architectural decision
+is **Accepted** (`docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`, ADR-0018) — the PR #13
+human review and merge is the explicit acceptance event. It added the first Project-wide
+retrieval surface — canonical Project truth →
 authorization-aware bounded lexical search → typed `SearchHit` references → workspace
 search → explicit Add-to-Agent-context through the EXISTING `ContextSelection`/`ContextBuilder`
 → a bounded read-only Agent `project.search` Tool — without introducing RAG, embeddings,
@@ -46,6 +48,29 @@ model, or a new Core domain. The governing invariants are:
 > enlarges Agent context.**
 
 > **Retrieve first, select explicitly, then build context.**
+
+**Phases 1–12 are the accepted `main` state.** The Phase-12 section below preserves the
+machine evidence recorded at the feature-branch head (`b26524d..0ea18ac` plus the
+round-3 fixes) and is not rewritten to look current; the post-merge reconciliation is
+recorded in "Post-merge record" below.
+
+**Phase 13 (External Literature Discovery & Explicit Import) is implemented on
+`feat/phase-13-external-literature` and machine-verified**; its architectural decision
+is **Proposed — pending human acceptance**
+(`docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md`, ADR-0019). It adds REvoLab's
+first real external-knowledge vertical slice: NCBI PubMed read-only discovery →
+provider-neutral `LiteratureDiscoveryCapability` → bounded EPHEMERAL
+`LiteratureCandidate` → explicit human Import → CURRENT provider re-resolution of the
+stable `(authority=pubmed, native_id=PMID)` identity → canonical global
+`LiteratureReference` + `ProjectResourceLink` → Phase-12 Project Search visibility →
+explicit "Use as Evidence" through the EXISTING Evidence operation — without adding a
+persisted candidate/cache table, a generic knowledge-provider framework, RAG, or an
+Agent import tool. The governing invariants are:
+
+> **Discover externally, import explicitly, interpret separately.**
+
+> **External candidate ≠ Project truth. Imported LiteratureReference ≠ Evidence.
+> Provider/resolver ≠ durable identity authority.**
 
 ## Implemented (Phase 1)
 
@@ -2104,7 +2129,8 @@ canonical immutable identity contract must be re-applied. Fixed:
   query parsing/bounds, authorized retrieval, ranking, bounded plain-text snippets
   and the typed `SearchHit` projection; it adds **no Core domain**, no
   `SearchDocument` truth table, and no migration. Normative owner:
-  `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md` (ADR-0018, **Proposed**).
+  `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md` (ADR-0018, **Proposed at the time;
+  now Accepted** per the PR #13 merge).
 - **Closed vocabulary** (`revolab/enums.py`): `SearchScope`
   (`project_shared` / `my_conversations` / `all`), `SearchTargetKind` (a
   retrieval/presentation classifier — deliberately NOT `ResourceKind`), and
@@ -2355,15 +2381,159 @@ mypy clean, PostgreSQL acceptance **24 passed**, alembic drift-clean on SQLite a
 PostgreSQL 16, contracts byte-identical, frontend typecheck clean / **68 passed** /
 build + `check:contracts` clean, Playwright **9 passed**.
 
-## Known deferrals (explicit, not silently postponed)
+## Implemented (Phase 13)
+
+- **One new Core-owned capability kind** (`revolab/enums.py`):
+  `CapabilityKind.LITERATURE_DISCOVERY`. It is added only because a real provider
+  (NCBI PubMed) now realizes it; there is no speculative knowledge/search/citation
+  vocabulary. `project_policy_permits` treats it as a **read-only** capability kind
+  (`READ_ONLY_CAPABILITY_KINDS`), so a viewer may discover.
+- **Provider-neutral capability** (`revolab/capabilities.py`): the frozen
+  `LiteratureDiscoveryCapability` Protocol (`search(query, limit, lease)`,
+  `resolve(authority, native_id, lease)`), the ephemeral
+  `LiteratureCandidate` / `LiteratureSearchResult` value objects (provider_key,
+  authority, native_id + bounded presentation fields, no `metadata: dict` and no raw
+  provider payload), and the SINGLE canonical bound constants (query 300 chars,
+  default 10 / max 20 results, title 500, 20 authors × 200 chars, journal/DOI 200).
+- **Real NCBI driver** (`revolab/drivers/ncbi.py`): `provider_key = "ncbi"`,
+  `display_name = "NCBI PubMed"`, `authorities = ("pubmed",)`, **zero** required
+  credential kinds. It talks ONLY to the fixed official host
+  `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/`, sends the required `tool`/`email`
+  operator identification on every request, paces requests with a conservative
+  0.34 s minimum interval (below NCBI's documented 3 req/s no-key ceiling), and uses
+  ONE ESearch plus ONE batched ESummary per search (never one request per PMID).
+  `resolve` re-reads ONE publication by the durable `(authority, native_id)` identity
+  and fails closed on a mismatched/foreign/malformed identity or an unknown record.
+  Transport safety: caller text is passed through httpx parameter encoding (never
+  concatenated into a URL), TLS is on, timeouts are bounded, the response is
+  streamed under a 1 MiB ceiling, redirects are NOT followed, and every outcome is
+  translated into the Core-owned `CapabilityErrorKind` vocabulary with a sanitized
+  message (no URL, query text, upstream body, operator contact, or traceback).
+  Provider text is normalized (control/format characters stripped, fields truncated)
+  and provider-specific field names never leave the module.
+- **Shared provider-invocation gate**: `domain/compute.py`'s helper is now the public
+  `prepared_capability` (documented as the gate for EVERY capability kind) and
+  `revolab/domain/discovery.py` reaches literature discovery through it, so
+  availability/credential/secret translation still exists exactly once.
+- **Application service** (`revolab/literature.py`): `discover_literature` (readable
+  membership + active Project + current provider availability, zero durable writes,
+  re-bounds the driver projection) and `import_literature` (mutation-capable
+  membership + current provider re-resolution + an EXACT identity match check, then
+  the canonical global reference get-or-create + link). Both are called by the human
+  workspace and the Agent Tool — there is no second provider path.
+- **Trusted resolver persistence** (`revolab/services.py`):
+  `_persist_literature_reference_from_resolver` is reachable only AFTER a successful
+  provider resolve. It reuses the ONE global `(authority, native_id)` reference
+  (`UNIQUE` backstop), links it into the Project, and sets stewardship only when it
+  created the row. The whole create+link block is guarded, so a concurrent loser hits
+  the unique index at flush and resolves to the committed winner — no raw
+  `IntegrityError` reaches the API. A NEW reference takes the resolver's bounded
+  title; an EXISTING reference is linked UNCHANGED (title disagreement is never
+  durable-identity disagreement). The request-derived `create_literature_reference`
+  share-authority rule is unchanged.
+- **`LiteratureReference` stays intentionally small**: `authority`, `native_id`,
+  `title` (+ identity/timestamp). No `metadata_json`/`authors_json`/abstract/
+  provider-payload column; no `literature_candidates`/`external_search_results`/
+  `search_cache`/`pubmed_records` table; no migration (and `alembic check` stays
+  drift-clean on SQLite and PostgreSQL 16, because `CapabilityKind` is not a
+  persisted column).
+- **Typed HTTP surface** (`revolab/api.py`, `revolab/schemas.py`):
+  `GET /api/projects/{project_id}/literature/discover` (typed `provider_key`, `q`,
+  `limit`; opaque provider search text; returns the bounded
+  `LiteratureDiscoveryResultsRead`) and `POST /api/projects/{project_id}/literature/import`
+  (body carries STABLE IDENTITY ONLY — `provider_key`/`authority`/`native_id`,
+  `extra="forbid"` — and returns the EXISTING typed `ReferenceRead`). The existing
+  request-derived `POST /api/projects/{project_id}/literature` is deliberately
+  preserved with its share-authority semantics.
+- **Agent Tool** (`revolab/tools/catalog.py`, `revolab/tools/remote_reads.py`,
+  `revolab/agent/runtime.py`): `{provider}.literature.search` is projected with
+  `source=provider`, `execution_class=remote`, `side_effect_class=read_only`,
+  `autonomy=automatic`, input `{query, limit}` (no url/host/scope/import field). The
+  Agent loop's remote-tool gate is deliberately NARROWED: a remote Tool is
+  Agent-executable only when it is a registered remote read-only read in
+  `revolab.tools.remote_reads` (matched by capability SUFFIX, never provider key) AND
+  projected `automatic`/`read_only`; every other remote tool still fails closed. The
+  handler calls the SAME application service, consumes the existing tool-result
+  budget, and performs zero persistence. There is NO Agent import Tool and
+  `ActionRequest` is not generalized.
+- **Workspace surface** (`frontend/src/views/Literature.tsx`, `App.tsx`,
+  `components/EvidenceForm.tsx`, `views/Evidence.tsx`): a dense Literature/Discover
+  view whose provider is chosen from the Provider Catalog filtered by the
+  backend-owned `literature_discovery` capability kind (never a hard-coded provider
+  key); external candidates are labelled `external · not yet in Project` with a
+  citation line and `authority:native_id`; an explicit `Import to Project`
+  (owner/member only) and an `Imported literature` list with `Use as Evidence`. The
+  canonical Evidence creation form was EXTRACTED into one shared component (no second
+  Evidence form) and gained optional role/confidence/scope plus a bounded target
+  picker, so the literature hand-off reuses the EXISTING Evidence operation. All
+  provider text is rendered as inert text. `CapabilityKind`/`ResourceKind`/enum
+  vocabularies come from the generated contract.
+
+## Verified evidence (Phase 13)
+
+Commands run on this branch head:
+
+```text
+ruff check backend                                  All checks passed
+mypy (strict, 59 source files)                      Success: no issues found
+pytest (SQLite)                                     590 passed, 30 skipped
+alembic upgrade head + alembic check (SQLite)       no new upgrade operations
+alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
+pytest backend/tests/test_postgres_integration.py   30 passed (migrated PostgreSQL)
+pytest backend/tests/test_pubmed_driver.py          61 passed (deterministic HTTP)
+pytest backend/tests/test_literature.py             34 passed
+pytest backend/tests/test_literature_agent.py       12 passed
+python -m revolab.export_openapi -> openapi.json    refreshed (byte-identical after export)
+frontend: npm run typecheck                         clean
+frontend: npm run test                              79 passed
+frontend: npm run build                             built
+frontend: npm run check:contracts                   clean (generation idempotent)
+playwright test (real FastAPI + DB + fake provider) 12 passed
+git diff --check                                    clean
+```
+
+Phase-13 regressions cover, with mutation-sensitive assertions: the real driver maps
+a bounded ESearch + batched ESummary into typed candidates; provider field names
+never leak past the driver; `ncbi` (resolver) is distinct from `pubmed` (authority);
+malformed PMIDs/payloads fail closed; over-bound query/limit/result/response-bytes
+fail closed; timeouts and HTTP statuses map to typed `CapabilityError`s; a
+redirect is not followed; caller/operator/upstream text never leaks into an error
+message; the pacer enforces the minimum interval; discovery performs ZERO durable
+writes and creates no candidate/cache row; an external candidate is absent from
+Project Search before import; a viewer may discover but not import; an import
+re-resolves the CURRENT provider record rather than trusting search-time metadata; a
+client-supplied title is structurally impossible (`extra=forbid`); a resolve identity
+mismatch fails closed with no reference/link; repeated import is idempotent; two
+Projects share ONE global reference with independent links; the trusted import path
+does not weaken the generic manual-reference share authority; import persists only
+the intended rows (stealth `Evidence`/`Decision`/`Note`/`ExternalReference`/
+`ScientificObject` counts are asserted zero); import alone creates zero Evidence and
+an explicit canonical Evidence creation then references the imported publication;
+provider outage after import invalidates nothing and the reference stays searchable;
+the Agent Tool is `remote`/`read_only`/`automatic` with a `{query, limit}` schema and
+no import Tool exists; an Agent turn executes it and creates zero
+`LiteratureReference`/`Evidence`/`ActionRequest`/`RunReference`/`ToolInvocation`; a
+hostile provider title stays inert tool-result data that changes neither authority
+nor the ToolCatalog and cannot auto-execute an explicit action; PostgreSQL proves the
+global unique identity backstop and that concurrent same/cross-Project imports
+produce exactly one reference with no raw `IntegrityError`; the browser slice proves
+search → candidate not in Project Search → reload leaves nothing → import →
+Project Search finds it → Use as Evidence prefilled → Evidence created, plus the
+viewer, provider-failure, hostile-text, and repeated-import negatives.
 
 ## Known deferrals (explicit, not silently postponed)
+
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
-- Remote provider tool execution inside the Agent loop (the Agent surfaces remote
-  tools from the same catalog and converts remote `explicit_action` into a durable
-  Action Request, but never autonomously crosses the external boundary; remote
-  reads remain on the human capability endpoints — documented in
-  `docs/architecture/PROJECT_AGENT_RUNTIME.md` and `AGENT_ACTION_HANDOFF.md`).
+- Remote provider tool execution inside the Agent loop is **narrowed, not removed,
+  by Phase 13**: the Agent now autonomously executes exactly the remote READ-ONLY
+  `automatic` Tools registered in `revolab.tools.remote_reads`
+  (`{provider}.literature.search`). Every other remote tool — including remote
+  compute reads and every remote `explicit_action` (which becomes a durable Action
+  Request) — is still never autonomously crossed; remote reads remain on the human
+  capability endpoints, and the Agent still cannot submit compute, commit a Decision,
+  or import. Documented in `docs/architecture/PROJECT_TOOL_HARNESS.md`,
+  `EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019), `PROJECT_AGENT_RUNTIME.md` and
+  `AGENT_ACTION_HANDOFF.md`.
 - Phase-11 accepted limitation: a process hard-killed after the durable one-shot
   claim and before the outcome write leaves the Action Request in `executing`. It is
   reported honestly as an in-progress claim with its claim time, is never
@@ -2397,6 +2567,23 @@ build + `check:contracts` clean, Playwright **9 passed**.
   and a cross-Project top-bar command palette. Phase 12 adds **no migration**: the
   canonical schema plus the existing indexes are drift-clean on SQLite and
   PostgreSQL 16, and a derived index requires its own freshness/authorization ADR.
+- Phase-13 deferrals (explicit, documented in `EXTERNAL_LITERATURE_DISCOVERY.md` §14
+  and ADR-0019): semantic/vector retrieval, embeddings, pgvector, RAG, a generic
+  knowledge-provider framework beyond the real PubMed case, UniProt/RCSB external
+  entity discovery/import, the `ExternalReference → ScientificObject imported_as`
+  slice, DOI/PMID identity reconciliation and citation-graph construction, full-text
+  literature resolution, PDF acquisition, PMC fetch, abstract/full-text persistence
+  and chunking, a persistent external-search cache, saved searches/alerts,
+  systematic-review workflow, background crawling, literature pagination beyond a
+  bounded top-N, an Agent-proposed import through `ActionRequest`, NCBI API-key /
+  account / OAuth support, external Web search, and any provider configuration UI
+  (operator configuration stays deployment/config). Phase 13 adds **no migration**;
+  `alembic check` is drift-clean on SQLite and PostgreSQL 16. Live NCBI acceptance is
+  deliberately not CI truth: the real driver is tested over an injected deterministic
+  HTTP transport with synthetic citation metadata (no copyrighted fixture), and the
+  browser/application slices use an in-process fake realizing the SAME capability
+  boundary through the SAME Driver/Capability registry. An opt-in manual live smoke
+  may exist but is not CI truth.
 
 ## Working set
 
@@ -2430,3 +2617,20 @@ occupying a request worker indefinitely), with its own regression. Full gates re
 backend **343 passed / 9 skipped**, PostgreSQL acceptance **9 passed** (no drift), frontend
 **24 passed**, Playwright **4 specs**. SQLite remains a single-process dev/test substrate and must
 not be run with multiple worker processes.
+
+### Post-merge record: Phase-12 acceptance reconciliation
+
+PR #13 (`feat(phase 12): add bounded project search and retrieval`) was human-reviewed
+and squash-merged as `12cd29b`. Per the Phase-13 execution contract (TODO.md section 2)
+that merge is the explicit human acceptance of ADR-0018:
+
+- `docs/architecture/adr/ADR-0018-project-search-read-projection.md` — status changed
+  from `Proposed — pending human acceptance` to **Accepted**.
+- `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md` — status header changed to
+  **Accepted**, matching the ADR.
+- This file's Status section now records Phase 12 as accepted `main` state and Phases
+  1–12 as the accepted baseline.
+
+The historical Phase-12 sections above (implementation, the machine evidence recorded at
+the feature-branch head, the independent-review reconciliation, and the explicit
+deferrals) are preserved verbatim; no past test count was rewritten.
