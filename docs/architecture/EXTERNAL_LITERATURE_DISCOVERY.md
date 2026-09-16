@@ -1,10 +1,11 @@
 # External Literature Discovery & Explicit Import
 
-> **Status: Proposed — pending human acceptance** (Phase 13; normative owner of the
-> external-literature discovery/import sub-boundary). Related ADR:
-> `adr/ADR-0019-external-literature-discovery.md` (**Proposed — pending human
-> acceptance**). Both are promoted only by explicit human acceptance at PR review;
-> a green test suite does not promote them.
+> **Status: Accepted** (Phase 13; human-accepted during PR #14 review; squash-merged
+> into `main` as `4b60a4bfeaa2735e77c37cc5bca4425771127bdc`). Normative owner of the
+> external-literature discovery/import sub-boundary. Related ADR:
+> `adr/ADR-0019-external-literature-discovery.md` (**Accepted**). Both were promoted
+> only by explicit human acceptance at PR review; a green test suite never promotes
+> them.
 >
 > This document is normative for external literature discovery and import. It is an
 > **application sub-boundary consumed by Presentation and Agent Context** — the same

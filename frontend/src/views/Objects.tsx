@@ -7,6 +7,7 @@ import type { ObjectType } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, EnumSelect, Field, LoadMore, Loading } from '../components/ui'
 import { DEFAULT_OBJECT_TYPE, OBJECT_TYPES } from '../contracts/enums'
+import { ProteinDiscoveryView } from './ProteinDiscovery'
 
 const PAGE_SIZE = 50
 
@@ -42,6 +43,10 @@ export function ObjectsView({
   const [objectType, setObjectType] = useState<ObjectType>(DEFAULT_OBJECT_TYPE)
   const [description, setDescription] = useState('')
   const [payloadText, setPayloadText] = useState('')
+  // Phase 14: the Objects workspace hosts two compact panels rather than a new
+  // top-level nav entry — "Project objects" (what REvoLab already knows) and
+  // "Discover proteins" (external discovery + explicit import).
+  const [panel, setPanel] = useState<'project' | 'discover'>('project')
 
   async function onCreate(event: React.FormEvent) {
     event.preventDefault()
@@ -79,7 +84,36 @@ export function ObjectsView({
         <p>Scientific objects visible through this project. Selecting one opens its detail graph.</p>
       </div>
 
-      <section className="content-section">
+      <div className="panel-switch" role="tablist" aria-label="Objects workspace">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={panel === 'project'}
+          className={panel === 'project' ? 'panel-tab active' : 'panel-tab'}
+          onClick={() => setPanel('project')}
+        >
+          Project objects
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={panel === 'discover'}
+          className={panel === 'discover' ? 'panel-tab active' : 'panel-tab'}
+          onClick={() => setPanel('discover')}
+        >
+          Discover proteins
+        </button>
+      </div>
+
+      {panel === 'discover' ? (
+        <ProteinDiscoveryView
+          actorId={actorId}
+          projectId={projectId}
+          onOpenObject={onOpenObject}
+        />
+      ) : (
+        <Fragment>
+          <section className="content-section">
         <div className="section-heading">
           <h2>Create object</h2>
         </div>
@@ -169,6 +203,8 @@ export function ObjectsView({
         </div>
         <LoadMore visible={hasMore} onLoad={() => setLimit((value) => value + PAGE_SIZE)} />
       </section>
+        </Fragment>
+      )}
     </div>
   )
 }

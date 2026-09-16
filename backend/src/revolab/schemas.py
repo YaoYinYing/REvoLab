@@ -14,9 +14,13 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, model_
 
 from revolab.capabilities import (
     DEFAULT_LITERATURE_RESULT_LIMIT,
+    DEFAULT_PROTEIN_RESULT_LIMIT,
     LEGAL_COMPUTE_INPUT_KINDS,
     MAX_LITERATURE_QUERY_CHARS,
     MAX_LITERATURE_RESULT_LIMIT,
+    MAX_PROTEIN_NAME_CHARS,
+    MAX_PROTEIN_QUERY_CHARS,
+    MAX_PROTEIN_RESULT_LIMIT,
 )
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
@@ -649,6 +653,97 @@ class LiteratureImportCreate(BaseModel):
     provider_key: str = Field(pattern=PROVIDER_KEY_PATTERN)
     authority: str = Field(min_length=1, max_length=100)
     native_id: str = Field(min_length=1, max_length=300)
+
+
+# ---------------------------------------------------------------------------
+# External protein discovery + explicit import (Phase 14) — provider-neutral.
+#
+# A `ProteinCandidateRead` is EPHEMERAL external discovery data: bounded
+# presentation fields returned by a read-only provider lookup. It is deliberately
+# NOT a ScientificObject, `ReferenceRead`, or `SearchHit`, it carries NO sequence,
+# and it is never persisted. After an explicit import the durable canonical
+# Protein/Sequence objects are returned through `ProteinImportRead` and then read
+# through the EXISTING object-detail surfaces, so there is no second object shape.
+# ---------------------------------------------------------------------------
+
+
+class ProteinCandidateRead(BaseModel):
+    """One bounded, untrusted external protein discovery candidate (never truth)."""
+
+    provider_key: str
+    authority: str
+    native_id: str
+    protein_name: str | None = None
+    gene_name: str | None = None
+    organism_name: str | None = None
+    organism_id: int | None = None
+    sequence_length: int | None = None
+    reviewed: bool | None = None
+
+
+class ProteinDiscoveryResultsRead(BaseModel):
+    """The bounded envelope of one external protein discovery search.
+
+    Deliberately exposes no total count, no relevance score, and no canonical
+    sequence: ordered top-N candidates are the contract, and the query text stays
+    opaque provider grammar that Core never parses.
+    """
+
+    provider_key: str
+    query: str
+    candidates: list[ProteinCandidateRead] = Field(default_factory=list)
+
+
+class ProteinSearchToolInput(BaseModel):
+    """Canonical input for the Agent-facing read-only protein search Tool.
+
+    Deliberately has NO provider endpoint, url, host, scope, sequence, or import
+    field. The provider is the one named by the Tool's own descriptor (the
+    canonical Tool id is the authority, exactly like remote explicit actions); the
+    query is opaque provider search text and the limit is bounded. The Tool can
+    never import or persist anything.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=MAX_PROTEIN_QUERY_CHARS)
+    limit: int = Field(default=DEFAULT_PROTEIN_RESULT_LIMIT, ge=1, le=MAX_PROTEIN_RESULT_LIMIT)
+
+
+class ProteinImportCreate(BaseModel):
+    """Explicit human import request: stable identity ONLY.
+
+    The client supplies enough to RE-RESOLVE the candidate at the current provider
+    (`provider_key` + durable `(authority, native_id)`) and nothing that will be
+    persisted. A protein name, organism, gene name, reviewed status, or sequence
+    supplied here would be untrusted browser-provided scientific data and is
+    therefore not part of the contract at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_key: str = Field(pattern=PROVIDER_KEY_PATTERN)
+    authority: str = Field(min_length=1, max_length=100)
+    native_id: str = Field(min_length=1, max_length=300)
+
+
+class ProteinImportRead(BaseModel):
+    """The canonical identity of one explicit protein import.
+
+    It names the durable objects the import produced or reused — both Series and
+    both immutable Revisions, plus the snapshot `ExternalReference` — and echoes the
+    stable external identity. It does NOT echo the provider payload or the
+    canonical sequence: the ordinary object-detail surfaces own object detail.
+    """
+
+    protein_series_id: UUID
+    protein_revision_id: UUID
+    sequence_series_id: UUID
+    sequence_revision_id: UUID
+    external_reference_id: UUID
+    authority: str
+    native_id: str
+    protein_name: str = Field(max_length=MAX_PROTEIN_NAME_CHARS)
 
 
 # ---------------------------------------------------------------------------

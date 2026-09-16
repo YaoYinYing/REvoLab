@@ -129,6 +129,23 @@ candidate is ephemeral); an explicit human import re-resolves the stable
 `(authority, native_id)` identity and writes only the existing canonical rows.
 Normative owner: `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
 
+### 1d. External Protein Import (application sub-boundary — no domain change)
+
+External protein discovery/import (`revolab.proteins`) is an **application-level
+discovery/import sub-boundary** consumed by Presentation and Agent Context, at the
+same layer as `revolab.literature`/`revolab.search`. It is **not a tenth Core
+domain** and adds no Project → domain edge: the accepted nine-domain DAG is
+unchanged. The provider realizes the Core-owned
+`CapabilityKind.PROTEIN_DISCOVERY` behind the Provider / Capability boundary; the
+durable `ExternalIdentity` and `ExternalReference` remain owned by the Scientific
+Object and Evidence/Provenance domains respectively, the Protein and Sequence
+ScientificObjects (and their immutable Revisions) by the Scientific Object domain,
+and the links/stewardship by Project — so **no ownership moves**. Discovery persists
+nothing (a candidate is ephemeral and sequence-free); an explicit human import
+re-resolves the stable `(authority, native_id)` identity and writes one atomic bundle
+of existing canonical rows. Normative owner:
+`docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
+
 ### 2. Scientific Object Domain
 
 - **Purpose:** represent typed scientific entities (Protein, Sequence, Structure,

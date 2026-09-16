@@ -419,3 +419,34 @@ after import removes nothing. The Agent-facing literature Tool is read-only
 (`{provider}.literature.search`, `automatic`/`remote`/`read_only`); it calls the
 shared discovery service and never imports, never persists, and never enlarges Agent
 context.
+
+---
+
+## 13b. Phase-14 seam: external protein discovery is NOT Project search
+
+Phase 14 adds external protein discovery as a SEPARATE application sub-boundary
+(`docs/architecture/EXTERNAL_PROTEIN_IMPORT.md`, ADR-0020). The three surfaces are
+never merged:
+
+```text
+project.search              -> canonical REvoLab resources already in Project context
+external literature search  -> ephemeral LiteratureCandidates from a remote provider
+external protein search     -> ephemeral ProteinCandidates from a remote provider
+```
+
+`project.search` never calls a provider, and a remote candidate never becomes a
+`SearchHit`. No search index, document table, or retrieval model is added, because an
+imported object's series is already matched through its existing external identity
+mapping:
+
+```text
+external candidate (absent from project.search)
+    -> explicit human Import
+    -> canonical Protein + Sequence ScientificObjects + ExternalIdentity mapping
+    -> now visible to project.search by ACCESSION (both series) and by PROTEIN NAME
+       (the Protein series), with no index to update
+```
+
+The Agent-facing protein Tool is read-only (`{provider}.protein.search`,
+`automatic`/`remote`/`read_only`); it calls the shared discovery service and never
+imports, never persists, and never enlarges Agent context.

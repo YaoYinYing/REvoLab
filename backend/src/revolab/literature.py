@@ -44,11 +44,14 @@ from revolab.capabilities import (
     LiteratureCandidate,
 )
 from revolab.domain import discovery as discovery_domain
-from revolab.domain.errors import AuthorizationError, ValidationError
-from revolab.domain.identity import mutation_capable_membership, readable_membership
+from revolab.domain.errors import ValidationError
+from revolab.domain.identity import (
+    mutation_capable_membership,
+    readable_membership,
+    require_active_project,
+)
 from revolab.drivers import DriverRegistry
 from revolab.enums import CapabilityKind
-from revolab.models import Project
 from revolab.schemas import LiteratureCandidateRead, LiteratureDiscoveryResultsRead
 from revolab.secret_store import SecretStore
 
@@ -169,11 +172,10 @@ def import_literature(
 
 
 def _require_active_project(session: Session, project_id: UUID) -> None:
-    project = session.get(Project, project_id)
-    if project is None or project.deleted_at is not None:
-        # `readable_membership`/`mutation_capable_membership` already guard this;
-        # kept as a fail-closed backstop.
-        raise AuthorizationError("project is not active")
+    # `readable_membership`/`mutation_capable_membership` already guard this; the
+    # shared backstop is kept as defense-in-depth so a tombstoned Project can never
+    # be written through this boundary.
+    require_active_project(session, project_id)
 
 
 def _bounded_query(query: str) -> str:

@@ -236,7 +236,11 @@ def add_conceptual_edge(
     relation_type: RelationType,
     source_series_id: UUID,
     target_series_id: UUID,
+    *,
+    commit: bool = True,
 ) -> GlobalProvenanceEdge:
+    """A Series -> Series conceptual edge. `commit=False` lets a multi-edge atomic
+    bundle (the Phase-14 scientific import) own its own transaction."""
     persistence.validate_grant(session, grant, source_series_id)
     if (
         persistence.resource_kind(session, source_series_id)
@@ -256,6 +260,7 @@ def add_conceptual_edge(
         ResourceKind.SCIENTIFIC_OBJECT_SERIES,
         target_series_id,
         ResourceKind.SCIENTIFIC_OBJECT_SERIES,
+        commit=commit,
     )
 
 
@@ -360,6 +365,59 @@ def import_revision(
         ResourceKind.SCIENTIFIC_OBJECT_REVISION,
     )
     return revision
+
+
+def find_external_references(
+    session: Session, external_identity_id: UUID
+) -> list[ExternalReference]:
+    """Every resolver snapshot recorded over one durable external identity.
+
+    Ordered deterministically so a caller can require EXACTLY one canonical
+    snapshot instead of silently picking an arbitrary row, and so a corrupt
+    two-snapshot state is detectable rather than hidden by row order.
+    """
+    return list(
+        session.scalars(
+            select(ExternalReference)
+            .where(ExternalReference.external_identity_id == external_identity_id)
+            .order_by(ExternalReference.created_at, ExternalReference.external_reference_id)
+        )
+    )
+
+
+def add_import_edge(
+    session: Session,
+    grant: MutationGrant,
+    project_id: UUID,
+    source_id: UUID,
+    revision_id: UUID,
+    *,
+    commit: bool = True,
+) -> GlobalProvenanceEdge:
+    """#7 `imported_as`: one `ArtifactReference | ExternalReference` was imported
+    as ONE concrete immutable Revision.
+
+    Creator authority is the frozen matrix (SCIENTIFIC_GRAPH.md #7): import
+    authority + steward(target Series). The source reference must be readable
+    through the acting Project. Unlike `import_revision` this does not append a
+    revision — it records provenance for a revision that was created as part of
+    the same atomic bundle, so the caller passes `commit=False` to keep the whole
+    bundle in ONE transaction.
+    """
+    target_series_id = persistence.revision_series_id(session, revision_id)
+    persistence.validate_grant(session, grant, target_series_id)
+    source_kind = persistence.resource_kind(session, source_id)
+    persistence.require_visible(session, project_id, source_id)
+    return persistence.insert_edge(
+        session,
+        grant.actor_id,
+        RelationType.IMPORTED_AS,
+        source_id,
+        source_kind,
+        revision_id,
+        ResourceKind.SCIENTIFIC_OBJECT_REVISION,
+        commit=commit,
+    )
 
 
 # ---------------------------------------------------------------------------

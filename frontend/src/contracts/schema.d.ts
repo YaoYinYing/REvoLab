@@ -819,6 +819,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/proteins/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discover Proteins
+         * @description Read-only bounded external protein discovery (no persistence).
+         *
+         *     `q` is opaque provider search text: Core never parses UniProtKB
+         *     `protein_name:`/`organism_id:` grammar — provider vocabulary stays behind the
+         *     driver.
+         */
+        get: operations["discover_proteins_api_projects__project_id__proteins_discover_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/proteins/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Protein
+         * @description Explicitly import one protein + its canonical sequence (idempotent).
+         *
+         *     The request carries stable identity only; the server re-resolves it at the
+         *     current provider, builds the canonical normalized scientific snapshot itself, and
+         *     persists ONE atomic bundle. The canonical sequence is never accepted from the
+         *     client and is never echoed in the response.
+         */
+        post: operations["import_protein_api_projects__project_id__proteins_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/providers": {
         parameters: {
             query?: never;
@@ -1501,10 +1550,11 @@ export interface components {
          *     Only realized capability kinds exist. Any additional kind is added only when a
          *     concrete, provider-neutral use case forces it — never pre-projected as
          *     speculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a
-         *     real provider (NCBI PubMed) now realizes it.
+         *     real provider (NCBI PubMed) now realizes it; `PROTEIN_DISCOVERY` was added by
+         *     Phase 14 because a real provider (UniProt) now realizes it.
          * @enum {string}
          */
-        CapabilityKind: "compute" | "artifact_resolution" | "literature_discovery";
+        CapabilityKind: "compute" | "artifact_resolution" | "literature_discovery" | "protein_discovery";
         /** CitationCreate */
         CitationCreate: {
             /** @default supports */
@@ -2854,6 +2904,106 @@ export interface components {
          * @enum {string}
          */
         ProjectVisibility: "private" | "shared_with_members";
+        /**
+         * ProteinCandidateRead
+         * @description One bounded, untrusted external protein discovery candidate (never truth).
+         */
+        ProteinCandidateRead: {
+            /** Authority */
+            authority: string;
+            /** Gene Name */
+            gene_name?: string | null;
+            /** Native Id */
+            native_id: string;
+            /** Organism Id */
+            organism_id?: number | null;
+            /** Organism Name */
+            organism_name?: string | null;
+            /** Protein Name */
+            protein_name?: string | null;
+            /** Provider Key */
+            provider_key: string;
+            /** Reviewed */
+            reviewed?: boolean | null;
+            /** Sequence Length */
+            sequence_length?: number | null;
+        };
+        /**
+         * ProteinDiscoveryResultsRead
+         * @description The bounded envelope of one external protein discovery search.
+         *
+         *     Deliberately exposes no total count, no relevance score, and no canonical
+         *     sequence: ordered top-N candidates are the contract, and the query text stays
+         *     opaque provider grammar that Core never parses.
+         */
+        ProteinDiscoveryResultsRead: {
+            /** Candidates */
+            candidates?: components["schemas"]["ProteinCandidateRead"][];
+            /** Provider Key */
+            provider_key: string;
+            /** Query */
+            query: string;
+        };
+        /**
+         * ProteinImportCreate
+         * @description Explicit human import request: stable identity ONLY.
+         *
+         *     The client supplies enough to RE-RESOLVE the candidate at the current provider
+         *     (`provider_key` + durable `(authority, native_id)`) and nothing that will be
+         *     persisted. A protein name, organism, gene name, reviewed status, or sequence
+         *     supplied here would be untrusted browser-provided scientific data and is
+         *     therefore not part of the contract at all.
+         */
+        ProteinImportCreate: {
+            /** Authority */
+            authority: string;
+            /** Native Id */
+            native_id: string;
+            /** Provider Key */
+            provider_key: string;
+        };
+        /**
+         * ProteinImportRead
+         * @description The canonical identity of one explicit protein import.
+         *
+         *     It names the durable objects the import produced or reused — both Series and
+         *     both immutable Revisions, plus the snapshot `ExternalReference` — and echoes the
+         *     stable external identity. It does NOT echo the provider payload or the
+         *     canonical sequence: the ordinary object-detail surfaces own object detail.
+         */
+        ProteinImportRead: {
+            /** Authority */
+            authority: string;
+            /**
+             * External Reference Id
+             * Format: uuid
+             */
+            external_reference_id: string;
+            /** Native Id */
+            native_id: string;
+            /** Protein Name */
+            protein_name: string;
+            /**
+             * Protein Revision Id
+             * Format: uuid
+             */
+            protein_revision_id: string;
+            /**
+             * Protein Series Id
+             * Format: uuid
+             */
+            protein_series_id: string;
+            /**
+             * Sequence Revision Id
+             * Format: uuid
+             */
+            sequence_revision_id: string;
+            /**
+             * Sequence Series Id
+             * Format: uuid
+             */
+            sequence_series_id: string;
+        };
         /**
          * ProviderCapabilityRead
          * @description One realized capability of a provider, with the calling Actor's derived
@@ -5612,6 +5762,80 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_proteins_api_projects__project_id__proteins_discover_get: {
+        parameters: {
+            query: {
+                provider_key: string;
+                q: string;
+                limit?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProteinDiscoveryResultsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_protein_api_projects__project_id__proteins_import_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProteinImportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProteinImportRead"];
                 };
             };
             /** @description Validation Error */

@@ -81,6 +81,32 @@ Import creates the reference + `ProjectResourceLink`, and import never creates
 Evidence. Provider outage never invalidates a stored reference. Normative semantics:
 `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
 
+**Phase 14 extends this to a biological entity, and adds one more distinction.**
+Importing an external protein creates **scientific objects and provenance**, not
+interpretation, and a *snapshot* of the external record rather than a live view:
+
+```text
+ProteinCandidate       ephemeral, untrusted output of a REMOTE read-only lookup (no sequence)
+ExternalIdentity       the durable `(authority, native_id)` — global, not Project-owned
+ExternalReference      immutable resolver snapshot provenance over THAT identity
+Protein ScientificObject   the biological concept (one immutable initial Revision)
+Sequence ScientificObject  the exact canonical amino-acid content (its own Revision)
+Evidence / Decision    the Project's interpretation (a SEPARATE, explicit human act)
+```
+
+Protein and Sequence are two distinct ScientificObjects joined by the typed
+`represents` relation, never one payload: a Protein is a concept, a Sequence is
+content. The `ExternalReference.checksum` is a deterministic digest of the
+**normalized scientific bundle** (`{protein_payload, sequence_payload}`) — it is
+snapshot identity, **not proof of origin**; origin is the ExternalIdentity +
+ExternalReference + `imported_as` provenance chain. Import creates zero Evidence and
+zero Decision, and an already-imported object is never silently mutated or refreshed:
+a changed external record raises a typed conflict, because whether an external change
+means a new revision, a new object, an alias, or a correction is a separate scientific
+question that Phase 14 deliberately does not answer. Provider outage never invalidates
+an imported object or its provenance. Normative semantics:
+`docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
+
 ---
 
 ## Reference = fact, Evidence = interpreted claim

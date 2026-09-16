@@ -129,3 +129,11 @@ export const CAPABILITY_KIND_LITERATURE_DISCOVERY = pick(
 )
 export const RESOURCE_KIND_LITERATURE = pick(RESOURCE_KINDS, 'literature_reference')
 export const EVIDENCE_KIND_LITERATURE = pick(EVIDENCE_KINDS, 'literature')
+
+// External protein aliases (Phase 14): the new capability kind and the scientific
+// object types the protein import surface names come from the generated contract.
+// Provider selection is discovered from the Provider Catalog by CAPABILITY KIND,
+// never by branching on a provider key.
+export const CAPABILITY_KIND_PROTEIN_DISCOVERY = pick(CAPABILITY_KINDS, 'protein_discovery')
+export const OBJECT_TYPE_PROTEIN = pick(OBJECT_TYPES, 'protein')
+export const OBJECT_TYPE_SEQUENCE = pick(OBJECT_TYPES, 'sequence')

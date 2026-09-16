@@ -439,6 +439,62 @@ collaboration/sharing and the agent.
 
 ---
 
+### Phase 14 — UniProt Protein Discovery & Scientific Object Import
+
+- **Goal:** build REvoLab's first external **biological-entity** import —
+  discover protein records REvoLab does not yet know, and let a human explicitly
+  import one as canonical Protein + Sequence ScientificObjects — without merging
+  discovery into Project Search, persisting candidates, mirroring provider
+  annotations, silently refreshing imported objects, or letting the Agent import.
+- **Owned domains:** Provider / Capability (the new `PROTEIN_DISCOVERY` capability
+  kind + the UniProt driver) + application orchestration (the discovery/import
+  sub-boundary; normative owner: `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md`,
+  ADR-0020). `ExternalIdentity` stays owned by Scientific Object, `ExternalReference`
+  and the provenance edges by Evidence/Provenance, and the links/stewardship by
+  Project, so **no Core domain and no DAG change**.
+- **Vertical slice:** UniProt read-only discovery over the fixed official REST host
+  (`/uniprotkb/search` with a bounded `fields` projection; canonical entry by primary
+  accession) → provider-neutral `ProteinDiscoveryCapability` → bounded ephemeral
+  `ProteinCandidate` → explicit human `Import to Project` → CURRENT provider
+  resolution of the active primary `(authority=uniprot, native_id=UniProtKB
+  accession)` → ONE `ExternalIdentity` + ONE immutable `ExternalReference` snapshot →
+  canonical Protein + Sequence ScientificObjects (each with one immutable initial
+  Revision) → `identity`/`sequence` mappings → `Sequence --represents--> Protein` →
+  `ExternalReference --imported_as-->` both revisions → links + new-resource
+  stewardship → Phase-12 Project Search visibility → explicit
+  `ContextSelection`/`ContextBuilder`. The Agent gains ONE read-only remote Tool
+  (`{provider}.protein.search`, `automatic`/`remote`/`read_only`).
+- **Acceptance evidence:** the real driver maps bounded UniProt JSON into typed
+  candidates and never leaks provider field names; inactive/secondary accessions,
+  isoform identifiers, malformed/oversized sequences, length disagreement, oversized
+  bodies, timeouts, redirects, and HTTP failures all fail closed as typed
+  `CapabilityError`s; the caller cannot supply a URL/host; discovery writes nothing;
+  a viewer may discover but not import; import re-resolves rather than trusting
+  client data and builds the normalized snapshot server-side; initial import creates
+  exactly the canonical object/provenance bundle (verified in the database, not just
+  the response); `Sequence represents Protein` is the only direction; one
+  `ExternalReference` is imported as both revisions; the identity maps by
+  `identity`/`sequence`; repeat import is idempotent; two Projects share ONE global
+  bundle and the second never steals stewardship; a changed external snapshot, a
+  manual incomplete mapping, and a twice-snapshotted identity all fail closed with no
+  durable change; a failed import leaves no partial state; same-Project and
+  cross-Project races converge on one bundle with no raw `IntegrityError`
+  (PostgreSQL); import creates zero Evidence and zero Decision; provider outage
+  invalidates nothing; imported objects become Project-searchable; a large Sequence
+  stays bounded in `ProjectContext`; the Agent protein search persists nothing and
+  cannot import; hostile provider text changes neither authority nor the ToolCatalog;
+  a different resolver for the same authority still creates the `uniprot` identity;
+  OpenAPI/TS contracts, frontend tests/build, and the Playwright slice are green;
+  Alembic drift stays clean (no migration).
+- **Non-goals:** external refresh → new revisions, inactive/secondary accession
+  reconciliation, UniProt isoforms, UniProt ID Mapping, RCSB/PDB discovery/import,
+  structure import, UniProt↔PDB reconciliation, GO/domain/PTM/pathway annotation
+  import, a protein feature graph, external sequence alignment, RAG/vector
+  retrieval, embeddings, semantic memory, external Web search, an Agent import Tool,
+  automatic import, background sync/crawling, and provider cache tables.
+
+---
+
 ## Final architecture invariants (enter CLAUDE.md)
 
 These are derived from the whole design; they are the concisely load-bearing rules:

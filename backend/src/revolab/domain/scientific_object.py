@@ -141,15 +141,22 @@ def mark_archived(session: Session, grant: MutationGrant, series_id: UUID) -> No
     session.flush()
 
 
-def get_or_create_external_identity(
-    session: Session, authority: str, native_id: str, *, kind: str | None
-) -> ExternalIdentity:
-    """The Scientific Object domain owns the ExternalIdentity registry."""
-    identity = session.scalar(
+def find_external_identity(
+    session: Session, authority: str, native_id: str
+) -> ExternalIdentity | None:
+    """Read the ExternalIdentity registry for one durable `(authority, native_id)`."""
+    return session.scalar(
         select(ExternalIdentity).where(
             ExternalIdentity.authority == authority, ExternalIdentity.native_id == native_id
         )
     )
+
+
+def get_or_create_external_identity(
+    session: Session, authority: str, native_id: str, *, kind: str | None
+) -> ExternalIdentity:
+    """The Scientific Object domain owns the ExternalIdentity registry."""
+    identity = find_external_identity(session, authority, native_id)
     if identity is not None:
         return identity
     identity = ExternalIdentity(authority=authority, native_id=native_id, kind=kind)

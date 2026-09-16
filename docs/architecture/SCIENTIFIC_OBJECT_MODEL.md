@@ -222,6 +222,34 @@ aliases              → search synonyms used to find, never to cite
 - **Aliases:** a separate, search-oriented, mutable, non-unique list (bound to the
   series).
 
+**Worked example — Phase-14 external protein import.** One canonical UniProtKB entry
+becomes **two** ScientificObjects, one `ExternalIdentity`, and one `ExternalReference`:
+
+```text
+ExternalIdentity(authority="uniprot", native_id="P12345", kind="protein")
+    qualifier="identity", is_canonical=true  ->  ProteinSeries   (the concept)
+    qualifier="sequence", is_canonical=true  ->  SequenceSeries  (the exact content)
+
+Protein payload   {organism, source_sequence_ref: null, chain: null}
+Sequence payload  {kind: "protein", sequence: <canonical amino-acid sequence>}
+
+SequenceSeries --represents--> ProteinSeries
+ExternalReference --imported_as--> ProteinRevision
+ExternalReference --imported_as--> SequenceRevision
+```
+
+Three rules this example fixes:
+
+1. **One `ExternalIdentity` row**, one semantic target per qualifier. Never two
+   identity rows for one accession.
+2. **Protein ≠ Sequence.** The canonical sequence is a `Sequence` revision's content,
+   never a Protein metadata field, and the relationship lives in the typed graph
+   rather than in a payload string.
+3. **The import is a snapshot.** The `ExternalReference.checksum` digests the
+   normalized `{protein_payload, sequence_payload}` bundle, so an external change is
+   detectable and fails closed rather than silently rewriting the revision. A changed
+   external record is never an in-place edit.
+
 Distinct from external *identity* is the **access/resolver provider** (OpenBio, a
 direct UniProt API, REvoCompute) used to *reach* the authority — changing the resolver
 must never change the durable identity. See `PROVIDER_CAPABILITIES.md` (#Authority vs

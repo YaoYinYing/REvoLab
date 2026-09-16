@@ -201,4 +201,69 @@ describe('generated API contract boundary', () => {
       'title',
     ])
   })
+
+  it('Phase-14 protein discovery/import surface is typed, generated and strict', () => {
+    for (const path of [
+      '/api/projects/{project_id}/proteins/discover',
+      '/api/projects/{project_id}/proteins/import',
+    ]) {
+      expect(spec.paths[path], `missing protein path ${path}`).toBeDefined()
+      expect(schemaDts).toContain(JSON.stringify(path))
+    }
+
+    // The new capability kind is a generated contract value, never a hand-written
+    // frontend literal.
+    expect(spec.components.schemas.CapabilityKind.enum).toContain('protein_discovery')
+
+    // An import request carries STABLE IDENTITY ONLY: no protein name, organism,
+    // reviewed status, or sequence, so a tampered browser payload can never become
+    // persisted scientific truth.
+    const importCreate = spec.components.schemas.ProteinImportCreate as {
+      properties?: Record<string, unknown>
+      additionalProperties?: unknown
+    }
+    expect(Object.keys(importCreate.properties ?? {}).sort()).toEqual([
+      'authority',
+      'native_id',
+      'provider_key',
+    ])
+    expect(importCreate.additionalProperties).toBe(false)
+
+    // The import response names the canonical durable objects and NEVER echoes the
+    // canonical sequence: the ordinary object-detail surfaces own object detail.
+    const importRead = spec.components.schemas.ProteinImportRead as {
+      properties?: Record<string, unknown>
+    }
+    expect(Object.keys(importRead.properties ?? {}).sort()).toEqual([
+      'authority',
+      'external_reference_id',
+      'native_id',
+      'protein_name',
+      'protein_revision_id',
+      'protein_series_id',
+      'sequence_revision_id',
+      'sequence_series_id',
+    ])
+
+    // The ephemeral candidate is bounded provider-neutral presentation data with NO
+    // sequence.
+    const candidate = spec.components.schemas.ProteinCandidateRead as {
+      properties?: Record<string, unknown>
+    }
+    expect(Object.keys(candidate.properties ?? {}).sort()).toEqual([
+      'authority',
+      'gene_name',
+      'native_id',
+      'organism_id',
+      'organism_name',
+      'protein_name',
+      'provider_key',
+      'reviewed',
+      'sequence_length',
+    ])
+
+    // The Agent-facing search Tool input is asserted where it is projected into the
+    // ToolCatalog (`backend/tests/test_protein_agent.py`): exactly {query, limit},
+    // extra=forbid, no url/host/sequence/import field, and no protein import Tool.
+  })
 })

@@ -127,6 +127,17 @@ REMOTE read-only tool:
                                 automatic; input {query, limit} — no url/host/scope/import)
 ```
 
+Phase 14 likewise adds no new LOCAL tool and exactly one more REMOTE read-only tool:
+
+```text
+{provider}.protein.search       external protein discovery (remote, read_only,
+                                automatic; input {query, limit} — no url/host/sequence/import)
+```
+
+There is deliberately **no** `{provider}.protein.import` Tool, and `ActionRequest` is
+not generalized to carry one: creating ScientificObjects from an external record
+remains an explicit human Import.
+
 `project.search` is the only Phase-12 addition. It is `automatic` / `local` /
 `read_only` and calls the SAME authorization-aware search application service the
 human workspace uses (never an Agent-only search engine). Its input is a bounded
@@ -140,19 +151,20 @@ Remote REvoCompute tools are projected through the same catalog
 (`{provider}.compute.*`, `{provider}.artifact.resolve`) with
 `execution_class=remote`; they execute only through the existing capability
 endpoints — the Local Tool Runtime never invokes them, and the Agent loop invokes
-only the Phase-13 registered read-only remote reads.
+only the Phase-13/14 registered read-only remote reads.
 
 The Phase-8 Agent loop executes **local** tools through this same runtime. Remote
 tools are surfaced to the model from the same catalog but are not autonomously
 crossed in the loop: remote `explicit_action` becomes a durable **Action Request**,
 and every other remote automatic/policy read remains on the human capability
-endpoints (`docs/architecture/PROJECT_AGENT_RUNTIME.md`) — with the single Phase-13
+endpoints (`docs/architecture/PROJECT_AGENT_RUNTIME.md`) — with the Phase-13/14
 exception described immediately below.
 
-**Phase-13 narrowing (ADR-0019).** Exactly ONE class of remote tool is now also
+**Phase-13/14 narrowing (ADR-0019, ADR-0020).** Exactly ONE class of remote tool is now also
 Agent-executable: a remote READ-ONLY `automatic` read registered in
 `revolab.tools.remote_reads` (`is_remote_read_tool`), matched by the stable
-capability SUFFIX (`.literature.search`) rather than the provider key prefix. Such a
+capability SUFFIX (`.literature.search`, `.protein.search`) rather than the provider
+key prefix. Such a
 read is invoked directly against the SAME application service the human workspace
 calls; it performs zero persistence, consumes the existing tool-result budget, and
 its output stays untrusted data. Every other remote automatic/policy tool is still

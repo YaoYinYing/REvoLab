@@ -80,6 +80,30 @@ never creates Evidence. A viewer sees the discovery surface but no import/interp
 control. Normative semantics: `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md`
 (ADR-0019).
 
+**Objects / Discover proteins (Phase 14, implemented):** the `Objects` workspace hosts
+two compact panels rather than a new top-level entry or a generic external-database
+dashboard:
+
+```text
+Objects
+├ Project objects      what REvoLab already knows (create + collection)
+└ Discover proteins    external protein discovery + explicit import
+```
+
+The provider is chosen from the Provider Catalog filtered by the backend-owned
+`protein_discovery` capability kind (never by a hard-coded provider key); a bounded
+query returns external candidates labelled `external · not yet in Project`, each with
+protein name, gene, organism, accession, length, and reviewed status. An explicit
+`Import to Project` (owner/member only) re-resolves the identity server-side and
+creates the canonical **Protein** and **Sequence** ScientificObjects plus their
+identity/provenance graph, after which the surface links to both through the EXISTING
+object-detail surfaces and both become visible to `Search`. Import alone never creates
+Evidence: a later human may interpret it through the existing Evidence surface. A
+viewer sees the discovery surface but no import control. The only provider-specific
+code is the legal attribution of the data source, which is presentation, not
+capability semantics. Normative semantics:
+`docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
+
 ## Key pages (what each answers scientifically)
 
 - **Project Overview** — "What is this project's current state, and what should I do

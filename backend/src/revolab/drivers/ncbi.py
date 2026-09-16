@@ -28,7 +28,6 @@ import json
 import re
 import threading
 import time
-import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
@@ -45,6 +44,7 @@ from revolab.capabilities import (
     CapabilityError,
     LiteratureCandidate,
     LiteratureSearchResult,
+    bounded_inert_text,
 )
 from revolab.credentials import CredentialLease
 from revolab.drivers import DriverContext
@@ -73,10 +73,6 @@ MAX_RESPONSE_BYTES = 1_048_576  # 1 MiB
 _PMID_RE = re.compile(r"^[0-9]{1,12}$")
 _YEAR_RE = re.compile(r"(?:^|\D)([12][0-9]{3})(?:\D|$)")
 
-# Unicode categories that are never part of bounded presentation text: C0/C1
-# controls, format characters, surrogates, private use, unassigned.
-_STRIPPED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
-
 
 def _sanitize_pmid(value: Any) -> str | None:
     if not isinstance(value, str):
@@ -86,23 +82,12 @@ def _sanitize_pmid(value: Any) -> str | None:
 
 
 def _bounded_text(value: Any, limit: int) -> str | None:
-    """Normalize one external text field into bounded inert presentation text.
+    """Bounded inert presentation text (shared neutral definition).
 
-    Control/format characters are removed (so provider text can never carry
-    terminal escapes or invisible instruction-shaping characters), whitespace is
-    collapsed, and the result is truncated to `limit`. Provider text stays
-    UNTRUSTED data: it is never interpreted as markup, HTML, or instructions.
+    Provider text stays UNTRUSTED data: it is never interpreted as markup, HTML,
+    or instructions.
     """
-    if not isinstance(value, str):
-        return None
-    cleaned = "".join(
-        " " if unicodedata.category(char) in _STRIPPED_CATEGORIES else char
-        for char in value
-    )
-    collapsed = " ".join(cleaned.split())
-    if not collapsed:
-        return None
-    return collapsed[:limit]
+    return bounded_inert_text(value, limit)
 
 
 def _publication_year(value: Any) -> int | None:

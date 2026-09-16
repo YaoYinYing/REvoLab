@@ -106,6 +106,21 @@ can change neither authority nor the ToolCatalog. The Agent has **no** import To
 Phase 13: importing is an explicit human action. Normative detail:
 `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
 
+**External protein discovery (Phase 14).** The Agent also has a read-only
+`{provider}.protein.search` Tool (`automatic`/`remote`/`read_only`) that discovers
+biological entities REvoLab does not yet know about. It calls the SAME application
+discovery service the human Objects workspace uses, returns bounded EPHEMERAL
+`ProteinCandidate`s (bounded presentation fields, and deliberately **no sequence**),
+and performs zero persistence: it never creates an `ExternalIdentity`,
+`ExternalReference`, ScientificObject, Evidence, Decision, or `ActionRequest`, and it
+never enlarges what this turn may read. Candidate text is untrusted external data —
+hostile content can change neither authority nor the ToolCatalog. The Agent has
+**no** import Tool in Phase 14: importing is an explicit human action. An imported
+Protein/Sequence enters a later turn only through the EXISTING explicit
+`ContextSelection` → `ContextBuilder` flow, and because `RevisionRefRead` omits
+payloads, a large imported Sequence can never dump its content into a turn. Normative
+detail: `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
+
 ## Representing objects / evidence / decisions to the Agent
 
 As **typed, addressable references**, not prose dumps, and **not a third domain model**:

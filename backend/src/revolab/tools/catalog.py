@@ -4,10 +4,11 @@ One Actor in one Project resolves exactly one ToolCatalog, consumed by both the
 human workspace and the Agent (TODO.md section 16). Local tools are the closed
 `LocalToolRegistry`; remote tools are the existing Provider capabilities
 projected through the non-secret Provider Catalog (REvoCompute compute +
-artifact resolution, and — since Phase 13 — provider literature discovery, which
-is the ONE registered remote read-only read the Agent may execute). Unavailable provider capabilities are omitted entirely;
-local tools are always listed with their current availability. This is a
-read-only projection: it never invokes anything.
+artifact resolution, provider literature discovery since Phase 13, and provider
+protein discovery since Phase 14). Every registered remote read-only read is
+Agent-executable; every other remote tool fails closed. Unavailable provider
+capabilities are omitted entirely; local tools are always listed with their
+current availability. This is a read-only projection: it never invokes anything.
 """
 
 from __future__ import annotations
@@ -40,6 +41,8 @@ from revolab.schemas import (
     ComputeTaskKindSchemaRead,
     LiteratureDiscoveryResultsRead,
     LiteratureSearchToolInput,
+    ProteinDiscoveryResultsRead,
+    ProteinSearchToolInput,
     ToolCatalogRead,
     ToolDescriptorRead,
 )
@@ -237,6 +240,30 @@ def _provider_tools(
                         source=ToolSource.PROVIDER,
                         provider_key=provider_key,
                         capability_kind=CapabilityKind.LITERATURE_DISCOVERY,
+                    )
+                )
+            elif kind is CapabilityKind.PROTEIN_DISCOVERY:
+                tools.append(
+                    _descriptor(
+                        id=f"{provider_key}{remote_reads.PROTEIN_SEARCH_SUFFIX}",
+                        name=f"{display_name}: search proteins",
+                        description=(
+                            "Search external protein records through the provider and "
+                            "return bounded, untrusted discovery candidates (no sequence). "
+                            "Read-only: it persists nothing, creates no ExternalIdentity/"
+                            "ExternalReference/ScientificObject, and cannot import — an "
+                            "explicit human Import is required to create Project context."
+                        ),
+                        autonomy=AgentToolAutonomy.AUTOMATIC,
+                        execution_class=ToolExecutionClass.REMOTE,
+                        side_effect_class=ToolSideEffectClass.READ_ONLY,
+                        available=True,
+                        availability_reason=None,
+                        input_schema=_schema(ProteinSearchToolInput),
+                        output_schema=_schema(ProteinDiscoveryResultsRead),
+                        source=ToolSource.PROVIDER,
+                        provider_key=provider_key,
+                        capability_kind=CapabilityKind.PROTEIN_DISCOVERY,
                     )
                 )
     return tools

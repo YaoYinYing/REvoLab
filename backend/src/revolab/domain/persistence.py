@@ -13,6 +13,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from revolab.domain.errors import AuthorizationError, NotFoundError, ValidationError
@@ -95,6 +96,25 @@ def link(session: Session, project_id: UUID, resource_id: UUID, *, folder: str |
         session.add(ProjectResourceLink(project_id=project_id, resource_id=resource_id, folder=folder))
 
 
+def is_link_uniqueness_conflict(exc: IntegrityError) -> bool:
+    """Narrow detection of the `uq_link_project_resource` unique constraint.
+
+    `link` is read-then-insert, so two concurrent linkers of the SAME resource
+    into the SAME Project can both observe "not visible". This is the ONE
+    definition of how that specific constraint is recognized, so every idempotent
+    linker (Phase-13 literature, Phase-14 protein) agrees. Unrelated integrity
+    failures return False and are re-raised untouched by the caller."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(diagnostics.constraint_name == "uq_link_project_resource")
+    message = str(orig)
+    return (
+        "UNIQUE constraint failed" in message
+        and "project_resource_links.project_id" in message
+    )
+
+
 def steward(session: Session, project_id: UUID, resource_id: UUID) -> None:
     if session.get(ResourceStewardship, resource_id) is None:
         session.add(ResourceStewardship(resource_id=resource_id, steward_project_id=project_id))
@@ -152,7 +172,17 @@ def insert_edge(
     source_kind: ResourceKind,
     target_id: UUID,
     target_kind: ResourceKind,
+    *,
+    commit: bool = True,
 ) -> GlobalProvenanceEdge:
+    """Insert one immutable global provenance edge.
+
+    `commit=True` (the default) preserves the historical single-edge command
+    behavior. `commit=False` flushes only, so a MULTI-EDGE domain operation that
+    must be atomic (the Phase-14 scientific import bundle) can compose several
+    edges plus their objects into ONE caller-owned transaction. It exists because
+    atomicity across a bundle is a real requirement, not a speculative option.
+    """
     if source_id == target_id:
         raise ValidationError("a relation must connect two distinct nodes")
     # The sink enforces the full frozen matrix: relation_type -> legal endpoint
@@ -171,8 +201,11 @@ def insert_edge(
         created_by=actor_id,
     )
     session.add(edge)
-    session.commit()
-    session.refresh(edge)
+    if commit:
+        session.commit()
+        session.refresh(edge)
+    else:
+        session.flush()
     return edge
 
 
