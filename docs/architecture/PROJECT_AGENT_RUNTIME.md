@@ -234,5 +234,8 @@ POST /api/projects/{project_id}/action-requests/{action_request_id}/reject
 - Authentication/OIDC (the endpoint uses the existing `X-Actor-Id` seam).
 - Live-model acceptance in CI (CI uses the deterministic fake; a live smoke test
   would be opt-in and is not part of normal gates).
-- Remote provider tool execution inside the Agent loop (external-boundary reads
-  remain on the human capability endpoints).
+- Remote provider ACTIONS inside the Agent loop (a remote `explicit_action` becomes
+  a durable Action Request, and remote mutating reads/writes remain on the human
+  capability endpoints). This does NOT cover the Phase-13 registered remote
+  READ-ONLY reads, which the loop does execute — see the narrowing above and
+  `EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).

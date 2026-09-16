@@ -930,9 +930,14 @@ def test_api_discover_maps_an_undecodable_provider_body_to_a_typed_error(client)
         )
         assert response.status_code != 500
         assert response.status_code == 502
-        assert "detail" in response.json()
-        # No upstream body leaks into the envelope.
+        detail = response.json().get("detail")
+        assert isinstance(detail, str) and detail
+        # The envelope carries ONLY the generic typed message: no upstream body,
+        # fixed-host URL, or operator contact leaks.
         assert "not-a-gzip" not in response.text
+        assert "eutils" not in response.text
+        assert "operator@example.test" not in response.text
+        assert "Traceback" not in response.text
     finally:
         _clear_overrides()
 

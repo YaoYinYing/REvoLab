@@ -330,7 +330,9 @@ Phase 11 is exactly one explicit handoff boundary.
 > every such call still becomes a durable Action Request or stays on the human
 > capability endpoints. It does NOT forbid a bounded remote READ-ONLY read: Phase 13
 > lets the loop execute exactly the registered remote read-only reads
-> (`revolab.tools.remote_reads`), which persist nothing and need no authorization.
+> (`revolab.tools.remote_reads`), which persist nothing and need no ACTION-REQUEST
+> authorization (they still run the ordinary current Project read authorization:
+> readable membership, active Project, and project policy).
 > See `EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
 
 ## 13. Accepted limitations

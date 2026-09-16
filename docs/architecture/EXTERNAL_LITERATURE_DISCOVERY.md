@@ -310,6 +310,17 @@ re-derived on every call, and search-time access is never a cached mutation gran
   semantics. The new provider import path is explicitly and separately named
   (`POST /projects/{project_id}/literature/import`).
 
+- **Pre-existing sibling race (out of Phase-13 scope).** The provider-trusted
+  import path guards EVERY link insert (section 11). The request-derived generic
+  reference paths retain their long-standing shape: `create_literature_reference` →
+  `_link_existing_reference`, and the Phase-4 trusted run/artifact helpers, still do
+  a read-then-insert `ProjectResourceLink` without a uniqueness guard. Two
+  simultaneous generic-link requests for the SAME existing reference in the same
+  Project could therefore still surface a raw `IntegrityError`. This is a
+  pre-existing property of accepted Phase-1/4 code, NOT of the Phase-13 import path,
+  and was recorded by the delta review as an out-of-scope residual; routing those
+  paths through the same guarded link helper is a separate, deliberately deferred
+  follow-up (it changes accepted generic-link behavior).
 - **Presentation field, not authority.** The import response reuses the existing
   typed `ReferenceRead`, whose `read_only` flag is derived from current
   stewardship. It is presentation metadata with no Project attribution and grants no

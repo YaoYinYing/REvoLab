@@ -572,8 +572,8 @@ class NCBIDriver:
         """
         if self._client is None:
             return ProviderRuntimeHealth.UNREACHABLE
-        self._pacer.wait()
         try:
+            self._pacer.wait()
             request = self._client.build_request(
                 "GET",
                 _EINFO_PATH,

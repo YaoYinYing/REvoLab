@@ -708,3 +708,24 @@ def test_client_does_not_trust_ambient_proxy_environment(monkeypatch) -> None:
     assert driver._client.trust_env is False
     _capability(driver).search("x", 5, _lease())
     assert seen == ["eutils.ncbi.nlm.nih.gov"]
+
+
+def test_lazy_undecodable_stream_is_a_typed_network_failure() -> None:
+    """The streaming decode path specifically.
+
+    A lazily-streamed body forces `httpx.DecodingError` out of `iter_bytes()` (i.e.
+    inside `_read_bounded`), not out of `client.send`. `DecodingError` is a SIBLING
+    of `TransportError`, so this pins the `httpx.HTTPError` branch: reverting it to
+    `TransportError` would fall through to the generic guard and yield UNKNOWN.
+    """
+    def esearch(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            stream=httpx.ByteStream(b"not-a-gzip-stream"),
+            headers={"content-encoding": "gzip"},
+        )
+
+    driver = _driver(_by_path({"esearch.fcgi": esearch}))
+    with pytest.raises(CapabilityError) as excinfo:
+        _capability(driver).search("x", 5, _lease())
+    assert excinfo.value.kind is CapabilityErrorKind.NETWORK

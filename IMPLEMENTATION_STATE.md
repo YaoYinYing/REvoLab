@@ -2476,11 +2476,11 @@ Commands run on this branch head:
 ```text
 ruff check backend                                  All checks passed
 mypy (strict, 59 source files)                      Success: no issues found
-pytest (SQLite)                                     596 passed, 31 skipped
+pytest (SQLite)                                     597 passed, 31 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
 pytest backend/tests/test_postgres_integration.py   31 passed (migrated PostgreSQL)
-pytest backend/tests/test_pubmed_driver.py          65 passed (deterministic HTTP)
+pytest backend/tests/test_pubmed_driver.py          66 passed (deterministic HTTP)
 pytest backend/tests/test_literature.py             36 passed
 pytest backend/tests/test_literature_agent.py       12 passed
 python -m revolab.export_openapi -> openapi.json    refreshed (byte-identical after export)
@@ -2600,15 +2600,46 @@ regression. Two findings were reproduced independently by more than one reviewer
   presentation mirrors of the backend bounds; the contract-sanctioned residual that
   the manual `POST /literature` can pre-create a reference is now stated explicitly.
 
-Re-run gates after the fixes: backend **596 passed / 31 skipped**, ruff + strict
+Re-run gates after the fixes: backend **597 passed / 31 skipped**, ruff + strict
 mypy clean, PostgreSQL acceptance **31 passed**, alembic drift-clean on SQLite and
 PostgreSQL 16, OpenAPI byte-identical, frontend typecheck clean / **82 passed** /
 build + `check:contracts` clean, Playwright **12 passed**.
 
 Because the fixes materially changed the trusted import/concurrency path and the
 NCBI network boundary, TWO additional fresh read-only delta reviewers were run over
-the fix delta only (see below), keeping the total final-review count at **5**
-(inside the 3..5 budget).
+the fix delta only, keeping the total final-review count at **5** (inside the 3..5
+budget):
+
+- **Delta 1 (import/concurrency) — APPROVE WITH FINDINGS, no P0/P1.** It verified
+  that every link-insert path in the trusted importer is now guarded, that the
+  constraint-name/message detection is correct on PostgreSQL and SQLite, that no
+  inconsistent state or wrongful `ConflictError` is possible, that the new
+  PostgreSQL link-race regression genuinely reproduces the pre-fix bug (it reran it
+  against `0ce6ee7`'s `services.py` and saw only the new test fail), and that the
+  accepted identity/title/stewardship semantics are unchanged. Its single P2 is a
+  **pre-existing, out-of-scope** sibling race in the request-derived generic
+  reference paths (`create_literature_reference` → `_link_existing_reference`, and
+  the Phase-4 trusted run/artifact helpers), now recorded explicitly as a deferred
+  follow-up in `EXTERNAL_LITERATURE_DISCOVERY.md` section 11 rather than silently
+  expanded into Phase 13.
+- **Delta 2 (network/trust boundary + docs) — REQUEST CHANGES, no P0; one valid
+  P1/P2 set, all fixed.** It confirmed the network fix is correct and empirically
+  verified with a 13-case adversarial sweep over the real driver (every provider
+  failure stayed typed; the health probe never raised). Its findings, all fixed in
+  the same pass: (P1) `PROJECT_AGENT_RUNTIME.md`'s "Deferrals" list still asserted
+  that remote provider tool execution stays on the human endpoints, contradicting
+  the new Phase-13 paragraph in the SAME Accepted document — the bullet is now
+  qualified to remote ACTIONS; (P2) `PROJECT_TOOL_HARNESS.md`'s adjacent paragraph
+  repeated the same stale claim — reconciled; (P2) `AGENT_ACTION_HANDOFF.md` said
+  the reads "need no authorization" — corrected to "no ACTION-REQUEST authorization
+  (they still run ordinary Project read authorization)"; (P2) the undecodable-body
+  test exercised httpx's EAGER decode (caught in `client.send`) so the streaming
+  `_read_bounded` decode branch was untested — a new lazy-stream regression pins
+  that branch to a typed `NETWORK` failure (making it mutation-detected); (P2) the
+  end-to-end no-500 test now also asserts the envelope carries only a generic
+  message with no upstream body, fixed-host URL, operator contact, or traceback;
+  (P2 hardening) the health probe's pacer wait now sits inside its never-raise
+  guard.
 
 ## Known deferrals (explicit, not silently postponed)
 

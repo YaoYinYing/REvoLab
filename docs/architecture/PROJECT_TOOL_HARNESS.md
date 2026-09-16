@@ -145,8 +145,9 @@ only the Phase-13 registered read-only remote reads.
 The Phase-8 Agent loop executes **local** tools through this same runtime. Remote
 tools are surfaced to the model from the same catalog but are not autonomously
 crossed in the loop: remote `explicit_action` becomes a durable **Action Request**,
-and remote automatic/policy reads remain on the human capability endpoints
-(`docs/architecture/PROJECT_AGENT_RUNTIME.md`).
+and every other remote automatic/policy read remains on the human capability
+endpoints (`docs/architecture/PROJECT_AGENT_RUNTIME.md`) — with the single Phase-13
+exception described immediately below.
 
 **Phase-13 narrowing (ADR-0019).** Exactly ONE class of remote tool is now also
 Agent-executable: a remote READ-ONLY `automatic` read registered in
