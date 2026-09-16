@@ -2197,7 +2197,7 @@ alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
 pytest backend/tests/test_postgres_integration.py   24 passed (migrated PostgreSQL)
 python -m revolab.export_openapi -> openapi.json    refreshed (byte-identical after export)
 frontend: npm run typecheck                         clean
-frontend: npm run test                              66 passed
+frontend: npm run test                              68 passed
 frontend: npm run build                             built
 frontend: npm run check:contracts                   clean (generation idempotent)
 playwright test (real FastAPI + DB + fake model)    9 passed
@@ -2320,6 +2320,40 @@ CHANGES**, **no P0**. All valid findings were fixed on the same branch:
   suite green, PostgreSQL acceptance green, OpenAPI byte-identical, no determinism or
   authorization defect beyond the above; the round-1 mutation harness confirmed the
   earlier fixes are regression-guarded (each revert fails its regression).
+
+## Final-review follow-up (round 3) — two remaining findings fixed
+
+Two findings remained open after the delta round; both are fixed on the same
+branch/PR with focused, mutation-verified regressions.
+
+- **P1 — ONE authoritative owner for the search-added Agent-context selection.**
+  The hand-off items were copied into AgentView-local state, so removing a chip
+  updated only the copy while the App (the true owner) kept the item: navigating
+  away and back resurrected it. Fixed by removing the duplicated truth —
+  `AgentView` now renders and sends the PARENT-owned `contextItems` and removal
+  calls a parent callback (`App.removeAgentContextItem`), so the App holds the single
+  authoritative selection. Regression: a parent-owned harness removes the chip,
+  unmounts/remounts AgentView, proves the chip is still absent, and proves the next
+  turn's `ContextSelection` excludes the removed id. Mutation-verified: making
+  removal a no-op fails the regression. The Playwright slice now also removes the
+  chip, navigates to Search and back to Agent, asserts the chip stays absent, and
+  asserts the next turn's deterministic model reply shows an empty selection with the
+  removed Decision not echoed again.
+- **P2 — opening a Conversation search hit preserves its identity.** `openSearchHit`
+  dropped `target_id` and merely switched to the Agent view, which always opened the
+  default first conversation. Fixed: the App keeps a Project-scoped
+  `agentConversationId` and AgentView selects/loads THAT conversation when it
+  belongs to the current Actor × Project's own list (a foreign/stale id falls back to
+  the default — no existence oracle). Regressions: opening a non-first conversation
+  loads it (and does not call `getConversation` for the first one), and a foreign
+  hand-off id falls back. Mutation-verified: ignoring the requested id fails the
+  regression. The Playwright slice creates a SECOND conversation, searches its title
+  in `MY_CONVERSATIONS`, clicks Open, and asserts that exact conversation is active.
+
+Re-run gates after these fixes: backend **481 passed / 24 skipped**, ruff + strict
+mypy clean, PostgreSQL acceptance **24 passed**, alembic drift-clean on SQLite and
+PostgreSQL 16, contracts byte-identical, frontend typecheck clean / **68 passed** /
+build + `check:contracts` clean, Playwright **9 passed**.
 
 ## Known deferrals (explicit, not silently postponed)
 

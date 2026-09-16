@@ -85,6 +85,10 @@ export function App() {
   // produced by the Search surface; they are projected into the canonical
   // ContextSelection only when the Agent turn is sent.
   const [agentContextItems, setAgentContextItems] = useState<AgentContextItem[]>([])
+  // A conversation explicitly opened from a search hit: AgentView selects/loads
+  // THIS conversation instead of its default first one. Project-scoped, so a
+  // Project switch clears it.
+  const [agentConversationId, setAgentConversationId] = useState<string | null>(null)
   // A search-selected canonical target to highlight in its existing surface.
   const [focusTarget, setFocusTarget] = useState<{ kind: string; id: string } | null>(null)
   const [showProjectForm, setShowProjectForm] = useState(false)
@@ -118,6 +122,7 @@ export function App() {
     // sent into this Project's Agent turn.
     setAgentNoteIds([])
     setAgentContextItems([])
+    setAgentConversationId(null)
     setFocusTarget(null)
   }, [activeProjectId])
 
@@ -152,6 +157,7 @@ export function App() {
     // Project switch into another Project's Agent turn.
     setAgentNoteIds([])
     setAgentContextItems([])
+    setAgentConversationId(null)
     setFocusTarget(null)
     setView('overview')
   }
@@ -186,6 +192,23 @@ export function App() {
     setView('agent')
   }
 
+  /**
+   * Remove one explicit search -> Agent-context item. The App owns the ONE
+   * authoritative selection, so this is the only mutation path: a removed chip
+   * can never be resurrected by remounting the Agent view.
+   */
+  function removeAgentContextItem(item: AgentContextItem) {
+    setAgentContextItems((current) =>
+      current.filter(
+        (candidate) =>
+          !(
+            candidate.target_kind === item.target_kind &&
+            candidate.target_id === item.target_id
+          ),
+      ),
+    )
+  }
+
   /** Navigate a search hit to its EXISTING canonical surface and select it. */
   function openSearchHit(hit: SearchHitRead) {
     switch (hit.target_kind) {
@@ -207,6 +230,9 @@ export function App() {
       case 'conversation':
         // Conversations live only in the Agent surface; a private hit never
         // becomes shared context and is never auto-selected as a turn's context.
+        // The exact conversation identity is preserved so AgentView opens THAT
+        // conversation rather than its default first one.
+        setAgentConversationId(hit.target_id)
         setView('agent')
         return
       default:
@@ -366,7 +392,9 @@ export function App() {
               actorId={actorId}
               projectId={projectId}
               initialNoteIds={agentNoteIds}
-              initialContextItems={agentContextItems}
+              contextItems={agentContextItems}
+              onRemoveContextItem={removeAgentContextItem}
+              initialConversationId={agentConversationId}
             />
           ) : null}
           {view === 'notes' ? (

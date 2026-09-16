@@ -88,18 +88,31 @@ export function AgentView({
   actorId,
   projectId,
   initialNoteIds = [],
-  initialContextItems = [],
+  contextItems = [],
+  onRemoveContextItem,
+  initialConversationId = null,
 }: {
   actorId: string
   projectId: string
   initialNoteIds?: string[]
   /**
-   * Phase-12 explicit search -> Agent-context handoff. Each item is projected
-   * into the canonical `ContextSelectionCreate` at send time; nothing is added
-   * to context implicitly by searching, and private conversation hits can never
-   * appear here.
+   * Phase-12 explicit search -> Agent-context handoff. These items are owned by
+   * the PARENT (the workspace App), not copied into view-local state: there is
+   * exactly ONE authoritative selection, so removing a chip updates the parent
+   * and navigating away/back cannot resurrect a removed item. Each item is
+   * projected into the canonical `ContextSelectionCreate` at send time; nothing
+   * is added to context implicitly by searching, and private conversation hits
+   * can never appear here.
    */
-  initialContextItems?: AgentContextItem[]
+  contextItems?: AgentContextItem[]
+  /** Parent-owned removal of one explicit hand-off item. */
+  onRemoveContextItem?: (item: AgentContextItem) => void
+  /**
+   * A conversation explicitly opened from the workspace (a conversation search
+   * hit). It is selected/loaded instead of the default first conversation when it
+   * belongs to the current Actor x Project.
+   */
+  initialConversationId?: string | null
 }) {
   const { data: objects } = useObjects(actorId, projectId)
   const { data: artifacts } = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
@@ -111,7 +124,6 @@ export function AgentView({
   const [selectedSeriesId, setSelectedSeriesId] = useState('')
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
   const [selectedNoteId, setSelectedNoteId] = useState(initialNoteIds[0] ?? '')
-  const [contextItems, setContextItems] = useState<AgentContextItem[]>(initialContextItems)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -195,7 +207,6 @@ export function AgentView({
     setSelectedSeriesId('')
     setSelectedArtifactId('')
     setSelectedNoteId(initialNoteIds[0] ?? '')
-    setContextItems(initialContextItems)
     setSavedMessageId(null)
     setHandoffNote(null)
     setActionBusyId(null)
@@ -206,7 +217,15 @@ export function AgentView({
         if (cancelled) return
         const list = res.data ?? []
         setConversations(list)
-        const first = list[0]?.id ?? null
+        // A conversation explicitly opened from the workspace (a search hit) is
+        // selected instead of the default first one — but only when it really
+        // belongs to this Actor x Project's own list (a stale/foreign id falls
+        // back, never an existence oracle).
+        const requested =
+          initialConversationId && list.some((item) => item.id === initialConversationId)
+            ? initialConversationId
+            : null
+        const first = requested ?? list[0]?.id ?? null
         if (first && activeConversationRef.current == null) {
           setActiveConversationId(first)
           activeConversationRef.current = first
@@ -530,17 +549,9 @@ export function AgentView({
                     type="button"
                     className="chip-remove"
                     aria-label={`Remove ${item.title} from agent context`}
-                    onClick={() =>
-                      setContextItems((current) =>
-                        current.filter(
-                          (candidate) =>
-                            !(
-                              candidate.target_kind === item.target_kind &&
-                              candidate.target_id === item.target_id
-                            ),
-                        ),
-                      )
-                    }
+                    // Removal mutates the PARENT-owned selection: there is no
+                    // view-local copy that could resurrect the item on remount.
+                    onClick={() => onRemoveContextItem?.(item)}
                   >
                     ×
                   </button>

@@ -176,9 +176,32 @@ test('project search retrieves canonical context and only explicit selection ent
 
   // The deterministic model received the explicitly selected Decision through the
   // EXISTING canonical context path.
-  await expect(
-    page.getByText(`I read the explicitly selected Decision "${decisionTitle}"`),
-  ).toBeVisible()
+  const decisionEcho = page.getByText(
+    `I read the explicitly selected Decision "${decisionTitle}"`,
+  )
+  await expect(decisionEcho).toBeVisible()
+
+  // --- Removing the chip updates the ONE authoritative selection: navigating
+  // away and back must not resurrect it, and the next turn must exclude it.
+  await page
+    .getByRole('button', { name: `Remove ${decisionTitle} from agent context` })
+    .click()
+  await expect(page.getByLabel('Selected for agent context')).toHaveCount(0)
+
+  await navigation.getByRole('button', { name: 'Search' }).click()
+  await expect(page.getByRole('heading', { name: 'Search', level: 1 })).toBeVisible()
+  await navigation.getByRole('button', { name: 'Agent' }).click()
+  await expect(page.getByRole('heading', { name: 'Agent', level: 1 })).toBeVisible()
+  await expect(page.getByLabel('Selected for agent context')).toHaveCount(0)
+
+  await page
+    .getByPlaceholder('e.g. "Describe this table and draft a conclusion based on it."')
+    .fill('Now what do we know without it?')
+  await page.getByRole('button', { name: 'Send' }).click()
+  // The second turn's context is empty: the deterministic model says so, and the
+  // removed Decision is NOT echoed a second time.
+  await expect(page.getByText('No artifact was selected in context.')).toBeVisible()
+  await expect(decisionEcho).toHaveCount(1)
 
   // --- Private conversation search: own conversation only, labelled as memory.
   await navigation.getByRole('button', { name: 'Search' }).click()
@@ -191,4 +214,20 @@ test('project search retrieves canonical context and only explicit selection ent
   await expect(
     conversationHit.getByRole('button', { name: 'Add to Agent context' }),
   ).toHaveCount(0)
+
+  // --- Opening a NON-FIRST conversation hit selects that exact conversation.
+  const secondTitle = `Second thread ${tag}`
+  const secondConversation = await request.post(
+    `${backendUrl}/api/projects/${project}/agent/conversations`,
+    { headers, data: { title: secondTitle } },
+  )
+  expect(secondConversation.ok()).toBeTruthy()
+  await page.getByLabel('Search project context').fill(secondTitle)
+  await searchButton.click()
+  const secondHit = page.locator('.search-hit', { hasText: secondTitle }).first()
+  await expect(secondHit).toBeVisible()
+  await secondHit.getByRole('button', { name: 'Open' }).click()
+
+  await expect(page.getByRole('heading', { name: 'Agent', level: 1 })).toBeVisible()
+  await expect(page.locator('.conversation-row.active')).toContainText(secondTitle)
 })
