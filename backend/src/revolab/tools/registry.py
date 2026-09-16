@@ -29,6 +29,8 @@ from revolab.schemas import (
     EvidenceRead,
     PlotSpecRead,
     PlotXyCreate,
+    ProjectSearchResultsRead,
+    ProjectSearchToolInput,
     TableDescribeCreate,
     TableDescribeRead,
     TableSelectCreate,
@@ -66,6 +68,10 @@ def _record_draft(ctx: InvocationContext, parsed: BaseModel, _persist: bool) -> 
 
 def _commit(ctx: InvocationContext, parsed: BaseModel, _persist: bool) -> HandlerOutput:
     return handlers.handle_decision_commit(ctx, _as(parsed, DecisionCommitCreate))
+
+
+def _search(ctx: InvocationContext, parsed: BaseModel, _persist: bool) -> HandlerOutput:
+    return handlers.handle_project_search(ctx, _as(parsed, ProjectSearchToolInput))
 
 
 def _as[M: BaseModel](parsed: BaseModel, model: type[M]) -> M:
@@ -235,6 +241,23 @@ ALL_LOCAL_TOOLS: tuple[LocalToolSpec, ...] = (
         output_model=DecisionRead,
         requires_mutation=True,
         handler=_commit,
+    ),
+    LocalToolSpec(
+        id="project.search",
+        name="Search project context",
+        description=(
+            "Search the Project's SHARED context (scientific objects, Evidence, "
+            "Decisions, Notes, durable references) and return bounded typed "
+            "references with plain-text previews. Read-only retrieval: it never "
+            "writes, never changes what this Agent turn may read, never resolves "
+            "provider content, and never searches private conversations."
+        ),
+        autonomy=AgentToolAutonomy.AUTOMATIC,
+        side_effect_class=ToolSideEffectClass.READ_ONLY,
+        input_model=ProjectSearchToolInput,
+        output_model=ProjectSearchResultsRead,
+        requires_mutation=False,
+        handler=_search,
     ),
 )
 

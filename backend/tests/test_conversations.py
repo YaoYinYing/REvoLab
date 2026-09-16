@@ -42,6 +42,7 @@ DOMAIN_TOOL_IDS = frozenset(
         "table.describe",
         "table.select",
         "plot.xy",
+        "project.search",
         "evidence.create",
         "decision.record_draft",
         "decision.commit",

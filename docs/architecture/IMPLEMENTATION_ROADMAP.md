@@ -355,6 +355,43 @@ collaboration/sharing and the agent.
 
 ---
 
+### Phase 12 — Project Search & Bounded Context Retrieval
+
+- **Goal:** close the discovery gap (`"I know this Project contains something
+  relevant, but I do not know its id"`) with an authorization-aware, bounded lexical
+  retrieval surface that never becomes truth, authority, Agent memory, or RAG.
+- **Owned domains:** Agent Context + application orchestration (Search/retrieval
+  sub-boundary; normative owner: `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`,
+  ADR-0018); canonical rows remain the only truth, so **no Core domain and no DAG
+  change**.
+- **Vertical slice:** canonical Project truth → JSON-free bounded query parsing →
+  one SQL corpus query per target kind, filtered/ranked/capped in the database under
+  the current read lens → typed `SearchHit` references with bounded plain-text
+  snippets (PostgreSQL native `to_tsvector`/`ts_rank` ordering; SQLite keeps the same
+  semantic contract) → a Project search view that groups hits by target kind and
+  never presents a superseded Note revision as current → explicit human "Add to
+  Agent context" through the EXISTING `ContextSelectionCreate` (minimally extended
+  with typed `evidence_ids`/`decision_ids`/`reference_ids`) → bounded read-only
+  `project.search` Agent Tool fixed to `PROJECT_SHARED`.
+- **Acceptance evidence:** a member finds canonical rows by name/identifier/label/
+  statement/latest Note body; exact UUID/`native_id`/checksum/title searches never
+  leak across Projects; one Actor never sees another Actor's conversation hits;
+  archived Notes/Evidence/Decisions are excluded; provider unavailability never
+  removes a stored reference hit; over-bound query/limit/kind input fails closed;
+  SQL-like/wildcard input is plain text; hits/snippets stay bounded; the search Tool
+  performs no durable write and never alters a ContextSelection; a hostile hit stays
+  untrusted data; PostgreSQL acceptance proves native lexical matching, latest-Note
+  semantics, private isolation, and bounded top-N without whole-Project
+  materialization; OpenAPI/TS contracts, frontend tests/build, and the Playwright
+  slice are green.
+- **Non-goals:** embeddings/vector DB/pgvector/RAG/semantic memory, central copied
+  `SearchDocument` truth, background indexing services, a persisted search index,
+  external biological/Web search, query DSL/saved searches/faceted engines,
+  historical Note-revision search, cross-Actor conversation search, automatic
+  per-turn search, and any new context model.
+
+---
+
 ## Final architecture invariants (enter CLAUDE.md)
 
 These are derived from the whole design; they are the concisely load-bearing rules:

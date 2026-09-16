@@ -248,6 +248,31 @@ h3 { margin: 0 0 8px; font-size: 12px; }
   font-family: 'DM Mono', monospace; font-size: 9px; cursor: pointer;
 }
 .chip-warn { border-color: #d8b978; color: #8a5a16; background: #f7efdd; }
+/* Phase-12 Project search: dense result list, explicit shared/private framing. */
+.search-form {
+  display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) minmax(0, 2fr) auto;
+  gap: 12px; align-items: end; padding-bottom: 4px;
+}
+.search-results { display: grid; gap: 18px; margin-top: 10px; }
+.search-summary { color: var(--muted); font-family: 'DM Mono', monospace; font-size: 10px; }
+.search-group { display: grid; gap: 2px; }
+.search-group-title { margin: 8px 0 0; font-size: 12px; letter-spacing: 0.04em; color: #50606a; }
+.search-hit-private { border-left: 3px solid #d8b978; padding-left: 10px; }
+.search-snippet { margin: 0; font-size: 12px; line-height: 1.6; color: #33443e; white-space: pre-wrap; }
+.scope-note {
+  display: flex; align-items: center; gap: 7px; margin: 10px 0 0;
+  color: var(--muted); font-size: 11px; line-height: 1.6;
+}
+.list-row.focused {
+  background: #f2f7f1; border-left: 3px solid var(--accent); padding-left: 10px;
+}
+.context-selection { display: grid; gap: 7px; margin-top: 12px; }
+.chip-kind { color: var(--muted); }
+.chip-remove {
+  border: 0; background: transparent; color: #8a5a16; cursor: pointer;
+  font-size: 12px; line-height: 1; padding: 0 0 0 2px;
+}
+@media (max-width: 900px) { .search-form { grid-template-columns: 1fr; } }
 /* Note bodies are bounded Markdown rendered as React elements (never raw HTML). */
 .markdown-body { display: grid; gap: 8px; font-size: 12px; line-height: 1.6; color: #33443e; }
 .markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { margin: 4px 0 0; font-size: 13px; }

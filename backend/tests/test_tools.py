@@ -106,6 +106,7 @@ def test_local_tool_set_is_closed_no_arbitrary_execution():
         "decision.record_draft",
         "evidence.create",
         "plot.xy",
+        "project.search",
         "table.describe",
         "table.select",
     }

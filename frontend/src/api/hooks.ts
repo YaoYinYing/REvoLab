@@ -1,4 +1,4 @@
-import { projectApi, type ContextSelectionCreate, type ProjectApi } from './backend'
+import { projectApi, type ContextSelectionCreate, type ProjectApi, type SearchQuery } from './backend'
 import { apiErrorMessage } from './client'
 import type {
   ActionRequestRead,
@@ -17,6 +17,7 @@ import type {
   ObjectSummaryRead,
   ProjectContextRead,
   ProjectRead,
+  ProjectSearchResultsRead,
   ProviderRead,
   ReferenceRead,
   ResourceKind,
@@ -217,6 +218,30 @@ export function useProjectContext(
     // `selectionKey` is a stable structural dependency so an inline object
     // literal does not retrigger the effect on every render.
     [actorId, projectId, selectionKey],
+  )
+}
+
+/**
+ * Bounded Project search (Phase 12). `request === null` means "nothing
+ * submitted yet" — search is an explicit user action, never an automatic
+ * per-keystroke query, and its result is never merged into Agent context.
+ */
+export function useProjectSearch(
+  actorId: string | null,
+  projectId: string | null,
+  request: SearchQuery | null,
+): AsyncState<ProjectSearchResultsRead | null> {
+  const requestKey = JSON.stringify(request ?? {})
+  return useAsync(
+    () =>
+      actorId && projectId && request
+        ? projectApi(actorId)
+            .searchProject(projectId, request)
+            .then((res) =>
+              value<ProjectSearchResultsRead>(res as ApiResult<ProjectSearchResultsRead>),
+            )
+        : Promise.resolve(null),
+    [actorId, projectId, requestKey],
   )
 }
 

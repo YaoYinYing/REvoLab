@@ -11,6 +11,7 @@ import {
   ListTree,
   NotebookPen,
   Play,
+  Search,
   Server,
   Settings2,
 } from 'lucide-react'
@@ -22,6 +23,8 @@ import { ContextInspector } from './components/ContextInspector'
 import { ErrorBox, Loading } from './components/ui'
 import { ProjectPicker } from './components/ProjectPicker'
 import { PROJECT_VISIBILITY_PRIVATE } from './contracts/enums'
+import { contextItemFromHit, type AgentContextItem } from './views/agentContext'
+import type { SearchHitRead } from './api/types'
 import { AgentView } from './views/Agent'
 import { ComputeView } from './views/Compute'
 import { DecisionsView } from './views/Decisions'
@@ -33,11 +36,13 @@ import { ObjectsView } from './views/Objects'
 import { OverviewView } from './views/Overview'
 import { ProvidersView } from './views/Providers'
 import { RunsAndArtifactsView } from './views/RunsAndArtifacts'
+import { SearchView } from './views/Search'
 import { SettingsView } from './views/Settings'
 import { ToolsView } from './views/Tools'
 
 type View =
   | 'overview'
+  | 'search'
   | 'objects'
   | 'object'
   | 'agent'
@@ -53,6 +58,7 @@ type View =
 
 const NAV = [
   { view: 'overview', label: 'Overview', icon: Home },
+  { view: 'search', label: 'Search', icon: Search },
   { view: 'objects', label: 'Objects', icon: ListTree },
   { view: 'agent', label: 'Agent', icon: Bot },
   { view: 'notes', label: 'Notes', icon: NotebookPen },
@@ -75,6 +81,16 @@ export function App() {
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null)
   const [computeRevisionId, setComputeRevisionId] = useState<string | null>(null)
   const [agentNoteIds, setAgentNoteIds] = useState<string[]>([])
+  // Phase-12 search -> Agent-context handoff. These are explicit human choices
+  // produced by the Search surface; they are projected into the canonical
+  // ContextSelection only when the Agent turn is sent.
+  const [agentContextItems, setAgentContextItems] = useState<AgentContextItem[]>([])
+  // A conversation explicitly opened from a search hit: AgentView selects/loads
+  // THIS conversation instead of its default first one. Project-scoped, so a
+  // Project switch clears it.
+  const [agentConversationId, setAgentConversationId] = useState<string | null>(null)
+  // A search-selected canonical target to highlight in its existing surface.
+  const [focusTarget, setFocusTarget] = useState<{ kind: string; id: string } | null>(null)
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
@@ -101,8 +117,13 @@ export function App() {
   }, [projects.data, activeProjectId])
 
   useEffect(() => {
-    // Any Project change invalidates the Project-scoped Note hand-off.
+    // Any Project change invalidates the Project-scoped Note hand-off and the
+    // search -> Agent-context hand-off: a hit from another Project must never be
+    // sent into this Project's Agent turn.
     setAgentNoteIds([])
+    setAgentContextItems([])
+    setAgentConversationId(null)
+    setFocusTarget(null)
   }, [activeProjectId])
 
   async function createProject(name: string, description: string | null) {
@@ -135,6 +156,9 @@ export function App() {
     // The Note hand-off is Project-scoped: never carry a note id across a
     // Project switch into another Project's Agent turn.
     setAgentNoteIds([])
+    setAgentContextItems([])
+    setAgentConversationId(null)
+    setFocusTarget(null)
     setView('overview')
   }
 
@@ -146,6 +170,75 @@ export function App() {
   function openCompute(revisionId: string | null) {
     setComputeRevisionId(revisionId)
     setView('compute')
+  }
+
+  /**
+   * Explicit "Add to Agent context" from a search hit. Only a canonical,
+   * context-selectable target kind is accepted; the hit is carried as a typed
+   * selection item, never as an implicit context change, and the user sees it
+   * listed in the Agent view before sending.
+   */
+  function addHitToAgentContext(hit: SearchHitRead) {
+    const item = contextItemFromHit(hit)
+    if (!item) return
+    setAgentContextItems((current) =>
+      current.some(
+        (candidate) =>
+          candidate.target_kind === item.target_kind && candidate.target_id === item.target_id,
+      )
+        ? current
+        : [...current, item],
+    )
+    setView('agent')
+  }
+
+  /**
+   * Remove one explicit search -> Agent-context item. The App owns the ONE
+   * authoritative selection, so this is the only mutation path: a removed chip
+   * can never be resurrected by remounting the Agent view.
+   */
+  function removeAgentContextItem(item: AgentContextItem) {
+    setAgentContextItems((current) =>
+      current.filter(
+        (candidate) =>
+          !(
+            candidate.target_kind === item.target_kind &&
+            candidate.target_id === item.target_id
+          ),
+      ),
+    )
+  }
+
+  /** Navigate a search hit to its EXISTING canonical surface and select it. */
+  function openSearchHit(hit: SearchHitRead) {
+    switch (hit.target_kind) {
+      case 'scientific_object_series':
+        openObject(hit.target_id)
+        return
+      case 'note':
+        setFocusTarget({ kind: 'note', id: hit.target_id })
+        setView('notes')
+        return
+      case 'evidence':
+        setFocusTarget({ kind: 'evidence', id: hit.target_id })
+        setView('evidence')
+        return
+      case 'decision':
+        setFocusTarget({ kind: 'decision', id: hit.target_id })
+        setView('decisions')
+        return
+      case 'conversation':
+        // Conversations live only in the Agent surface; a private hit never
+        // becomes shared context and is never auto-selected as a turn's context.
+        // The exact conversation identity is preserved so AgentView opens THAT
+        // conversation rather than its default first one.
+        setAgentConversationId(hit.target_id)
+        setView('agent')
+        return
+      default:
+        setFocusTarget({ kind: hit.target_kind, id: hit.target_id })
+        setView('runs')
+    }
   }
 
   if (bootError) {
@@ -268,6 +361,15 @@ export function App() {
 
         <main className="main-pane">
           {view === 'overview' ? <OverviewView actorId={actorId} projectId={projectId} /> : null}
+          {view === 'search' ? (
+            <SearchView
+              key={`${actorId}:${projectId}`}
+              actorId={actorId}
+              projectId={projectId}
+              onOpenHit={openSearchHit}
+              onAddToAgentContext={addHitToAgentContext}
+            />
+          ) : null}
           {view === 'objects' ? (
             <ObjectsView actorId={actorId} projectId={projectId} onOpenObject={openObject} />
           ) : null}
@@ -290,6 +392,9 @@ export function App() {
               actorId={actorId}
               projectId={projectId}
               initialNoteIds={agentNoteIds}
+              contextItems={agentContextItems}
+              onRemoveContextItem={removeAgentContextItem}
+              initialConversationId={agentConversationId}
             />
           ) : null}
           {view === 'notes' ? (
@@ -297,6 +402,7 @@ export function App() {
               key={`${actorId}:${projectId}`}
               actorId={actorId}
               projectId={projectId}
+              initialNoteId={focusTarget?.kind === 'note' ? focusTarget.id : null}
               onAddToAgentContext={(noteId) => {
                 setAgentNoteIds([noteId])
                 setView('agent')
@@ -307,9 +413,31 @@ export function App() {
             <ComputeView actorId={actorId} projectId={projectId} initialRevisionId={computeRevisionId} />
           ) : null}
           {view === 'analyze' ? <ToolsView actorId={actorId} projectId={projectId} /> : null}
-          {view === 'evidence' ? <EvidenceView actorId={actorId} projectId={projectId} /> : null}
-          {view === 'runs' ? <RunsAndArtifactsView actorId={actorId} projectId={projectId} /> : null}
-          {view === 'decisions' ? <DecisionsView actorId={actorId} projectId={projectId} /> : null}
+          {view === 'evidence' ? (
+            <EvidenceView
+              actorId={actorId}
+              projectId={projectId}
+              focusId={focusTarget?.kind === 'evidence' ? focusTarget.id : null}
+            />
+          ) : null}
+          {view === 'runs' ? (
+            <RunsAndArtifactsView
+              actorId={actorId}
+              projectId={projectId}
+              focusId={
+                focusTarget && focusTarget.kind !== 'note' && focusTarget.kind !== 'evidence' && focusTarget.kind !== 'decision'
+                  ? focusTarget.id
+                  : null
+              }
+            />
+          ) : null}
+          {view === 'decisions' ? (
+            <DecisionsView
+              actorId={actorId}
+              projectId={projectId}
+              focusId={focusTarget?.kind === 'decision' ? focusTarget.id : null}
+            />
+          ) : null}
           {view === 'knowledge' ? <KnowledgeView actorId={actorId} projectId={projectId} /> : null}
           {view === 'providers' ? <ProvidersView actorId={actorId} projectId={projectId} /> : null}
           {view === 'settings' ? (

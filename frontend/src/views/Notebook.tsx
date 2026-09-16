@@ -66,10 +66,13 @@ export function NotebookView({
   actorId,
   projectId,
   onAddToAgentContext,
+  initialNoteId = null,
 }: {
   actorId: string
   projectId: string
   onAddToAgentContext: (noteId: string) => void
+  /** A search-hit Note to open on mount (search navigation reuses this view). */
+  initialNoteId?: string | null
 }) {
   // Offset-based pagination: each page is fetched at a fixed size and appended,
   // so collections beyond the server's per-request cap stay reachable.
@@ -78,7 +81,7 @@ export function NotebookView({
   const [revisionOffset, setRevisionOffset] = useState(0)
   const [revisionItems, setRevisionItems] = useState<NoteRevisionRead[]>([])
   const [showArchived, setShowArchived] = useState(false)
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(initialNoteId)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -196,14 +199,14 @@ export function NotebookView({
 
   useEffect(() => {
     // Scope reset: a new Project must not keep a Note selected from another.
-    setSelectedNoteId(null)
+    setSelectedNoteId(initialNoteId)
     setShowCreate(false)
     setNewTitle('')
     setNewBody('')
     setPendingMentions([])
     setNotice(null)
     setActionError(null)
-  }, [actorId, projectId])
+  }, [actorId, projectId, initialNoteId])
 
   // Only lifecycle-active targets are offered: the backend refuses archived
   // series / revoked references, so the picker must not propose them.

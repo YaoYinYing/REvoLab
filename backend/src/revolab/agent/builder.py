@@ -89,6 +89,9 @@ def build_context(
         or selection.artifact_ids
         or selection.note_ids
         or selection.note_revision_ids
+        or selection.evidence_ids
+        or selection.decision_ids
+        or selection.reference_ids
     )
 
     # Resolve and validate the declarative selection before assembling anything.
@@ -118,6 +121,29 @@ def build_context(
             raise AuthorizationError("selected artifact is not visible in this project")
         selected_artifact_ids.add(artifact_id)
 
+    # Phase 12: explicit typed selection of GLOBAL REFERENCE identity cards. The
+    # field is deliberately restricted to reference kinds AND to references whose
+    # own lifecycle flag is still active (a revoked/archived reference is not
+    # current context); a series/revision id here fails closed instead of
+    # degrading into an opaque resource-id bag.
+    selected_reference_ids: set[UUID] = set()
+    for reference_id in selection.reference_ids or []:
+        kind = visible.get(reference_id)
+        if (
+            kind is None
+            or kind not in _REFERENCE_KINDS
+            or not queries.resource_mention_active(session, reference_id, kind)
+        ):
+            raise AuthorizationError("selected reference is not visible in this project")
+        selected_reference_ids.add(reference_id)
+
+    # Phase 12: explicitly selected Project-scoped Evidence / Decisions (the
+    # human "Add to Agent context" handoff from a search hit). Every id is
+    # validated BEFORE any budget is applied, so a stale/foreign id can never be
+    # skipped by a cap and an archived row is never silently presented as current.
+    selected_evidence_ids = _resolve_selected_evidence(session, project_id, selection.evidence_ids)
+    selected_decision_ids = _resolve_selected_decisions(session, project_id, selection.decision_ids)
+
     # Phase 10: explicitly selected Project Notes. Notes are NOT global resources,
     # so they resolve through the Project-scoped Note read lens — never
     # `visible_resources`. A note in another Project raises the same 403 as an
@@ -146,9 +172,13 @@ def build_context(
 
     ordered_series_ids = sorted(selected_series_ids)
     for series_id in ordered_series_ids[: selection.max_series]:
-        series = series_by_id.get(series_id) or session.get(ScientificObjectSeries, series_id)
+        # A selected series MUST be in the current Project read lens. A revision-
+        # implied owning series that is not visible fails closed rather than being
+        # loaded from the global table (revision => series visibility closure is a
+        # domain invariant, and this projection never widens it).
+        series = series_by_id.get(series_id)
         if series is None:
-            raise NotFoundError("selected series not found")
+            raise AuthorizationError("selected series is not visible in this project")
         series_refs.append(_series_ref(series))
         # Only an EXPLICIT series selection expands visible revisions. A revision-
         # implied series contributes its skeleton only; the explicitly selected
@@ -201,10 +231,19 @@ def build_context(
 
     references: list[ReferenceHeaderRead] = []
     seen_reference_ids: set[UUID] = set()
-    # Explicitly selected artifact identity cards are always included (the
-    # Phase-8 "select the Artifact as context" slice), then reachable reference
-    # headers are added when requested — deduplicated and under one global cap.
-    for artifact_id in sorted(selected_artifact_ids):
+    # Explicitly selected reference identity cards (Phase-12 "Add to context") are
+    # always included first, then explicitly selected artifacts (the Phase-8
+    # specialization of the same idea), then reachable reference headers when
+    # requested — deduplicated and under one global cap.
+    for reference_id in sorted(selected_reference_ids):
+        if len(references) >= selection.max_references:
+            truncated = True
+            break
+        references.append(
+            _reference_header(session, reference_id, visible[reference_id], visible)
+        )
+        seen_reference_ids.add(reference_id)
+    for artifact_id in sorted(selected_artifact_ids - seen_reference_ids):
         if len(references) >= selection.max_references:
             truncated = True
             break
@@ -229,12 +268,25 @@ def build_context(
             truncated = True
 
     evidence_refs: list[EvidenceRefRead] = []
+    seen_evidence_ids: set[UUID] = set()
+    # An EXPLICIT evidence selection is honored unconditionally: the human
+    # declared these identities, so a category switch never silently drops them.
+    for evidence_id in sorted(selected_evidence_ids):
+        if len(evidence_refs) >= selection.max_evidence:
+            truncated = True
+            break
+        evidence = session.get(Evidence, evidence_id)
+        if evidence is not None:
+            evidence_refs.append(_evidence_ref(session, evidence))
+            seen_evidence_ids.add(evidence_id)
     if selection.include_evidence:
         for evidence in session.scalars(
             select(Evidence)
             .where(Evidence.project_id == project_id, Evidence.archived_at.is_(None))
             .order_by(Evidence.created_at)
         ):
+            if evidence.id in seen_evidence_ids:
+                continue
             if not _evidence_touches(evidence, reachable):
                 continue
             if len(evidence_refs) >= selection.max_evidence:
@@ -246,12 +298,25 @@ def build_context(
             truncated = True
 
     decision_refs: list[DecisionRefRead] = []
+    seen_decision_ids: set[UUID] = set()
+    # Same rule: an explicit Decision selection is never dropped by
+    # `include_decisions=False`.
+    for decision_id in sorted(selected_decision_ids):
+        if len(decision_refs) >= selection.max_decisions:
+            truncated = True
+            break
+        decision = session.get(Decision, decision_id)
+        if decision is not None:
+            decision_refs.append(_decision_ref(session, decision))
+            seen_decision_ids.add(decision_id)
     if selection.include_decisions:
         for decision in session.scalars(
             select(Decision)
             .where(Decision.project_id == project_id, Decision.archived_at.is_(None))
             .order_by(Decision.created_at)
         ):
+            if decision.id in seen_decision_ids:
+                continue
             if not _decision_touches(session, decision, reachable):
                 continue
             if len(decision_refs) >= selection.max_decisions:
@@ -609,3 +674,47 @@ def _provider_capability_read(entry: dict[str, Any]) -> Any:
     from revolab.schemas import ProviderRead
 
     return ProviderRead(**entry)
+
+
+def _resolve_selected_evidence(
+    session: Session, project_id: UUID, evidence_ids: list[UUID] | None
+) -> set[UUID]:
+    """Validate explicitly selected Evidence against the CURRENT Project lens.
+
+    An unknown id, a row from another Project, or an archived row all fail closed
+    with the same typed authorization error — never an existence oracle, and never
+    a stale hit silently admitted after the authorization/lifecycle changed.
+    """
+    resolved: set[UUID] = set()
+    for evidence_id in evidence_ids or []:
+        evidence = session.get(Evidence, evidence_id)
+        if (
+            evidence is None
+            or evidence.project_id != project_id
+            or evidence.archived_at is not None
+        ):
+            raise AuthorizationError("selected evidence is not visible in this project")
+        resolved.add(evidence_id)
+    return resolved
+
+
+def _resolve_selected_decisions(
+    session: Session, project_id: UUID, decision_ids: list[UUID] | None
+) -> set[UUID]:
+    """Validate explicitly selected Decisions against the CURRENT Project lens.
+
+    Mirrors `_resolve_selected_evidence`: a draft is selectable (a draft is a
+    proposal the human may want the Agent to read), but an archived or foreign
+    Decision fails closed with the same authorization error.
+    """
+    resolved: set[UUID] = set()
+    for decision_id in decision_ids or []:
+        decision = session.get(Decision, decision_id)
+        if (
+            decision is None
+            or decision.project_id != project_id
+            or decision.archived_at is not None
+        ):
+            raise AuthorizationError("selected decision is not visible in this project")
+        resolved.add(decision_id)
+    return resolved

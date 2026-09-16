@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -520,6 +522,187 @@ describe('Agent view (Phase 9)', () => {
 
     const body = turnMock.mock.calls[0][2] as { selection: { note_ids?: string[] } }
     expect(body.selection.note_ids).toEqual([note.id])
+  })
+
+  it('projects explicit search hand-off items into typed ContextSelection fields (Phase 12)', async () => {
+    const turnMock = vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), createConversationTurn: turnMock } as never)
+
+    const user = userEvent.setup()
+    render(
+      <AgentView
+        actorId="actor-1"
+        projectId="project-1"
+        contextItems={[
+          { target_kind: 'evidence', target_id: 'evidence-1', title: 'Selected evidence' },
+          { target_kind: 'decision', target_id: 'decision-1', title: 'Selected decision' },
+          { target_kind: 'run_reference', target_id: 'run-1', title: 'revocompute:run-1' },
+        ]}
+      />,
+    )
+
+    // The user can SEE what was selected before sending.
+    const handoff = await screen.findByLabelText('Selected for agent context')
+    expect(handoff).toHaveTextContent('Selected evidence')
+    expect(handoff).toHaveTextContent('Selected decision')
+
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'What did we conclude?',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    const body = turnMock.mock.calls[0][2] as {
+      selection: { evidence_ids?: string[]; decision_ids?: string[]; reference_ids?: string[] }
+    }
+    expect(body.selection.evidence_ids).toEqual(['evidence-1'])
+    expect(body.selection.decision_ids).toEqual(['decision-1'])
+    expect(body.selection.reference_ids).toEqual(['run-1'])
+  })
+
+  it('removing a chip updates the parent-owned selection and survives navigating away and back (Phase 12)', async () => {
+    const turnMock = vi.fn().mockResolvedValue({ data: turnRead, error: undefined, response: new Response() })
+    mockedProjectApi.mockReturnValue({ ...defaultApi(), createConversationTurn: turnMock } as never)
+
+    // A parent-owned harness: the App owns the ONE authoritative selection and
+    // AgentView is only a controlled view of it. Unmounting/remounting AgentView
+    // is exactly what "navigate away and back" does in the workspace.
+    function Harness() {
+      const [items, setItems] = useState([
+        { target_kind: 'decision' as const, target_id: 'decision-1', title: 'Selected decision' },
+      ])
+      const [showAgent, setShowAgent] = useState(true)
+      return (
+        <div>
+          <button type="button" onClick={() => setShowAgent((value) => !value)}>
+            Toggle agent
+          </button>
+          {showAgent ? (
+            <AgentView
+              actorId="actor-1"
+              projectId="project-1"
+              contextItems={items}
+              onRemoveContextItem={(item) =>
+                setItems((current) =>
+                  current.filter(
+                    (candidate) =>
+                      !(
+                        candidate.target_kind === item.target_kind &&
+                        candidate.target_id === item.target_id
+                      ),
+                  ),
+                )
+              }
+            />
+          ) : null}
+        </div>
+      )
+    }
+
+    const user = userEvent.setup()
+    render(<Harness />)
+
+    expect(await screen.findByLabelText('Selected for agent context')).toBeInTheDocument()
+    await user.click(
+      screen.getByRole('button', { name: 'Remove Selected decision from agent context' }),
+    )
+    expect(screen.queryByLabelText('Selected for agent context')).not.toBeInTheDocument()
+
+    // Navigate away and back: the removed chip must NOT be resurrected.
+    await user.click(screen.getByRole('button', { name: 'Toggle agent' }))
+    await user.click(screen.getByRole('button', { name: 'Toggle agent' }))
+    await waitFor(() => expect(screen.queryByLabelText('Selected for agent context')).not.toBeInTheDocument())
+
+    // ...and the next Agent turn excludes the removed identity.
+    await user.type(
+      await screen.findByPlaceholderText(/Describe this table and draft a conclusion/),
+      'What did we conclude?',
+    )
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    const body = turnMock.mock.calls[0][2] as {
+      selection: { decision_ids?: string[]; evidence_ids?: string[] }
+    }
+    expect(body.selection.decision_ids).toBeUndefined()
+    expect(body.selection.evidence_ids).toBeUndefined()
+  })
+
+  it('opens the explicitly handed-off conversation instead of the first one (Phase 12)', async () => {
+    const conversationB = {
+      ...conversation,
+      id: '66666666-6666-4666-8666-666666666666',
+      title: 'Conversation B',
+    }
+    const getConversation = vi.fn().mockResolvedValue({
+      data: { ...conversationB, messages: [], total_messages: 0 },
+      error: undefined,
+      response: new Response(),
+    })
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockResolvedValue({
+        data: [conversation, conversationB],
+        error: undefined,
+        response: new Response(),
+      }),
+      getConversation,
+    } as never)
+
+    render(
+      <AgentView
+        actorId="actor-1"
+        projectId="project-1"
+        initialConversationId={conversationB.id}
+      />,
+    )
+
+    await waitFor(() =>
+      expect(getConversation).toHaveBeenCalledWith(
+        'project-1',
+        conversationB.id,
+        expect.objectContaining({ latest: true }),
+      ),
+    )
+    // The default first conversation was NOT opened.
+    expect(getConversation).toHaveBeenCalledTimes(1)
+    // The opened conversation is the active one in the list.
+    const active = document.querySelector('.conversation-row.active')
+    expect(active?.textContent).toContain('Conversation B')
+  })
+
+  it('falls back to the default conversation for a foreign or stale hand-off id (Phase 12)', async () => {
+    const getConversation = vi.fn().mockResolvedValue({
+      data: { ...conversation, messages: [], total_messages: 0 },
+      error: undefined,
+      response: new Response(),
+    })
+    mockedProjectApi.mockReturnValue({
+      ...defaultApi(),
+      listConversations: vi.fn().mockResolvedValue({
+        data: [conversation],
+        error: undefined,
+        response: new Response(),
+      }),
+      getConversation,
+    } as never)
+
+    render(
+      <AgentView
+        actorId="actor-1"
+        projectId="project-1"
+        initialConversationId="99999999-9999-4999-8999-999999999999"
+      />,
+    )
+
+    // An id outside this Actor x Project's own list is never addressed (no
+    // existence oracle): the ordinary default selection applies.
+    await waitFor(() =>
+      expect(getConversation).toHaveBeenCalledWith(
+        'project-1',
+        conversation.id,
+        expect.objectContaining({ latest: true }),
+      ),
+    )
+    expect(getConversation).toHaveBeenCalledTimes(1)
   })
 
   it('captures conversation content into a Note only on explicit human action', async () => {

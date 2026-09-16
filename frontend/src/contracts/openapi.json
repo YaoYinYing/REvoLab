@@ -927,6 +927,38 @@
             ],
             "title": "Artifact Ids"
           },
+          "decision_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Ids"
+          },
+          "evidence_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Ids"
+          },
           "graph_depth": {
             "default": 1,
             "maximum": 3.0,
@@ -1046,6 +1078,22 @@
               }
             ],
             "title": "Note Revision Ids"
+          },
+          "reference_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Ids"
           },
           "revision_ids": {
             "anyOf": [
@@ -3553,6 +3601,42 @@
         "title": "ProjectRead",
         "type": "object"
       },
+      "ProjectSearchResultsRead": {
+        "description": "The bounded envelope of one Project search: ordered hits plus an explicit\ntruncation flag. Never paginated (top-N retrieval only) and never a\n`total_count` (a count over authorized rows is itself an existence oracle).",
+        "properties": {
+          "hits": {
+            "items": {
+              "$ref": "#/components/schemas/SearchHitRead"
+            },
+            "title": "Hits",
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SearchScope"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "project_id",
+          "query",
+          "scope"
+        ],
+        "title": "ProjectSearchResultsRead",
+        "type": "object"
+      },
       "ProjectVisibility": {
         "enum": [
           "private",
@@ -4148,6 +4232,113 @@
         ],
         "title": "RunReferenceCreate",
         "type": "object"
+      },
+      "SearchHitRead": {
+        "description": "One canonical-target reference discovered by Project search (Phase 12).\n\nA SearchHit is a READ PROJECTION: it points back at a canonical identity an\nexisting domain owns and carries only what is needed to identify the target,\nsay what matched, preview it safely, and navigate/select it. It is never\ntruth, never authority, never a context inclusion, and never Agent memory.\n\n`snippet` is bounded PLAIN TEXT (no HTML, no active Markdown) copied from\ncurrent authorized canonical data; it is untrusted Project data wherever it\nis rendered or returned to a model. `private` is true only for a\nconversation hit and makes \"this is Actor-private working memory, not shared\nProject knowledge\" a contract fact rather than a UI convention. There is\ndeliberately no numeric score: the ORDER of hits is the contract, and a\nscore would invite reading relevance as scientific confidence.",
+        "properties": {
+          "matched_field": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchMatchedField"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "private": {
+            "default": false,
+            "title": "Private",
+            "type": "boolean"
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DecisionStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Canonical Decision lifecycle status (draft/committed) for a decision hit; null for every other target kind. Presentation only: never a search-relevance score, confidence, or authorization property."
+          },
+          "target_id": {
+            "format": "uuid",
+            "title": "Target Id",
+            "type": "string"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/SearchTargetKind"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_kind",
+          "target_id",
+          "title"
+        ],
+        "title": "SearchHitRead",
+        "type": "object"
+      },
+      "SearchMatchedField": {
+        "description": "Which canonical field produced the hit's snippet (presentation metadata).\n\nPurely descriptive: it is never a relevance score, a confidence, or an\nauthorization property. It lets the workspace say *why* a result matched\nwithout inventing a second scientific vocabulary.",
+        "enum": [
+          "name",
+          "title",
+          "description",
+          "body",
+          "label",
+          "interpretation",
+          "scope",
+          "statement",
+          "next_action",
+          "identifier",
+          "checksum",
+          "type",
+          "message"
+        ],
+        "title": "SearchMatchedField",
+        "type": "string"
+      },
+      "SearchScope": {
+        "description": "Which authorization-scoped corpus a Project search reads (Phase 12).\n\n`PROJECT_SHARED` is Project-shared context readable by every member through\nthe ordinary Project read lens. `MY_CONVERSATIONS` is the calling Actor's OWN\ndurable working memory (never another member's). `ALL` is the explicit union\nof the two, offered only to the human workspace; there is deliberately no\n\"everyone's conversations\" scope.\n\nThe Agent-facing `project.search` Tool never accepts a scope at all: it is\nfixed to `PROJECT_SHARED`, so private working memory can never be requested\nthrough the Agent boundary.",
+        "enum": [
+          "project_shared",
+          "my_conversations",
+          "all"
+        ],
+        "title": "SearchScope",
+        "type": "string"
+      },
+      "SearchTargetKind": {
+        "description": "The retrieval/presentation classifier of one SearchHit (Phase 12).\n\nThis is deliberately NOT `ResourceKind`: it also names Project-local,\nnon-global targets (Note, Conversation), while `ResourceKind` stays the\nglobal-resource registry vocabulary. It is a read-projection label pointing\nat a canonical identity that an EXISTING domain already owns \u2014 it grants no\nownership and creates no second scientific model.\n\nOnly kinds that actually have searchable canonical fields and a workspace\nnavigation target exist here.",
+        "enum": [
+          "scientific_object_series",
+          "evidence",
+          "decision",
+          "note",
+          "run_reference",
+          "artifact_reference",
+          "literature_reference",
+          "external_reference",
+          "conversation"
+        ],
+        "title": "SearchTargetKind",
+        "type": "string"
       },
       "SelectTargetCreate": {
         "properties": {
@@ -9825,6 +10016,113 @@
           }
         },
         "summary": "Get Compute Run Status"
+      }
+    },
+    "/api/projects/{project_id}/search": {
+      "get": {
+        "operationId": "search_project_api_projects__project_id__search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SearchScope",
+              "default": "project_shared"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target_kinds",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/SearchTargetKind"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Kinds"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSearchResultsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Search Project"
       }
     },
     "/api/projects/{project_id}/sessions": {

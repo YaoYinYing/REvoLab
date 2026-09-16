@@ -19,6 +19,7 @@ import type {
 } from '../api/types'
 import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, Field, Loading, Section } from '../components/ui'
+import { contextItemsToSelection, targetKindLabel, type AgentContextItem } from './agentContext'
 import {
   ACTION_REQUEST_STATUS_AMBIGUOUS,
   ACTION_REQUEST_STATUS_EXECUTING,
@@ -87,10 +88,31 @@ export function AgentView({
   actorId,
   projectId,
   initialNoteIds = [],
+  contextItems = [],
+  onRemoveContextItem,
+  initialConversationId = null,
 }: {
   actorId: string
   projectId: string
   initialNoteIds?: string[]
+  /**
+   * Phase-12 explicit search -> Agent-context handoff. These items are owned by
+   * the PARENT (the workspace App), not copied into view-local state: there is
+   * exactly ONE authoritative selection, so removing a chip updates the parent
+   * and navigating away/back cannot resurrect a removed item. Each item is
+   * projected into the canonical `ContextSelectionCreate` at send time; nothing
+   * is added to context implicitly by searching, and private conversation hits
+   * can never appear here.
+   */
+  contextItems?: AgentContextItem[]
+  /** Parent-owned removal of one explicit hand-off item. */
+  onRemoveContextItem?: (item: AgentContextItem) => void
+  /**
+   * A conversation explicitly opened from the workspace (a conversation search
+   * hit). It is selected/loaded instead of the default first conversation when it
+   * belongs to the current Actor x Project.
+   */
+  initialConversationId?: string | null
 }) {
   const { data: objects } = useObjects(actorId, projectId)
   const { data: artifacts } = useResources(actorId, projectId, RESOURCE_KIND_ARTIFACT)
@@ -195,7 +217,15 @@ export function AgentView({
         if (cancelled) return
         const list = res.data ?? []
         setConversations(list)
-        const first = list[0]?.id ?? null
+        // A conversation explicitly opened from the workspace (a search hit) is
+        // selected instead of the default first one — but only when it really
+        // belongs to this Actor x Project's own list (a stale/foreign id falls
+        // back, never an existence oracle).
+        const requested =
+          initialConversationId && list.some((item) => item.id === initialConversationId)
+            ? initialConversationId
+            : null
+        const first = requested ?? list[0]?.id ?? null
         if (first && activeConversationRef.current == null) {
           setActiveConversationId(first)
           activeConversationRef.current = first
@@ -300,12 +330,25 @@ export function AgentView({
     }
 
     const requestConversationId = conversationId
+    // The ONE canonical ContextSelection: the single selectors plus the explicit
+    // search hand-off items, projected into typed id lists. This is not a second
+    // context model, and nothing here was added by searching alone.
+    const handoff = contextItemsToSelection(contextItems)
+    const union = (...groups: (string[] | null | undefined)[]) => [
+      ...new Set(groups.flatMap((group) => group ?? [])),
+    ]
+    const seriesIds = union(selectedSeriesId ? [selectedSeriesId] : [], handoff.series_ids)
+    const artifactIds = union(selectedArtifactId ? [selectedArtifactId] : [], handoff.artifact_ids)
+    const noteIds = union(effectiveNoteId ? [effectiveNoteId] : [], handoff.note_ids)
     const res = await projectApi(actorId).createConversationTurn(projectId, conversationId, {
       message: userMessage,
       selection: {
-        ...(selectedSeriesId ? { series_ids: [selectedSeriesId] } : {}),
-        ...(selectedArtifactId ? { artifact_ids: [selectedArtifactId] } : {}),
-        ...(effectiveNoteId ? { note_ids: [effectiveNoteId] } : {}),
+        ...(seriesIds.length ? { series_ids: seriesIds } : {}),
+        ...(artifactIds.length ? { artifact_ids: artifactIds } : {}),
+        ...(noteIds.length ? { note_ids: noteIds } : {}),
+        ...(handoff.evidence_ids?.length ? { evidence_ids: handoff.evidence_ids } : {}),
+        ...(handoff.decision_ids?.length ? { decision_ids: handoff.decision_ids } : {}),
+        ...(handoff.reference_ids?.length ? { reference_ids: handoff.reference_ids } : {}),
         include_relations: true,
         include_evidence: true,
         include_decisions: true,
@@ -494,6 +537,29 @@ export function AgentView({
             </select>
           </Field>
         </div>
+        {contextItems.length > 0 ? (
+          <div className="context-selection" aria-label="Selected for agent context">
+            <span className="field-label">Added from search (visible before sending)</span>
+            <div className="chip-row">
+              {contextItems.map((item) => (
+                <span className="chip" key={`${item.target_kind}:${item.target_id}`}>
+                  <span className="chip-kind">{targetKindLabel(item.target_kind)}</span>
+                  {item.title}
+                  <button
+                    type="button"
+                    className="chip-remove"
+                    aria-label={`Remove ${item.title} from agent context`}
+                    // Removal mutates the PARENT-owned selection: there is no
+                    // view-local copy that could resurrect the item on remount.
+                    onClick={() => onRemoveContextItem?.(item)}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </Section>
 
       {loading && conversations.length === 0 && messages.length === 0 ? (
