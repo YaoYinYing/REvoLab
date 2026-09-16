@@ -1,8 +1,10 @@
 # ADR-0018: Project Search Is an Authorization-Aware Read Projection
 
-> **Status: Proposed — pending human acceptance.**
-> Accepted only by explicit human acceptance; a green test suite does not promote
-> this ADR's status.
+> **Status: Accepted.**
+> Accepted by the explicit human review and squash-merge of PR #13
+> (`12cd29b feat(phase 12): add bounded project search and retrieval`). A green
+> test suite alone does not promote an ADR's status; the human merge is the
+> acceptance event.
 
 ## Context
 

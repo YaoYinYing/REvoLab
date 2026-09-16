@@ -1,10 +1,10 @@
 # Project Search & Bounded Context Retrieval
 
-> **Status: Proposed — pending human acceptance** (Phase 12; normative owner of the
+> **Status: Accepted** (Phase 12; normative owner of the
 > search/retrieval sub-boundary). Related ADR:
-> `adr/ADR-0018-project-search-read-projection.md` (**Proposed — pending human
-> acceptance**). Both are promoted only by explicit human acceptance at PR review;
-> a green test suite does not promote them.
+> `adr/ADR-0018-project-search-read-projection.md` (**Accepted**). Both were
+> promoted by the explicit human review and squash-merge of PR #13
+> (`12cd29b`); a green test suite does not promote them.
 >
 > This document is normative for the Project search sub-boundary. Search is an
 > **application/query sub-boundary consumed by Presentation and Agent Context** —
@@ -387,3 +387,35 @@ Future semantic retrieval: optional quality improvement behind the SAME
 - Phase 12 (this document): first Project-wide retrieval surface; PostgreSQL
   lexical retrieval with native ranking; no derived index; explicit
   Search → ContextSelection handoff; read-only `project.search` Agent Tool.
+
+
+---
+
+## 13. Phase-13 seam: external discovery is NOT Project search
+
+Phase 13 adds external literature discovery as a SEPARATE application
+sub-boundary (`docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md`, ADR-0019).
+The two surfaces are never merged:
+
+```text
+project.search              -> canonical REvoLab resources already in Project context
+external literature search  -> ephemeral LiteratureCandidates from a remote provider
+```
+
+`project.search` never calls a provider, and a remote candidate never becomes a
+`SearchHit`. The handoff is one-directional and explicit:
+
+```text
+external candidate (absent from project.search)
+    -> explicit human Import
+    -> canonical global LiteratureReference + ProjectResourceLink
+    -> now visible to project.search (there is no search index to update)
+```
+
+Before import, a query matching only an external candidate returns no Project hit.
+After import, the canonical title / `native_id` / `authority:native_id` compound are
+searchable through the existing `literature_reference` corpus, and a provider outage
+after import removes nothing. The Agent-facing literature Tool is read-only
+(`{provider}.literature.search`, `automatic`/`remote`/`read_only`); it calls the
+shared discovery service and never imports, never persists, and never enlarges Agent
+context.
