@@ -218,14 +218,24 @@ def _organism(entry: Mapping[str, Any]) -> tuple[str | None, int | None]:
     return name, _taxon_id(organism.get("taxonId"))
 
 
-def _sequence_length(entry: Mapping[str, Any]) -> int | None:
+def _sequence_length_field(entry: Mapping[str, Any]) -> tuple[bool, int | None]:
+    """Inspect the provider's `sequence.length`.
+
+    Returns `(present, value)`. `present` distinguishes **absent** (allowed: no
+    length was reported, so no agreement check is possible) from **present but
+    malformed** (structurally impossible provider data). Candidate presentation
+    tolerates the latter by using `None`; the resolving path fails closed on it, so a
+    malformed length can never silently skip the sequence/length agreement check.
+    """
     sequence = entry.get("sequence")
-    if not isinstance(sequence, Mapping):
-        return None
-    length = sequence.get("length")
-    if not isinstance(length, int) or isinstance(length, bool) or length < 0:
-        return None
-    return length
+    if not isinstance(sequence, Mapping) or "length" not in sequence:
+        return False, None
+    raw = sequence.get("length")
+    if raw is None:
+        return False, None
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
+        return True, None
+    return True, raw
 
 
 def _bounded_release(value: Any) -> str | None:
@@ -310,7 +320,8 @@ class UniProtProteinDiscoveryCapability:
                     gene_name=_gene_name(raw),
                     organism_name=organism_name,
                     organism_id=organism_id,
-                    sequence_length=_sequence_length(raw),
+                    # Presentation data: a malformed length is simply omitted.
+                    sequence_length=_sequence_length_field(raw)[1],
                     reviewed=_reviewed(raw.get("entryType")),
                 )
             )
@@ -353,7 +364,13 @@ class UniProtProteinDiscoveryCapability:
                 "provider returned a mismatched protein accession",
             )
         sequence = self._canonical_sequence(payload)
-        reported_length = _sequence_length(payload)
+        reported_present, reported_length = _sequence_length_field(payload)
+        if reported_present and reported_length is None:
+            # Fail closed: a PRESENT but invalid length is malformed provider data,
+            # never "no length reported".
+            raise self._error(
+                CapabilityErrorKind.UNKNOWN, "provider reported an invalid sequence length"
+            )
         if reported_length is not None and reported_length != len(sequence):
             raise self._error(
                 CapabilityErrorKind.UNKNOWN,

@@ -295,7 +295,10 @@ and `_GLOBAL_EDGE_SHAPE` already accepts an `EXTERNAL_REFERENCE` source for
   content must wait for that phase; the conflict message says so.
 - **Cost.** A name-only external change re-imports idempotently and leaves the stored
   series name untouched. This is a direct consequence of the frozen checksum definition
-  and is documented rather than hidden; it mutates nothing.
+  and is documented rather than hidden; it mutates nothing. Its one visible effect is
+  that `project.search` matches the STORED name, so the object is findable by accession
+  but not by the new name until a steward renames the series via the existing
+  `update_series` operation.
 - **Cost.** The real remote provider is opt-in (`REVOLAB_UNIPROT_DISCOVERY_ENABLED`),
   exactly like NCBI, so no CI or browser test ever performs a live UniProt request. A
   deployment must enable it deliberately.

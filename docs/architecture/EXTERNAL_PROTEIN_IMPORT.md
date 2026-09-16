@@ -267,12 +267,14 @@ live-verified** against `rest.uniprot.org` on **2026-09-16** (observed release
 `2026_03`, release date `02-September-2026`).
 
 **How the documentation was read.** `www.uniprot.org/help/*` is a JavaScript
-single-page application and serves no content to a plain fetch. UniProt serves the
-**identical official help content** as JSON from the same origin at
-`https://rest.uniprot.org/help/<id>`; the `api_queries`, `api_retrieve_entries`,
-`rest-api-headers`, `accession_numbers`, `query-fields`, `return_fields`,
-`pagination`, `canonical_and_isoforms`, `alternative_products`, and `license`
-documents were read there.
+single-page application and serves no content to a plain fetch. The same official help
+content is served from the same origin in a machine-readable form at the explicit
+**`https://rest.uniprot.org/help/<id>.json`** path (the extension matters: a bare
+`/help/<id>` is content-negotiated and can answer `500` instead of the document). The
+`api_queries`, `api_retrieve_entries`, `rest-api-headers`, `accession_numbers`,
+`query-fields`, `return_fields`, `pagination`, `canonical_and_isoforms`,
+`alternative_products`, and `license` documents were read there and are the source of
+every normative claim below.
 
 ### 9.1 Endpoints
 
@@ -410,6 +412,14 @@ response body = bounded while STREAMING (2 MiB), then closed exactly once
 Because redirects are off and the accession is grammar-validated first, there is no
 SSRF surface and no identity remapping: a `303` is an *identity signal that fails
 closed*, never a transport detail to follow.
+
+**Logging note.** The application configures no logging, so `httpx`'s own INFO
+`HTTP Request: GET <url?query>` line is dropped by the default WARNING root logger
+today. A deployment that RAISES the `httpx` logger level would log the fixed provider
+URL, the opaque search query, and the resolved accession. That is upstream transport
+telemetry, not a REvoLab log statement, and no secret, header, or response body is
+involved — but it is recorded here so the guarantee is explicit rather than
+accidental.
 
 Provider text (protein/gene/organism names, release headers) is normalized into
 **bounded inert text** by one shared neutral helper (`capabilities.bounded_inert_text`,
@@ -551,6 +561,13 @@ presentation drift, not a scientific change: the re-import succeeds idempotently
 the stored series name is never rewritten. This is a deliberate, documented
 consequence of the frozen checksum definition, and it mutates nothing.
 
+**Its one user-visible consequence.** `project.search` matches the *stored* series
+name (§13), so after an upstream rename the object is reliably findable by its
+ACCESSION but not by the new name until a steward renames the series through the
+existing mutable `update_series` operation. This is bounded presentation staleness,
+never silent corruption: no scientific content, identity, mapping, or provenance
+changes.
+
 ### 12.7 Why refresh is deliberately deferred
 
 Refresh raises a separate scientific question that Phase 14 must not answer
@@ -562,25 +579,73 @@ a provider correction, a sequence replacement, or a merged/deleted accession?
 ```
 
 Phase 14's job is initial import + stable reuse. External refresh → new revisions is
-an explicit future phase (§15).
+an explicit future phase (§18).
 
 ### 12.8 An incomplete or incompatible existing mapping fails closed
 
 The trusted importer never hijacks or silently augments a global mapping it did not
 create. If the identity already exists but is **not** a complete, compatible Phase-14
-bundle — a manual `identity` mapping, a half-attached pair, a wrong object type, a
-missing `represents` or `imported_as` edge, a missing checksum, or **more than one
-source snapshot** — the import returns a typed conflict and leaves durable state
-unchanged. Automatic repair is an explicit deferral.
+bundle, the import returns a typed conflict and leaves durable state unchanged.
+Automatic repair is an explicit deferral.
+
+The validator requires ALL of the following, and rejects the bundle otherwise:
+
+```text
+identity.kind == "protein"
+both qualifier mappings present AND is_canonical
+mappings point at two DIFFERENT series
+object_type is protein / sequence respectively
+neither series is archived (a retired object is never a live import target)
+exactly ONE source snapshot (ExternalReference) over the identity
+that reference carries a non-null snapshot checksum
+exactly ONE imported_as revision per series, from THAT reference
+the represents edge (Sequence -> Protein) exists
+the stored checksum equals sha256 of the STORED revision payloads
+```
+
+The last check matters: the checksum is defined as the digest of the stored
+`{protein_payload, sequence_payload}`, so trusting it without recomputing it from the
+revisions it is supposed to describe would let a digest/revision disagreement present
+stale content as current. Recomputing makes that state a typed conflict.
+
+The detected states therefore include a manual `identity` mapping, a half-attached
+pair, a wrong object type, an archived series, a disagreeing identity `kind`, a
+non-canonical qualifier mapping, a missing `represents`/`imported_as` edge, a missing
+checksum, a checksum that disagrees with its revisions, and **more than one source
+snapshot**.
+
+**Named deferral — global extra references.** The pre-existing generic surface
+(`POST /projects/{id}/external-references`) lets any owner/member attach an additional
+`ExternalReference` to any durable identity. Because such an extra snapshot makes
+`len(references) != 1`, the Phase-14 validator then fails closed for that accession in
+EVERY Project. That is the correct Phase-14 reaction (failing closed on an ambiguous
+snapshot history), and Phase 14 deliberately does not change the generic endpoint's
+authority; reconciling extra snapshots and requiring stewardship for them belongs to
+the deferred identity-reconciliation phase (§18).
 
 ### 12.9 Concurrency
 
 Database uniqueness is the backstop. The `ExternalIdentity` insert is the FIRST
 durable write of the bundle and is protected by
 `uq_external_identity_authority_native`, so it is the linearization point for a first
-import. Because the WHOLE bundle is created in ONE transaction, **a committed
-`ExternalIdentity` always implies a committed complete bundle** — which is exactly why
-a loser can safely roll back and re-read the winner.
+import.
+
+That insert is deliberately **insert-only** (`scientific_object.create_external_identity`)
+rather than get-or-create. A read-then-insert would open a window in which the winner
+commits between the lookup and the insert, after which the loser would see the
+winner's identity, skip the insert, build a SECOND bundle, and then fail on the
+mapping primary key — a spurious "different mapping" conflict instead of convergence
+(regression: `test_a_winner_committing_after_the_first_lookup_still_converges`).
+Inserting straight away makes the database the single arbiter: the loser always loses
+on the unique constraint.
+
+Because the WHOLE Phase-14 bundle is created in ONE transaction, **for this import path
+a committed `ExternalIdentity` implies a committed complete bundle** — which is exactly
+why a loser can safely roll back and re-read the winner. (Qualification: the
+pre-existing generic `ExternalReference`/identity surfaces can also commit a bare
+identity with no Phase-14 bundle at all. The loser path never assumes completeness — it
+calls the validator in §12.8 and fails closed — so the guarantee is a property of THIS
+path, not of the identity table.)
 
 A losing transaction rolls back, re-reads the committed winner, validates the complete
 compatible bundle, and reuses it. A raw `IntegrityError` never reaches a caller, no
@@ -704,9 +769,13 @@ Registration: the public UniProt REST surface needs no credential and no operato
 identity, but the real remote driver is installed only when the deployment sets
 `REVOLAB_UNIPROT_DISCOVERY_ENABLED` — exactly like the NCBI literature provider. A
 zero-config deployment keeps the Provider Catalog an honest empty set, and CI/browser
-slices never perform a live UniProt request (they opt into the in-process fake, which
-claims its own `fakeuniprot` authority so a mixed registration fails the
-authority-collision check).
+slices never perform a live UniProt request. They opt into an in-process fake that
+claims its OWN `fakeuniprot` authority, so a synthetic fixture identity can never be
+mistaken for a real accession; precisely because that namespace is its own, the fake
+does not collide with the real driver. The real `uniprot` namespace is guarded by (a)
+the driver-registry authority-collision check, which refuses any SECOND resolver
+claiming `uniprot` alongside the real driver, and (b) the production refusal — the fake
+is never installed when `environment == "production"`.
 
 ---
 

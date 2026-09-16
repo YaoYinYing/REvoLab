@@ -7,13 +7,15 @@ there is deliberately no test-only search bypass, no fake frontend fixture list,
 and no `TEST_ONLY_PROTEIN_API`.
 
 Its provider key (`fakeprotein`) and durable authority (`fakeuniprot`) are the
-fake's OWN vocabulary: the fake never claims the real `uniprot` namespace, so a
-test that registers both the fake and the real driver fails loudly on the
-authority-collision check instead of silently mixing fixtures with production
-identity. The real driver's `uniprot`/`uniprot` separation from a *resolver* key is
-asserted by its own deterministic transport tests, and the provider≠authority
-regression uses a separate `mirrorprotein` fake that resolves the REAL `uniprot`
-authority.
+fake's OWN vocabulary, so a synthetic fixture identity can never be mistaken for a
+real `uniprot` accession. The real namespace is guarded two ways, both covered by
+regressions: the driver registry refuses any SECOND resolver that claims `uniprot`
+alongside the real driver (`test_two_resolvers_for_one_authority_cannot_be_registered_together`),
+and `install_drivers` refuses this fake outright when the environment is
+`production` (`test_fake_protein_provider_refuses_production`). The real driver's
+separation of the `uniprot` AUTHORITY from a resolver key is asserted by its own
+deterministic transport tests plus the `mirrorprotein` regression, which resolves the
+REAL `uniprot` authority under a different provider key.
 
 Records and sequences are deterministic functions of the query, so a browser spec
 can assert on exact identities and lengths without a committed fixture corpus.

@@ -2806,17 +2806,18 @@ All commands were run from the repository root unless noted; the branch head is
 | --- | --- | --- |
 | Backend lint | `ruff check backend` | **All checks passed** |
 | Backend types | `mypy` (strict) | **no issues in 62 source files** |
-| Backend tests | `pytest` | **749 passed, 40 skipped** |
-| UniProt driver (deterministic HTTP) | `pytest backend/tests/test_uniprot_driver.py` | **75 passed** |
+| Backend tests | `pytest` | **765 passed, 40 skipped** |
+| UniProt driver (deterministic HTTP) | `pytest backend/tests/test_uniprot_driver.py` | **82 passed** |
 | SQLite migration drift | `cd backend && alembic upgrade head && alembic check` | **No new upgrade operations detected** |
 | PostgreSQL 16 migration drift | same, `REVOLAB_DATABASE_URL=postgresql+psycopg://…` | **No new upgrade operations detected** |
-| PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **40 passed** (9 Phase-14; 5 consecutive repeats green) |
+| PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **40 passed** (9 Phase-14; repeated green) |
 | OpenAPI export | `python -m revolab.export_openapi > frontend/src/contracts/openapi.json` | **byte-identical on repeat** (idempotent) |
 | Frontend types | `cd frontend && npm run typecheck` | **clean** |
 | Frontend tests | `npm run test` | **102 passed** (14 files) |
 | Frontend build | `npm run build` | **built** |
 | Generated contracts | `npm run generate:contracts` twice | **byte-identical on repeat** |
 | Browser slice | `npm run test:e2e` (Playwright) | **16 passed** (4 Phase-14 specs) |
+| GitHub CI | `gh pr checks 15` | **backend / frontend / e2e all pass** on the pushed head |
 | Whitespace/status | `git diff --check`, `git status` | clean |
 
 Mutation-sensitive regressions added (each fails if the behavior is removed):
@@ -2885,6 +2886,117 @@ asserts `201`, and the imported-section assertion uses the `Use as Evidence` con
 that exists only in the imported list. The Phase-14 spec uses the same
 response-awaiting pattern for discovery, import, and the conflict case, so neither
 spec depends on incidental rendering order.
+
+## Independent review (Phase 14)
+
+Three fresh, independent, STRICTLY READ-ONLY reviewers were run in parallel against
+commit `4913491` (PR #15) — A: scientific-object/provenance architecture;
+B: provider/network/security/trust; C: persistence/concurrency/API/frontend/
+verification — each with up to 10 minutes wall-clock and 20-second polling. All three
+returned **APPROVE WITH FIXES** with **zero P0 findings**; the integrator reconciled
+the reports and fixed every P1 and every material in-scope P2.
+
+### Verdicts
+
+| Reviewer | Verdict | P0 | P1 | P2 |
+| --- | --- | --- | --- | --- |
+| A — scientific object / provenance | APPROVE WITH FIXES | 0 | 2 | 3 |
+| B — provider / network / security | APPROVE WITH FIXES | 0 | 0 | 4 |
+| C — persistence / concurrency / API / frontend / verification | APPROVE WITH FIXES | 0 | 0 | 7 |
+
+### P1 findings and fixes
+
+- **A-P1-1 — a first-import race could return a spurious `ConflictError` instead of
+  converging.** `_create_bundle` called the read-then-insert
+  `get_or_create_external_identity`, so under READ COMMITTED a winner committing
+  between the outer lookup and that inner read would be *observed* by the loser: no
+  unique-constraint failure, so the loser built a SECOND bundle and then died on the
+  mapping PK with `ConflictError: external identity already maps to another series`
+  instead of reusing the winner (TODO §37, doc §12.9). **Fixed** by adding the
+  insert-only domain command `scientific_object.create_external_identity` and using it
+  in the import path, making the database the single linearization point. The existing
+  `IntegrityError` recovery then converges. Regression:
+  `test_a_winner_committing_after_the_first_lookup_still_converges` (fails if the
+  read-then-insert behavior is restored).
+- **A-P1-2 — `SCIENTIFIC_OBJECT_MODEL.md` stated the opposite `sequence`-qualifier
+  semantics.** Its pre-existing parenthesis asserted `qualifier="sequence"` maps to the
+  *Protein* series, contradicting the frozen Phase-14 mapping and repeating the exact
+  Protein≡Sequence conflation ADR-0020 forbids; an implementer following it would make
+  every later import fail closed. **Fixed** by restating the qualifier as naming the
+  SENSE (identity → Protein series, sequence → Sequence series) in the same file that
+  carries the worked example.
+
+### P2 findings and fixes
+
+- **A-P2-1 / C-P2-1 / C-P2-2 / C-P2-3 — the bundle validator was incomplete.**
+  `_load_bundle` accepted an archived (retired) series, an identity whose `kind`
+  disagreed with `protein`, a non-canonical qualifier mapping, and a stored snapshot
+  checksum that did not match the stored revision payloads. All four are now typed
+  conflicts, with a dedicated regression each
+  (`test_an_archived_bundle_series_fails_closed`,
+  `test_a_disagreeing_identity_kind_fails_closed`,
+  `test_a_non_canonical_qualifier_mapping_fails_closed`,
+  `test_a_snapshot_digest_that_disagrees_with_its_revisions_fails_closed`), and
+  `_imported_revision` now returns the revision rows so the digest can be recomputed
+  from what is actually stored.
+- **B-P2-1 — a false security claim about the fake/real authority collision.** The
+  fake claims its OWN `fakeuniprot` authority, so registering it alongside the real
+  driver does **not** trip the collision check — the opposite of what the fake
+  docstring, `config.py`, and the architecture doc asserted (the same inverted claim
+  was inherited from the Phase-13 literature fake). **Fixed** by stating and TESTING the
+  true guarantee instead of faking a collision: the fake's own namespace, the
+  registry's refusal of a second resolver claiming `uniprot`
+  (`test_the_real_uniprot_authority_is_guarded_by_the_collision_check`), and the
+  production refusal. Also corrected in the Phase-13 literature fake/config.
+- **B-P2-2 — a vacuous test assertion.** A markup-inertness check used
+  `"...".replace("<script>", "")`, which made it tautological. **Fixed** to assert what
+  is actually true and load-bearing (markup is RETAINED as inert data; control/format
+  characters are removed), with the "never rendered as HTML" guarantee explicitly owned
+  by the frontend test `renders hostile provider text inert`.
+- **B-P2-3 — a malformed provider `sequence.length` was silently treated as absent**,
+  which skipped the sequence/length agreement check instead of failing closed
+  (TODO §17). **Fixed** by distinguishing ABSENT (allowed → `None`) from PRESENT BUT
+  INVALID (typed `CapabilityError`) in the driver, mirroring the distinction
+  defensively at the service boundary, and adding three regressions (invalid → fails
+  closed; absent → allowed; a malformed CANDIDATE length is omitted as presentation
+  data).
+- **B-P2-4 / B-residual — documentation precision.** §9 now states the exact
+  reproducible help URL form (`/help/<id>.json`; a bare `/help/<id>` is
+  content-negotiated and can answer `500`), and §10 records the httpx INFO
+  transport-logging caveat explicitly instead of leaving it accidental.
+- **A-P2-2 / A-P2-3 / C-P2-4 — doc precision on real behavior.** §12.6 now names the
+  one user-visible consequence of the name-only-drift carve-out (search matches the
+  STORED name, so accession is the reliable handle until a steward renames the series);
+  the `is_canonical` "one may be" wording is corrected to per-qualifier flags; and
+  §12.9 no longer overstates the concurrency guarantee — it is a property of THIS
+  import path (the pre-existing generic surfaces can commit a bare identity, and the
+  loser path never assumes completeness, it validates and fails closed).
+- **C-P2-5 — dead generated-contract exports.** `OBJECT_TYPE_PROTEIN` /
+  `OBJECT_TYPE_SEQUENCE` were unused; removed rather than kept as speculative surface
+  (the Objects workspace renders `object_type` generically from the wire value).
+- **C-P2-6 — a pre-existing global surface can block an accession everywhere.**
+  Any owner/member can attach an extra `ExternalReference` through the pre-existing
+  generic endpoint, after which the Phase-14 validator fails closed for that accession
+  in every Project. That IS the correct fail-closed reaction, and Phase 14 deliberately
+  does not change that endpoint's authority; it is now recorded as a **named deferral**
+  in §12.8/§18 (identity reconciliation).
+- **C-P2-7 — rollback was tested by mirroring the contract, not exercising it.** A new
+  `client`-level regression forces a post-staging failure through the real FastAPI
+  request lifecycle and asserts the dependency's session teardown rolls back, with zero
+  rows in a fresh session.
+
+Findings recorded and deliberately NOT changed: rounding the "5 consecutive repeats"
+claim down to the runs actually performed, and confirming (reviewer C) that the
+frontend cannot show stale cross-Project state because `selectProject` resets the view
+and unmounts the un-scoped `ObjectsView`.
+
+### Delta review
+
+Because the fixes materially change concurrency (A-P1-1), provider validation
+(B-P2-3), and the bundle-identity checks (A-P2-1/C-P2-1-3), TWO additional fresh
+read-only delta reviewers were run against the fixed head — one on
+concurrency/persistence, one on provider/identity/network — keeping the total
+final-review subagent count at five. Their verdicts are recorded in the PR body.
 
 ## Explicit deferrals (Phase 14)
 

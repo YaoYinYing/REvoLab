@@ -772,6 +772,115 @@ def _corrupt_bundle(session, actor, project, registry) -> ProteinImportRead:
     return result
 
 
+def test_a_winner_committing_after_the_first_lookup_still_converges(session, monkeypatch):
+    """Reviewer P1: the create path must LOSE on the unique constraint, not on a stale read.
+
+    If the winning transaction commits between the first identity lookup and the create
+    attempt, a read-then-insert create path would observe the winner's identity, skip the
+    insert, build a SECOND bundle, and then fail with a misleading "already maps to
+    another series" conflict. The insert-only create path makes the database the single
+    linearization point, so the loser hits the unique constraint, rolls back, and
+    converges on the winner.
+
+    Mutation-sensitivity: restoring `get_or_create_external_identity` in `_create_bundle`
+    makes this test fail with `ConflictError: external identity already maps to another
+    series for this qualifier`.
+    """
+    from revolab.domain import scientific_object as scientific_object_module
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _protein_registry()
+    _, candidate, first = _import_first(session, registry, actor, project)
+    before = _durable_state(session)
+
+    real_find = scientific_object_module.find_external_identity
+    calls = {"count": 0}
+
+    def racing_find(s, authority, native_id):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            # The winner commits AFTER this lookup: we must not observe it.
+            return None
+        return real_find(s, authority, native_id)
+
+    monkeypatch.setattr(scientific_object_module, "find_external_identity", racing_find)
+    second = _import(session, registry, actor, project, candidate.authority, candidate.native_id)
+
+    assert calls["count"] >= 2  # the recovery path really re-read the winner
+    assert second.protein_series_id == first.protein_series_id
+    assert second.sequence_series_id == first.sequence_series_id
+    assert second.external_reference_id == first.external_reference_id
+    # No second bundle was created.
+    assert _durable_state(session) == before
+
+
+def test_an_archived_bundle_series_fails_closed(session):
+    """A retired global object is not a live import target."""
+    from datetime import UTC, datetime
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _protein_registry()
+    result = _corrupt_bundle(session, actor, project, registry)
+    series = session.get(ScientificObjectSeries, result.protein_series_id)
+    assert series is not None
+    series.archived_at = datetime.now(UTC)
+    session.commit()
+    before = _durable_state(session)
+    with pytest.raises(ConflictError, match="incomplete"):
+        _import(session, registry, actor, project, result.authority, result.native_id)
+    assert _durable_state(session) == before
+
+
+def test_a_disagreeing_identity_kind_fails_closed(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _protein_registry()
+    result = _corrupt_bundle(session, actor, project, registry)
+    identity = session.scalars(select(ExternalIdentity)).one()
+    identity.kind = "nucleotide"
+    session.commit()
+    before = _durable_state(session)
+    with pytest.raises(ConflictError, match="incomplete"):
+        _import(session, registry, actor, project, result.authority, result.native_id)
+    assert _durable_state(session) == before
+
+
+def test_a_non_canonical_qualifier_mapping_fails_closed(session):
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _protein_registry()
+    result = _corrupt_bundle(session, actor, project, registry)
+    identity = session.scalars(select(ExternalIdentity)).one()
+    mapping = session.get(
+        ScientificObjectExternalIdentity, (identity.external_identity_id, "sequence")
+    )
+    assert mapping is not None
+    mapping.is_canonical = False
+    session.commit()
+    before = _durable_state(session)
+    with pytest.raises(ConflictError, match="incomplete"):
+        _import(session, registry, actor, project, result.authority, result.native_id)
+    assert _durable_state(session) == before
+
+
+def test_a_snapshot_digest_that_disagrees_with_its_revisions_fails_closed(session):
+    """The stored digest must actually describe the stored revisions."""
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _protein_registry()
+    result = _corrupt_bundle(session, actor, project, registry)
+    reference = session.get(ExternalReference, result.external_reference_id)
+    assert reference is not None
+    reference.checksum = "0" * 64
+    session.commit()
+    before = _durable_state(session)
+    with pytest.raises(ConflictError, match="incomplete"):
+        _import(session, registry, actor, project, result.authority, result.native_id)
+    assert _durable_state(session) == before
+
+
 def test_a_missing_sequence_mapping_fails_closed(session):
     actor = _actor(session)
     project = _project(session, actor)
@@ -1151,16 +1260,31 @@ def test_an_alternate_resolver_creates_the_uniprot_identity_not_its_own(session)
     assert reference.cache_metadata["resolver_provider"] == "mirrorprotein"
 
 
-def test_two_resolvers_for_one_authority_cannot_be_registered_together():
-    registry = DriverRegistry()
-    registry.register(FakeProteinDriver())
-    # `fakeprotein` claims `fakeuniprot`; the mirror claims `uniprot`; the REAL
-    # driver claims `uniprot`. A collision is refused loudly, never merged.
-    registry.register(_MirrorDriver())
-    from revolab.drivers.uniprot import UniProtDriver
+def test_the_real_uniprot_authority_is_guarded_by_the_collision_check():
+    """The fake's own namespace, plus the two real guards on the real namespace.
 
+    `fakeprotein` claims `fakeuniprot`, so a synthetic fixture identity can never be
+    mistaken for a real accession — and, precisely BECAUSE it claims its own
+    namespace, registering it alongside the real driver does not collide. What guards
+    the real namespace is (a) the authority-collision check biting any SECOND resolver
+    that claims `uniprot`, and (b) the production refusal asserted in
+    `test_bootstrap.py`.
+    """
+    from revolab.drivers.uniprot import UNIPROT_AUTHORITY, UniProtDriver
+
+    assert FAKE_PROTEIN_AUTHORITY != UNIPROT_AUTHORITY
+    assert FakeProteinDriver().authorities == (FAKE_PROTEIN_AUTHORITY,)
+
+    # (a) A second resolver for the REAL authority is refused alongside the real driver.
+    registry = DriverRegistry()
+    registry.register(UniProtDriver())
     with pytest.raises(ValueError, match="already resolved by driver"):
-        registry.register(UniProtDriver())
+        registry.register(_MirrorDriver())
+
+    # The mirror alone is fine, and it resolves the real authority.
+    mirror_only = DriverRegistry()
+    mirror_only.register(_MirrorDriver())
+    assert mirror_only.get("mirrorprotein").driver.authorities == ("uniprot",)
 
 
 # ---------------------------------------------------------------------------
@@ -1215,6 +1339,65 @@ def _clear_overrides():
 
     app.dependency_overrides.pop(api_get_driver_registry, None)
     app.dependency_overrides.pop(api_get_secret_store, None)
+
+
+def test_api_failed_import_rolls_back_through_the_real_request_lifecycle(
+    client, engine, monkeypatch
+):
+    """Reviewer C P2-7: the request session — not the test — must roll back.
+
+    The in-process regressions roll the session back themselves, which mirrors the
+    contract rather than exercising it. Here the failure propagates out of the route,
+    so the FastAPI session dependency's `with SessionLocal()` exit is what rolls back.
+    """
+    from sqlalchemy.orm import Session
+
+    from revolab import services as services_module
+
+    registry = _protein_registry()
+    _override_registry(registry, InMemorySecretStore())
+    try:
+        actor = _api_actor(client)
+        project = _api_project(client, actor, "Atomic request")
+        headers = {"X-Actor-Id": actor}
+        candidate = client.get(
+            f"/api/projects/{project}/proteins/discover",
+            params={"provider_key": FAKE_PROTEIN_PROVIDER_KEY, "q": DEFAULT_QUERY},
+            headers=headers,
+        ).json()["candidates"][0]
+
+        with Session(engine) as pre:
+            before = _durable_state(pre)
+
+        def explode(*args: Any, **kwargs: Any):
+            raise RuntimeError("injected failure after objects were staged")
+
+        monkeypatch.setattr(services_module, "record_imported_as", explode)
+        # `TestClient` re-raises an unhandled route error by default; the point is that
+        # the dependency teardown still rolls the transaction back.
+        with pytest.raises(RuntimeError, match="injected failure"):
+            client.post(
+                f"/api/projects/{project}/proteins/import",
+                json={
+                    "provider_key": FAKE_PROTEIN_PROVIDER_KEY,
+                    "authority": candidate["authority"],
+                    "native_id": candidate["native_id"],
+                },
+                headers=headers,
+            )
+    finally:
+        _clear_overrides()
+
+    with Session(engine) as verify:
+        assert _durable_state(verify) == before
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalIdentity)
+                .where(ExternalIdentity.native_id == candidate["native_id"])
+            )
+            == 0
+        )
 
 
 def test_api_discover_and_import_roundtrip(client):

@@ -176,7 +176,9 @@ Three distinct concepts — never conflated:
 ```text
 canonical identity   → the stable series_id (used for internal citation/linking)
 revision identity    → revision_id (what provenance edges point at)
-external identities  → (authority/namespace, native_id) pairs, one may be is_canonical
+external identities  → (authority/namespace, native_id) pairs; each qualifier mapping
+                        carries its own is_canonical flag (Phase 14 sets BOTH the
+                        `identity` and `sequence` mappings canonical for one accession)
 aliases              → search synonyms used to find, never to cite
 ```
 
@@ -213,9 +215,12 @@ aliases              → search synonyms used to find, never to cite
       UNIQUE(external_identity_id, qualifier)   -- one semantic target per qualifier
   ```
 
-  The same external identity may map to **one** series per `qualifier` — the canonical
-  global assertion ("UniProt:P12345 as a sequence **is** this Protein series"). It is
-  **not** a free many-to-many and it carries no `project_id`. A Project that wants to
+  The same external identity may map to **one** series per `qualifier` — each qualifier
+  is a separate canonical global assertion. For `uniprot:P12345` the `identity`
+  qualifier asserts "P12345 in its identity sense **is** this Protein series" while the
+  `sequence` qualifier asserts "P12345 in its sequence sense **is** this Sequence
+  series"; the qualifier names the SENSE, never the object type. It is **not** a free
+  many-to-many and it carries no `project_id`. A Project that wants to
   assert a different interpretation does **not** edit the global mapping — it records
   that interpretation as an `ExternalReference` + `Evidence` (project-scoped), leaving
   the global identity assertion stable and shared (see `EVIDENCE_PROVENANCE.md`).

@@ -313,7 +313,16 @@ def _normalized_snapshot(
     an invalid payload can never reach a durable write.
     """
     sequence = _validated_sequence(record.canonical_sequence)
-    if record.sequence_length is not None and record.sequence_length != len(sequence):
+    reported_length = record.sequence_length
+    if reported_length is not None and (
+        not isinstance(reported_length, int)
+        or isinstance(reported_length, bool)
+        or reported_length < 1
+    ):
+        # Defense-in-depth: the driver fails closed on a malformed length, so a
+        # non-positive/non-int value here means a mis-wired driver, never "absent".
+        raise ValidationError("resolved protein reported an invalid sequence length")
+    if reported_length is not None and reported_length != len(sequence):
         raise ValidationError(
             "resolved protein sequence length disagrees with the canonical sequence"
         )
@@ -439,7 +448,7 @@ def _create_bundle(
     `uq_external_identity_authority_native`, so it is the concurrency linearization
     point for a first import.
     """
-    identity = scientific_object.get_or_create_external_identity(
+    identity = scientific_object.create_external_identity(
         session, authority, native_id, kind=PROTEIN_IDENTITY_KIND
     )
     reference = provenance.create_external_reference_row(
@@ -537,11 +546,17 @@ def _load_bundle(session: Session, identity: ExternalIdentity) -> _ImportBundle:
     """Read the existing import bundle and fail closed unless it is COMPLETE.
 
     An identity that is not a complete, internally consistent Phase-14 bundle (a
-    manual `identity` mapping, a half-attached pair, a wrong object type, a missing
-    `represents`/`imported_as` edge, or an ambiguous source snapshot) is NEVER
-    repaired or augmented here.
+    manual `identity` mapping, a half-attached pair, a wrong object type, a retired
+    (archived) series, a disagreeing identity `kind`, a non-canonical qualifier
+    mapping, a missing `represents`/`imported_as` edge, an ambiguous source snapshot,
+    or a stored snapshot checksum that does not match the stored revision payloads) is
+    NEVER repaired or augmented here.
     """
     identity_id = identity.external_identity_id
+    if identity.kind != PROTEIN_IDENTITY_KIND:
+        # The identity registry is global and shared: an identity created for a
+        # different semantic kind is a different assertion, not a protein bundle.
+        raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
     protein_mapping = session.get(
         ScientificObjectExternalIdentity, (identity_id, IDENTITY_QUALIFIER)
     )
@@ -549,6 +564,8 @@ def _load_bundle(session: Session, identity: ExternalIdentity) -> _ImportBundle:
         ScientificObjectExternalIdentity, (identity_id, SEQUENCE_QUALIFIER)
     )
     if protein_mapping is None or sequence_mapping is None:
+        raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
+    if not protein_mapping.is_canonical or not sequence_mapping.is_canonical:
         raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
     if protein_mapping.series_id == sequence_mapping.series_id:
         raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
@@ -558,6 +575,10 @@ def _load_bundle(session: Session, identity: ExternalIdentity) -> _ImportBundle:
         raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
     if sequence_series is None or sequence_series.object_type != SEQUENCE_OBJECT_TYPE:
         raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
+    if protein_series.archived_at is not None or sequence_series.archived_at is not None:
+        # A retired global object is not a live import target: never link new Project
+        # context to an archived series.
+        raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
     references = provenance.find_external_references(session, identity_id)
     if len(references) != 1:
         raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
@@ -566,23 +587,32 @@ def _load_bundle(session: Session, identity: ExternalIdentity) -> _ImportBundle:
     if stored_checksum is None:
         # No comparable snapshot provenance => not a Phase-14 bundle.
         raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
-    protein_revision_id = _imported_revision_id(
+    protein_revision = _imported_revision(
         session, reference.external_reference_id, protein_series.series_id
     )
-    sequence_revision_id = _imported_revision_id(
+    sequence_revision = _imported_revision(
         session, reference.external_reference_id, sequence_series.series_id
     )
-    if protein_revision_id is None or sequence_revision_id is None:
+    if protein_revision is None or sequence_revision is None:
         raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
     if not _represents_edge_exists(session, sequence_series.series_id, protein_series.series_id):
+        raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
+    # The stored snapshot digest must actually describe the stored revisions. Without
+    # this an out-of-band change to the digest (or a future regression) could make a
+    # stale bundle look "current" and re-link stale content as current, which §12.6
+    # forbids.
+    if (
+        protein_snapshot_checksum(protein_revision.payload, sequence_revision.payload)
+        != stored_checksum
+    ):
         raise ConflictError(INCOMPATIBLE_BUNDLE_MESSAGE)
     return _ImportBundle(
         external_identity_id=identity_id,
         external_reference_id=reference.external_reference_id,
         protein_series_id=protein_series.series_id,
-        protein_revision_id=protein_revision_id,
+        protein_revision_id=protein_revision.revision_id,
         sequence_series_id=sequence_series.series_id,
-        sequence_revision_id=sequence_revision_id,
+        sequence_revision_id=sequence_revision.revision_id,
         # The STORED series name, never the current provider name: a re-import must
         # not imply that presentation metadata was refreshed.
         protein_name=protein_series.name,
@@ -590,13 +620,13 @@ def _load_bundle(session: Session, identity: ExternalIdentity) -> _ImportBundle:
     )
 
 
-def _imported_revision_id(
+def _imported_revision(
     session: Session, external_reference_id: UUID, series_id: UUID
-) -> UUID | None:
+) -> ScientificObjectRevision | None:
     """The UNIQUE revision of `series_id` that this reference was imported as."""
-    revision_ids = list(
+    revisions = list(
         session.scalars(
-            select(ScientificObjectRevision.revision_id)
+            select(ScientificObjectRevision)
             .join(
                 GlobalProvenanceEdge,
                 GlobalProvenanceEdge.target_id == ScientificObjectRevision.revision_id,
@@ -608,7 +638,7 @@ def _imported_revision_id(
             )
         )
     )
-    return revision_ids[0] if len(revision_ids) == 1 else None
+    return revisions[0] if len(revisions) == 1 else None
 
 
 def _represents_edge_exists(session: Session, source_series_id: UUID, target_series_id: UUID) -> bool:

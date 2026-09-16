@@ -490,6 +490,35 @@ def test_resolve_fails_closed_on_a_missing_sequence() -> None:
     assert excinfo.value.kind is CapabilityErrorKind.UNKNOWN
 
 
+@pytest.mark.parametrize("bad_length", [-1, 0, True, "430", 3.5])
+def test_resolve_fails_closed_on_a_present_but_invalid_reported_length(bad_length: object) -> None:
+    """A PRESENT but malformed length is malformed provider data, not "absent".
+
+    Treating it as absent would silently skip the sequence/length agreement check.
+    """
+    driver = _driver(lambda request: _json_response(_entry(length=bad_length)))
+    with pytest.raises(CapabilityError) as excinfo:
+        _capability(driver).resolve(UNIPROT_AUTHORITY, "P12345", _lease())
+    assert excinfo.value.kind is CapabilityErrorKind.UNKNOWN
+    assert "length" in excinfo.value.message
+
+
+def test_search_omits_a_malformed_presentation_length_without_failing() -> None:
+    """A candidate's length is presentation only, so a malformed value is omitted."""
+    driver = _driver(lambda request: _results(_entry(length=-5)))
+    candidate = _capability(driver).search("kinase", 5, _lease()).candidates[0]
+    assert candidate.sequence_length is None
+
+
+def test_resolve_allows_an_absent_reported_length() -> None:
+    entry = _entry()
+    del entry["sequence"]["length"]
+    driver = _driver(lambda request: _json_response(entry))
+    record = _capability(driver).resolve(UNIPROT_AUTHORITY, "P12345", _lease())
+    assert record.sequence_length is None
+    assert record.canonical_sequence == SEQUENCE
+
+
 def test_resolve_fails_closed_on_a_reported_length_mismatch() -> None:
     driver = _driver(lambda request: _json_response(_entry(length=len(SEQUENCE) + 7)))
     with pytest.raises(CapabilityError) as excinfo:

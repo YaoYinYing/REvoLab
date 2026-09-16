@@ -38,7 +38,9 @@ class Settings(BaseSettings):
     ncbi_min_request_interval_seconds: float = 0.34
     # Opt-in in-process fake LITERATURE provider for application/browser slices.
     # Default OFF in production; it realizes the SAME capability boundary through
-    # the SAME Driver/Capability registry as the real driver.
+    # the SAME Driver/Capability registry as the real driver and claims its own
+    # `fakepubmed` authority, so a fixture identity can never be mistaken for a real
+    # PubMed identifier. It is refused outright when `environment == "production"`.
     e2e_fake_literature: bool = False
     # --- Phase-14 UniProt protein-discovery provider (server-owned) ---
     # The public UniProt REST surface is unauthenticated and the current official
@@ -55,8 +57,11 @@ class Settings(BaseSettings):
     uniprot_timeout_seconds: float = 15.0
     # Opt-in in-process fake PROTEIN provider for application/browser slices.
     # Default OFF in production; it realizes the SAME capability boundary through
-    # the SAME Driver/Capability registry as the real driver, and claims its OWN
-    # `fakeuniprot` authority so a mixed registration fails the collision check.
+    # the SAME Driver/Capability registry as the real driver and claims its OWN
+    # `fakeuniprot` authority, so a synthetic fixture identity can never be mistaken
+    # for a real `uniprot` accession. The real `uniprot` namespace stays guarded: the
+    # registry refuses a second resolver claiming `uniprot`, and this fake is refused
+    # outright when `environment == "production"`.
     e2e_fake_protein: bool = False
     # Explicit runtime root for the canonical skill tree. Defaults to the repo
     # `.agents/skills/` during development; a packaged deployment MUST set this
