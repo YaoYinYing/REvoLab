@@ -2639,7 +2639,12 @@ budget):
   end-to-end no-500 test now also asserts the envelope carries only a generic
   message with no upstream body, fixed-host URL, operator contact, or traceback;
   (P2 hardening) the health probe's pacer wait now sits inside its never-raise
-  guard.
+  guard. The SAME delta reviewer then re-inspected the fix head and returned
+  **APPROVE**: the P1 is fully closed with no remaining self-contradiction in any of
+  the three reconciled Agent-runtime docs, the lazy-stream test is mutation-detected
+  (reverting `httpx.HTTPError` → `httpx.TransportError` makes it fail), and no new
+  P0/P1/P2 was introduced. Total final-review subagents: **5** (3 round-1 + 2 delta),
+  all completed; **no unresolved P0/P1**.
 
 ## Known deferrals (explicit, not silently postponed)
 
