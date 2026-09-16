@@ -155,4 +155,50 @@ describe('generated API contract boundary', () => {
     }
     expect(Object.keys(context.properties ?? {})).toContain('notes')
   })
+
+  it('Phase-13 literature discovery/import surface is typed, generated and strict', () => {
+    for (const path of [
+      '/api/projects/{project_id}/literature/discover',
+      '/api/projects/{project_id}/literature/import',
+    ]) {
+      expect(spec.paths[path], `missing literature path ${path}`).toBeDefined()
+      expect(schemaDts).toContain(JSON.stringify(path))
+    }
+
+    // The new capability kind is a generated contract value, never a hand-written
+    // frontend literal.
+    expect(spec.components.schemas.CapabilityKind.enum).toContain('literature_discovery')
+
+    // An import request carries STABLE IDENTITY ONLY: no title/authors/journal, so
+    // a tampered browser payload cannot become persisted bibliographic truth.
+    const importCreate = spec.components.schemas.LiteratureImportCreate as {
+      properties?: Record<string, unknown>
+      additionalProperties?: unknown
+    }
+    expect(Object.keys(importCreate.properties ?? {}).sort()).toEqual([
+      'authority',
+      'native_id',
+      'provider_key',
+    ])
+    expect(importCreate.additionalProperties).toBe(false)
+
+    // The Agent-facing search Tool input is NOT an HTTP body, so it is asserted
+    // where it is projected into the ToolCatalog (`backend/tests/test_literature_agent.py`):
+    // exactly `{query, limit}`, extra=forbid, no url/host/scope/import field.
+
+    // The ephemeral candidate is bounded provider-neutral presentation data.
+    const candidate = spec.components.schemas.LiteratureCandidateRead as {
+      properties?: Record<string, unknown>
+    }
+    expect(Object.keys(candidate.properties ?? {}).sort()).toEqual([
+      'authority',
+      'authors',
+      'doi',
+      'journal',
+      'native_id',
+      'provider_key',
+      'publication_year',
+      'title',
+    ])
+  })
 })

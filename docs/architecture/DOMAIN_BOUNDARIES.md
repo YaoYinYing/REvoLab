@@ -114,6 +114,21 @@ changes context: `Search → explicit ContextSelection → ContextBuilder` is
 preserved unchanged. Normative owner:
 `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md` (ADR-0018).
 
+### 1c. External Literature Discovery (application sub-boundary — no domain change)
+
+External literature discovery/import (`revolab.literature`) is an
+**application-level discovery/import sub-boundary** consumed by Presentation and
+Agent Context, at the same layer as `revolab.search`/`revolab.notes`. It is **not a
+tenth Core domain** and adds no Project → domain edge: the accepted nine-domain DAG
+is unchanged. The provider realizes the Core-owned
+`CapabilityKind.LITERATURE_DISCOVERY` behind the Provider / Capability boundary; the
+durable `LiteratureReference` + `ProjectResourceLink` remain owned by
+Evidence/Provenance and Project respectively, and the capability is invoked only
+through the existing Provider / Capability gate. Discovery persists nothing (a
+candidate is ephemeral); an explicit human import re-resolves the stable
+`(authority, native_id)` identity and writes only the existing canonical rows.
+Normative owner: `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
+
 ### 2. Scientific Object Domain
 
 - **Purpose:** represent typed scientific entities (Protein, Sequence, Structure,

@@ -4,7 +4,8 @@ One Actor in one Project resolves exactly one ToolCatalog, consumed by both the
 human workspace and the Agent (TODO.md section 16). Local tools are the closed
 `LocalToolRegistry`; remote tools are the existing Provider capabilities
 projected through the non-secret Provider Catalog (REvoCompute compute +
-artifact resolution). Unavailable provider capabilities are omitted entirely;
+artifact resolution, and — since Phase 13 — provider literature discovery, which
+is the ONE registered remote read-only read the Agent may execute). Unavailable provider capabilities are omitted entirely;
 local tools are always listed with their current availability. This is a
 read-only projection: it never invokes anything.
 """
@@ -37,9 +38,12 @@ from revolab.schemas import (
     ComputeSubmissionRead,
     ComputeTaskKindRead,
     ComputeTaskKindSchemaRead,
+    LiteratureDiscoveryResultsRead,
+    LiteratureSearchToolInput,
     ToolCatalogRead,
     ToolDescriptorRead,
 )
+from revolab.tools import remote_reads
 from revolab.tools.registry import LocalToolRegistry
 
 _EMPTY_OBJECT_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}, "additionalProperties": False}
@@ -210,6 +214,29 @@ def _provider_tools(
                         source=ToolSource.PROVIDER,
                         provider_key=provider_key,
                         capability_kind=CapabilityKind.ARTIFACT_RESOLUTION,
+                    )
+                )
+            elif kind is CapabilityKind.LITERATURE_DISCOVERY:
+                tools.append(
+                    _descriptor(
+                        id=f"{provider_key}{remote_reads.LITERATURE_SEARCH_SUFFIX}",
+                        name=f"{display_name}: search literature",
+                        description=(
+                            "Search external literature through the provider and return "
+                            "bounded, untrusted discovery candidates. Read-only: it "
+                            "persists nothing and never imports a publication — an "
+                            "explicit human Import is required to create Project context."
+                        ),
+                        autonomy=AgentToolAutonomy.AUTOMATIC,
+                        execution_class=ToolExecutionClass.REMOTE,
+                        side_effect_class=ToolSideEffectClass.READ_ONLY,
+                        available=True,
+                        availability_reason=None,
+                        input_schema=_schema(LiteratureSearchToolInput),
+                        output_schema=_schema(LiteratureDiscoveryResultsRead),
+                        source=ToolSource.PROVIDER,
+                        provider_key=provider_key,
+                        capability_kind=CapabilityKind.LITERATURE_DISCOVERY,
                     )
                 )
     return tools

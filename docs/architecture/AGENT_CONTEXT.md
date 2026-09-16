@@ -95,6 +95,17 @@ explicit "Add to Agent context" action that reuses this same
 cached grant: the builder re-validates every explicitly selected identity against
 current truth. Normative detail: `docs/architecture/PROJECT_SEARCH_RETRIEVAL.md`.
 
+**External literature discovery (Phase 13).** The Agent also has a read-only
+`{provider}.literature.search` Tool (`automatic`/`remote`/`read_only`) that
+discovers publications REvoLab does not yet know about. It calls the SAME
+application discovery service the human workspace uses, returns bounded EPHEMERAL
+`LiteratureCandidate`s, and performs zero persistence: it never imports, never
+creates a `LiteratureReference`/Evidence/Decision/ActionRequest, and never enlarges
+what this turn may read. Candidate text is untrusted external data — hostile content
+can change neither authority nor the ToolCatalog. The Agent has **no** import Tool in
+Phase 13: importing is an explicit human action. Normative detail:
+`docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
+
 ## Representing objects / evidence / decisions to the Agent
 
 As **typed, addressable references**, not prose dumps, and **not a third domain model**:

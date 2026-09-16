@@ -119,6 +119,14 @@ decision.commit         Decision draft -> committed (promotion gate, explicit_ac
 project.search          bounded read-only Project-shared search (Phase 12)
 ```
 
+Phase 13 adds no new LOCAL tool. It projects the real provider capability as a
+REMOTE read-only tool:
+
+```text
+{provider}.literature.search    external literature discovery (remote, read_only,
+                                automatic; input {query, limit} — no url/host/scope/import)
+```
+
 `project.search` is the only Phase-12 addition. It is `automatic` / `local` /
 `read_only` and calls the SAME authorization-aware search application service the
 human workspace uses (never an Agent-only search engine). Its input is a bounded
@@ -131,13 +139,24 @@ content, and its result is data for the model, never truth. Normative semantics:
 Remote REvoCompute tools are projected through the same catalog
 (`{provider}.compute.*`, `{provider}.artifact.resolve`) with
 `execution_class=remote`; they execute only through the existing capability
-endpoints — the Local Tool Runtime never invokes them.
+endpoints — the Local Tool Runtime never invokes them, and the Agent loop invokes
+only the Phase-13 registered read-only remote reads.
 
 The Phase-8 Agent loop executes **local** tools through this same runtime. Remote
 tools are surfaced to the model from the same catalog but are not autonomously
 crossed in the loop: remote `explicit_action` becomes a durable **Action Request**,
-and remote automatic/policy reads remain on the human capability endpoints
-(`docs/architecture/PROJECT_AGENT_RUNTIME.md`).
+and every other remote automatic/policy read remains on the human capability
+endpoints (`docs/architecture/PROJECT_AGENT_RUNTIME.md`) — with the single Phase-13
+exception described immediately below.
+
+**Phase-13 narrowing (ADR-0019).** Exactly ONE class of remote tool is now also
+Agent-executable: a remote READ-ONLY `automatic` read registered in
+`revolab.tools.remote_reads` (`is_remote_read_tool`), matched by the stable
+capability SUFFIX (`.literature.search`) rather than the provider key prefix. Such a
+read is invoked directly against the SAME application service the human workspace
+calls; it performs zero persistence, consumes the existing tool-result budget, and
+its output stays untrusted data. Every other remote automatic/policy tool is still
+omitted from the model tool list and refused if named.
 
 An `explicit_action` proposal and its human execution are governed by
 `docs/architecture/AGENT_ACTION_HANDOFF.md` (ADR-0017). The Tool Harness side of

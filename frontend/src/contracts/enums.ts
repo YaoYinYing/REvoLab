@@ -118,3 +118,14 @@ export const ACTION_REQUEST_STATUS_REJECTED = pick(ACTION_REQUEST_STATUSES, 'rej
 export const SEARCH_SCOPE_PROJECT_SHARED = pick(SEARCH_SCOPES, 'project_shared')
 export const SEARCH_SCOPE_MY_CONVERSATIONS = pick(SEARCH_SCOPES, 'my_conversations')
 export const SEARCH_SCOPE_ALL = pick(SEARCH_SCOPES, 'all')
+
+// External literature aliases (Phase 13): the new capability kind and the
+// identities the literature surface names come from the generated contract.
+// Provider selection is discovered from the Provider Catalog by CAPABILITY KIND,
+// never by branching on a provider key.
+export const CAPABILITY_KIND_LITERATURE_DISCOVERY = pick(
+  CAPABILITY_KINDS,
+  'literature_discovery',
+)
+export const RESOURCE_KIND_LITERATURE = pick(RESOURCE_KINDS, 'literature_reference')
+export const EVIDENCE_KIND_LITERATURE = pick(EVIDENCE_KINDS, 'literature')

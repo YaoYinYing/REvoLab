@@ -23,7 +23,7 @@ export const RESOURCE_KINDS: readonly components['schemas']['ResourceKind'][] = 
 
 export const EVIDENCE_TARGET_KINDS: readonly components['schemas']['EvidenceTargetKind'][] = ["scientific_object_revision","decision","evidence"] as const
 
-export const CAPABILITY_KINDS: readonly components['schemas']['CapabilityKind'][] = ["compute","artifact_resolution"] as const
+export const CAPABILITY_KINDS: readonly components['schemas']['CapabilityKind'][] = ["compute","artifact_resolution","literature_discovery"] as const
 
 export const PROVIDER_RUNTIME_HEALTHS: readonly components['schemas']['ProviderRuntimeHealth'][] = ["ready","degraded","unreachable"] as const
 

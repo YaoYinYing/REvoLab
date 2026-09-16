@@ -573,7 +573,14 @@ def test_pending_arguments_are_bounded():
     assert len(result["preview"]) == 100
 
 
-def test_model_tool_projection_excludes_remote_reads():
+def test_model_tool_projection_offers_remote_reads_only_when_registered():
+    """Phase 13 deliberately narrows the Phase-8 exclusion.
+
+    Remote provider tools are still excluded from the model tool list UNLESS they
+    are a registered remote READ-ONLY automatic read (the single owner of that fact
+    is `revolab.tools.remote_reads`). So the compute read tools remain excluded,
+    while the literature discovery Tool is offered.
+    """
     from revolab.agent.runtime import _tool_descriptor_tools
 
     tools = [
@@ -583,6 +590,7 @@ def test_model_tool_projection_excludes_remote_reads():
             "input_schema": {},
             "execution_class": "local",
             "autonomy": "automatic",
+            "side_effect_class": "read_only",
         },
         {
             "id": "fakecompute.compute.submit",
@@ -590,6 +598,7 @@ def test_model_tool_projection_excludes_remote_reads():
             "input_schema": {},
             "execution_class": "remote",
             "autonomy": "explicit_action",
+            "side_effect_class": "external_action",
         },
         {
             "id": "fakecompute.compute.run_status",
@@ -597,12 +606,24 @@ def test_model_tool_projection_excludes_remote_reads():
             "input_schema": {},
             "execution_class": "remote",
             "autonomy": "automatic",
+            "side_effect_class": "read_only",
+        },
+        {
+            "id": "ncbi.literature.search",
+            "description": "",
+            "input_schema": {},
+            "execution_class": "remote",
+            "autonomy": "automatic",
+            "side_effect_class": "read_only",
         },
     ]
     names = {spec.name for spec in _tool_descriptor_tools(tools)}
     assert "table.describe" in names
     assert "fakecompute.compute.submit" in names
+    # An unregistered remote automatic read is still never advertised.
     assert "fakecompute.compute.run_status" not in names
+    # The registered remote read-only literature read IS advertised.
+    assert "ncbi.literature.search" in names
 
 
 def test_openai_backend_maps_tool_ids_to_safe_function_names():

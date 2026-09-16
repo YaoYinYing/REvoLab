@@ -8,6 +8,7 @@ import {
   FileText,
   FlaskConical,
   Home,
+  Library,
   ListTree,
   NotebookPen,
   Play,
@@ -22,14 +23,15 @@ import { useObjectDetail, useProjects } from './api/hooks'
 import { ContextInspector } from './components/ContextInspector'
 import { ErrorBox, Loading } from './components/ui'
 import { ProjectPicker } from './components/ProjectPicker'
-import { PROJECT_VISIBILITY_PRIVATE } from './contracts/enums'
+import { PROJECT_VISIBILITY_PRIVATE, RESOURCE_KIND_LITERATURE } from './contracts/enums'
 import { contextItemFromHit, type AgentContextItem } from './views/agentContext'
-import type { SearchHitRead } from './api/types'
+import type { ReferenceRead, SearchHitRead } from './api/types'
 import { AgentView } from './views/Agent'
 import { ComputeView } from './views/Compute'
 import { DecisionsView } from './views/Decisions'
-import { EvidenceView } from './views/Evidence'
+import { EvidenceView, type EvidenceSourcePrefill } from './views/Evidence'
 import { KnowledgeView } from './views/Knowledge'
+import { LiteratureView } from './views/Literature'
 import { NotebookView } from './views/Notebook'
 import { ObjectDetailView } from './views/ObjectDetail'
 import { ObjectsView } from './views/Objects'
@@ -51,6 +53,7 @@ type View =
   | 'runs'
   | 'decisions'
   | 'knowledge'
+  | 'literature'
   | 'providers'
   | 'compute'
   | 'analyze'
@@ -59,6 +62,7 @@ type View =
 const NAV = [
   { view: 'overview', label: 'Overview', icon: Home },
   { view: 'search', label: 'Search', icon: Search },
+  { view: 'literature', label: 'Literature', icon: Library },
   { view: 'objects', label: 'Objects', icon: ListTree },
   { view: 'agent', label: 'Agent', icon: Bot },
   { view: 'notes', label: 'Notes', icon: NotebookPen },
@@ -91,6 +95,10 @@ export function App() {
   const [agentConversationId, setAgentConversationId] = useState<string | null>(null)
   // A search-selected canonical target to highlight in its existing surface.
   const [focusTarget, setFocusTarget] = useState<{ kind: string; id: string } | null>(null)
+  // Phase-13 literature -> Evidence hand-off: an IMPORTED LiteratureReference
+  // explicitly interpreted through the EXISTING Evidence creation surface. Import
+  // alone never creates Evidence; this is a separate, explicit human step.
+  const [evidenceSource, setEvidenceSource] = useState<EvidenceSourcePrefill | null>(null)
   const [showProjectForm, setShowProjectForm] = useState(false)
   const [projectName, setProjectName] = useState('')
   const [projectDescription, setProjectDescription] = useState('')
@@ -124,6 +132,7 @@ export function App() {
     setAgentContextItems([])
     setAgentConversationId(null)
     setFocusTarget(null)
+    setEvidenceSource(null)
   }, [activeProjectId])
 
   async function createProject(name: string, description: string | null) {
@@ -159,6 +168,7 @@ export function App() {
     setAgentContextItems([])
     setAgentConversationId(null)
     setFocusTarget(null)
+    setEvidenceSource(null)
     setView('overview')
   }
 
@@ -207,6 +217,23 @@ export function App() {
           ),
       ),
     )
+  }
+
+  /**
+   * Explicit "Use as Evidence" from an IMPORTED publication. The Publication is
+   * carried as a typed source prefill into the EXISTING Evidence surface; the
+   * user still writes the interpretation and (separately) the Decision citation.
+   */
+  function useLiteratureAsEvidence(reference: ReferenceRead) {
+    // The hand-off is always a literature reference; the identity comes from the
+    // canonical import response, never from a hand-copied kind literal.
+    setEvidenceSource({
+      source_kind: RESOURCE_KIND_LITERATURE,
+      source_id: reference.resource_id,
+      label: reference.title ?? `${reference.authority}:${reference.native_id}`,
+    })
+    setFocusTarget(null)
+    setView('evidence')
   }
 
   /** Navigate a search hit to its EXISTING canonical surface and select it. */
@@ -370,6 +397,14 @@ export function App() {
               onAddToAgentContext={addHitToAgentContext}
             />
           ) : null}
+          {view === 'literature' ? (
+            <LiteratureView
+              key={`${actorId}:${projectId}`}
+              actorId={actorId}
+              projectId={projectId}
+              onUseAsEvidence={useLiteratureAsEvidence}
+            />
+          ) : null}
           {view === 'objects' ? (
             <ObjectsView actorId={actorId} projectId={projectId} onOpenObject={openObject} />
           ) : null}
@@ -418,6 +453,8 @@ export function App() {
               actorId={actorId}
               projectId={projectId}
               focusId={focusTarget?.kind === 'evidence' ? focusTarget.id : null}
+              evidenceSource={evidenceSource}
+              onEvidenceSourceConsumed={() => setEvidenceSource(null)}
             />
           ) : null}
           {view === 'runs' ? (

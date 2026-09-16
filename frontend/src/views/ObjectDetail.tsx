@@ -12,6 +12,7 @@ import type {
   ProjectRead,
 } from '../api/types'
 import { Button } from '../components/buttons'
+import { EvidenceForm } from '../components/EvidenceForm'
 import { Badge, Empty, ErrorBox, EnumSelect, Field, Loading, Section } from '../components/ui'
 import {
   DECISION_STATUS_COMMITTED,
@@ -25,75 +26,6 @@ import {
   EVIDENCE_KINDS,
   POLARITIES,
 } from '../contracts/enums'
-
-function EvidenceForm({
-  actorId,
-  projectId,
-  detail,
-  onDone,
-}: {
-  actorId: string
-  projectId: string
-  detail: ObjectDetailRead
-  onDone: () => void
-}) {
-  const latest = detail.visible_revisions.at(-1)
-  const [kind, setKind] = useState<EvidenceKind>(DEFAULT_EVIDENCE_KIND)
-  const [interpretation, setInterpretation] = useState('')
-  const [polarity, setPolarity] = useState<Polarity>(DEFAULT_POLARITY)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  if (!latest) return null
-
-  async function onSubmit(event: React.FormEvent) {
-    event.preventDefault()
-    setError(null)
-    setBusy(true)
-    const res = await projectApi(actorId).createEvidence(projectId, {
-      kind,
-      role: DEFAULT_EVIDENCE_ROLE,
-      interpretation: interpretation || null,
-      polarity,
-      target_kind: DEFAULT_EVIDENCE_TARGET_KIND,
-      target_id: latest!.revision_id,
-    })
-    setBusy(false)
-    if (res.error || !res.data) {
-      setError('Evidence creation failed.')
-      return
-    }
-    setInterpretation('')
-    onDone()
-  }
-
-  return (
-    <form className="stack-form compact" onSubmit={onSubmit}>
-      <div className="form-grid">
-        <Field label="Kind">
-          <EnumSelect value={kind} options={EVIDENCE_KINDS} onChange={setKind} />
-        </Field>
-        <Field label="Polarity">
-          <EnumSelect value={polarity} options={POLARITIES} onChange={setPolarity} />
-        </Field>
-      </div>
-      <Field label="Interpretation">
-        <input
-          value={interpretation}
-          onChange={(event) => setInterpretation(event.target.value)}
-          placeholder="What does this evidence say about the object?"
-        />
-      </Field>
-      <div className="form-actions">
-        <Button type="submit" disabled={busy}>
-          {busy ? 'Recording…' : 'Record evidence'}
-        </Button>
-        {error ? <span className="inline-error">{error}</span> : null}
-      </div>
-      <small className="hint">Target: latest visible revision {latest.revision_id.slice(0, 8)}…</small>
-    </form>
-  )
-}
 
 function DecisionForm({
   actorId,
@@ -454,7 +386,20 @@ export function ObjectDetailView({
           </button>
         }
       >
-        {showEvidenceForm ? <EvidenceForm actorId={actorId} projectId={projectId} detail={detail} onDone={() => { setShowEvidenceForm(false); onChanged() }} /> : null}
+        {showEvidenceForm && latest ? (
+          <EvidenceForm
+            actorId={actorId}
+            projectId={projectId}
+            targetKind={DEFAULT_EVIDENCE_TARGET_KIND}
+            targetId={latest.revision_id}
+            targetLabel="latest visible revision"
+            onCreated={() => {
+              setShowEvidenceForm(false)
+              onChanged()
+            }}
+            onCancel={() => setShowEvidenceForm(false)}
+          />
+        ) : null}
         {relatedEvidence.length === 0 ? <Empty label="No evidence targets this object." /> : (
           relatedEvidence.map((item) => (
             <div className="trail-row" key={item.id}>

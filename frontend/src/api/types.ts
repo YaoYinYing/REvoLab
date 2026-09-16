@@ -167,3 +167,22 @@ export type ActionRequestRead =
 export type SearchScope = components['schemas']['SearchScope']
 export type SearchTargetKind = components['schemas']['SearchTargetKind']
 export type SearchMatchedField = components['schemas']['SearchMatchedField']
+
+// Phase-13 external literature discovery + explicit import. A candidate is
+// EPHEMERAL external data (never a SearchHit and never Project truth); the
+// import result is the EXISTING `ReferenceRead` contract, so there is no second
+// reference shape on the wire.
+export type LiteratureCandidateRead =
+  components['schemas']['LiteratureCandidateRead']
+
+export type LiteratureDiscoveryResultsRead =
+  paths['/api/projects/{project_id}/literature/discover']['get']['responses']['200']['content']['application/json']
+
+export type LiteratureDiscoveryQuery =
+  paths['/api/projects/{project_id}/literature/discover']['get']['parameters']['query']
+
+export type LiteratureImportCreate =
+  paths['/api/projects/{project_id}/literature/import']['post']['requestBody']['content']['application/json']
+
+export type LiteratureImportRead =
+  paths['/api/projects/{project_id}/literature/import']['post']['responses']['201']['content']['application/json']

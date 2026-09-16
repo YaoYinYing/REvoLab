@@ -250,3 +250,82 @@ class ArtifactPreviewCapability(Protocol):
         offset: int = 0,
         limit: int,
     ) -> ArtifactHandle: ...
+
+
+# ---------------------------------------------------------------------------
+# Literature discovery capability (Phase 13)
+#
+# The provider-neutral boundary for "discover publications REvoLab does not yet
+# know". A provider realizing this protocol returns EPHEMERAL candidates; nothing
+# here is durable, and nothing here is Project truth. Provider vocabulary (NCBI
+# ESummary field names, PubMed query grammar, HTTP routes) stays inside the
+# driver.
+# ---------------------------------------------------------------------------
+
+# Provider-neutral ceilings for one discovery call. They are the SINGLE canonical
+# values: the driver enforces them at the wire boundary and the application
+# service re-applies them to the projection, so a misbehaving driver cannot widen
+# the Agent/frontend surface. Deliberately small — Phase 13 is discovery, not
+# systematic review.
+MAX_LITERATURE_QUERY_CHARS = 300
+DEFAULT_LITERATURE_RESULT_LIMIT = 10
+MAX_LITERATURE_RESULT_LIMIT = 20
+MAX_LITERATURE_TITLE_CHARS = 500
+MAX_LITERATURE_AUTHORS = 20
+MAX_LITERATURE_AUTHOR_CHARS = 200
+MAX_LITERATURE_JOURNAL_CHARS = 200
+MAX_LITERATURE_DOI_CHARS = 200
+
+
+@dataclass(frozen=True)
+class LiteratureCandidate:
+    """One EPHEMERAL external discovery candidate (Phase 13).
+
+    This is provider-neutral presentation data returned by a read-only external
+    lookup. It is deliberately NOT a `LiteratureReference`, `ExternalReference`,
+    `Evidence`, `SearchHit`, or Project truth; it is never persisted by searching.
+    All text fields are untrusted external data and are bounded by the driver.
+
+    `authority` is the DURABLE identity namespace (e.g. `pubmed`), never the
+    resolver/provider key: a future resolver may resolve the same
+    `(authority, native_id)` identity without changing any stored reference.
+    """
+
+    provider_key: str
+    authority: str
+    native_id: str
+    title: str | None = None
+    authors: tuple[str, ...] = ()
+    journal: str | None = None
+    publication_year: int | None = None
+    doi: str | None = None
+
+
+@dataclass(frozen=True)
+class LiteratureSearchResult:
+    """The bounded result of one external discovery search (ephemeral)."""
+
+    provider_key: str
+    candidates: tuple[LiteratureCandidate, ...]
+
+
+class LiteratureDiscoveryCapability(Protocol):
+    """The executable external-literature discovery boundary.
+
+    `search` is a bounded read-only lookup by opaque provider search text;
+    `resolve` re-reads ONE publication by its durable `(authority, native_id)`
+    identity so an explicit import never trusts client-supplied bibliographic
+    metadata. Neither method persists anything, and neither accepts a URL, host,
+    scheme, port, proxy, or HTTP method.
+    """
+
+    provider_key: str
+    kind: CapabilityKind
+
+    def search(
+        self, query: str, limit: int, credentials: CredentialLease
+    ) -> LiteratureSearchResult: ...
+
+    def resolve(
+        self, authority: str, native_id: str, credentials: CredentialLease
+    ) -> LiteratureCandidate: ...

@@ -22,6 +22,24 @@ class Settings(BaseSettings):
     # Opt-in in-process fake COMPUTE provider for the browser/e2e vertical slice.
     # Default OFF in production; never enables any real external credential flow.
     e2e_fake_compute: bool = False
+    # --- Phase-13 NCBI PubMed literature-discovery provider (server-owned) ---
+    # NCBI E-utilities require an application `tool` identifier and an operator
+    # contact `email` on every request (current official NCBI usage policy). They
+    # are OPERATOR configuration, never Project data, and are never hard-coded.
+    # The driver is installed only when BOTH are configured; a partially
+    # configured deployment fails loudly instead of silently probing anonymously.
+    ncbi_tool: str | None = None
+    ncbi_email: str | None = None
+    ncbi_timeout_seconds: float = 10.0
+    # Conservative no-key pacing: NCBI documents a maximum of 3 E-utilities
+    # requests per second per IP without an API key. Phase 13 has no API-key
+    # feature (an explicit non-goal), so the default interval stays below that
+    # ceiling (~2.9 req/s). Tests inject 0; production must not lower it.
+    ncbi_min_request_interval_seconds: float = 0.34
+    # Opt-in in-process fake LITERATURE provider for application/browser slices.
+    # Default OFF in production; it realizes the SAME capability boundary through
+    # the SAME Driver/Capability registry as the real driver.
+    e2e_fake_literature: bool = False
     # Explicit runtime root for the canonical skill tree. Defaults to the repo
     # `.agents/skills/` during development; a packaged deployment MUST set this
     # to a shipped skill root (the repo-relative path is not part of the wheel).

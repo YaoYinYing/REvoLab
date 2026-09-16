@@ -555,6 +555,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/literature/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discover Literature
+         * @description Read-only bounded external literature discovery (no persistence).
+         *
+         *     `q` is opaque provider search text: Core never parses PubMed `[Title]`/
+         *     `[MeSH]` grammar — provider vocabulary stays behind the driver.
+         */
+        get: operations["discover_literature_api_projects__project_id__literature_discover_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/literature/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Literature
+         * @description Explicitly import one publication into Project context (idempotent).
+         *
+         *     The request carries stable identity only; the server re-resolves it at the
+         *     current provider and persists ONLY the canonical global LiteratureReference +
+         *     this Project's `ProjectResourceLink`. Import creates no Evidence.
+         */
+        post: operations["import_literature_api_projects__project_id__literature_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/members": {
         parameters: {
             query?: never;
@@ -1451,12 +1498,13 @@ export interface components {
          * @description Core-owned closed capability vocabulary (ADR-0012). Core categorizes
          *     realized capabilities by these kinds; it never parses provider vocabulary.
          *
-         *     Only the two realized capability kinds exist. Any additional kind is added
-         *     only when a concrete, provider-neutral use case forces it — never pre-
-         *     projected as speculative vocabulary.
+         *     Only realized capability kinds exist. Any additional kind is added only when a
+         *     concrete, provider-neutral use case forces it — never pre-projected as
+         *     speculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a
+         *     real provider (NCBI PubMed) now realizes it.
          * @enum {string}
          */
-        CapabilityKind: "compute" | "artifact_resolution";
+        CapabilityKind: "compute" | "artifact_resolution" | "literature_discovery";
         /** CitationCreate */
         CitationCreate: {
             /** @default supports */
@@ -2244,6 +2292,61 @@ export interface components {
              * Format: uuid
              */
             target_id: string;
+        };
+        /**
+         * LiteratureCandidateRead
+         * @description One bounded, untrusted external discovery candidate (never Project truth).
+         */
+        LiteratureCandidateRead: {
+            /** Authority */
+            authority: string;
+            /** Authors */
+            authors?: string[];
+            /** Doi */
+            doi?: string | null;
+            /** Journal */
+            journal?: string | null;
+            /** Native Id */
+            native_id: string;
+            /** Provider Key */
+            provider_key: string;
+            /** Publication Year */
+            publication_year?: number | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * LiteratureDiscoveryResultsRead
+         * @description The bounded envelope of one external discovery search.
+         *
+         *     Deliberately exposes no total count and no relevance score: ordered top-N
+         *     candidates are the contract, and the query/search text stays opaque provider
+         *     grammar that Core never parses.
+         */
+        LiteratureDiscoveryResultsRead: {
+            /** Candidates */
+            candidates?: components["schemas"]["LiteratureCandidateRead"][];
+            /** Provider Key */
+            provider_key: string;
+            /** Query */
+            query: string;
+        };
+        /**
+         * LiteratureImportCreate
+         * @description Explicit human import request: stable identity ONLY.
+         *
+         *     The client supplies enough to RE-RESOLVE the candidate at the current provider
+         *     (`provider_key` + durable `(authority, native_id)`) and nothing that will be
+         *     persisted. A title/authors/journal supplied here would be untrusted
+         *     browser-provided metadata and is therefore not part of the contract at all.
+         */
+        LiteratureImportCreate: {
+            /** Authority */
+            authority: string;
+            /** Native Id */
+            native_id: string;
+            /** Provider Key */
+            provider_key: string;
         };
         /** LiteratureReferenceCreate */
         LiteratureReferenceCreate: {
@@ -4741,6 +4844,80 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_literature_api_projects__project_id__literature_discover_get: {
+        parameters: {
+            query: {
+                provider_key: string;
+                q: string;
+                limit?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiteratureDiscoveryResultsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_literature_api_projects__project_id__literature_import_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LiteratureImportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReferenceRead"];
                 };
             };
             /** @description Validation Error */

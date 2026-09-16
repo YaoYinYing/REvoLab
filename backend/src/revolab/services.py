@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from revolab.capabilities import (
     LEGAL_COMPUTE_INPUT_KINDS,
+    MAX_LITERATURE_TITLE_CHARS,
     ArtifactHandle,
     ExternalArtifactRef,
     InputBinding,
@@ -93,7 +94,9 @@ def _is_frozen(session: Session, evidence_id: UUID) -> bool:
 # capabilities (compute submission) require a mutation-capable membership. This
 # is the Phase-3 minimal policy, not an RBAC engine: the ONLY authorization
 # truth remains Phase-1 ProjectMembership roles.
-READ_ONLY_CAPABILITY_KINDS = frozenset({CapabilityKind.ARTIFACT_RESOLUTION})
+READ_ONLY_CAPABILITY_KINDS = frozenset(
+    {CapabilityKind.ARTIFACT_RESOLUTION, CapabilityKind.LITERATURE_DISCOVERY}
+)
 
 
 def project_policy_permits(
@@ -892,6 +895,108 @@ def create_literature_reference(
         return _link_existing_reference(session, actor_id, project_id, existing.literature_id, existing)
     row = provenance.create_literature_reference_row(session, authority, native_id, title=title)
     return _finalize_reference(session, project_id, row.literature_id, row)
+
+
+def _is_literature_identity_conflict(exc: IntegrityError) -> bool:
+    """Narrow detection of the `uq_literature_authority_native` unique constraint."""
+    orig = exc.orig
+    diagnostics = getattr(orig, "diag", None)
+    if diagnostics is not None:  # PostgreSQL psycopg
+        return bool(diagnostics.constraint_name == "uq_literature_authority_native")
+    message = str(orig)
+    return (
+        "UNIQUE constraint failed" in message
+        and "literature_references.authority" in message
+    )
+
+
+def _link_literature_reference_idempotent(
+    session: Session, project_id: UUID, literature_id: UUID
+) -> None:
+    """Link an already-existing global reference into a Project idempotently.
+
+    `persistence.link` is read-then-insert, so two concurrent imports of the SAME
+    reference into the SAME Project can both observe "not visible" and both insert
+    into `uq_link_project_resource`. This guard makes the loser resolve to the
+    committed winner instead of leaking a raw `IntegrityError` to the caller.
+    """
+    try:
+        persistence.link(session, project_id, literature_id)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if not _is_link_uniqueness_conflict(exc):
+            raise
+        if not persistence.is_visible(session, project_id, literature_id):
+            raise ConflictError(
+                "literature link conflicted with a concurrent import; retry"
+            ) from exc
+
+
+def _persist_literature_reference_from_resolver(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    authority: str,
+    native_id: str,
+    *,
+    title: str | None = None,
+) -> Any:
+    """Trusted internal get-or-create for a publication the Actor's capability
+    call just RE-RESOLVED at the CURRENT provider (Phase 13).
+
+    This path is different from the request-derived `create_literature_reference`:
+    the external public resolver has independently confirmed this exact
+    `(authority, native_id)` identity for this Actor, so an already-existing global
+    reference may be linked into the Project without a separate source-read path —
+    exactly like the provider-confirmed Run/Artifact helpers. It MUST be reached
+    only AFTER a successful provider resolution and is never exposed as an API that
+    accepts arbitrary trusted client metadata.
+
+    Identity is `(authority, native_id)`, never the title. For a NEW global
+    reference the resolver's bounded title populates the existing `title` column;
+    an EXISTING reference is linked UNCHANGED — a differing current provider title
+    is refreshable presentation data, never a durable-identity conflict, and the
+    stored title is never overwritten.
+
+    Concurrency: the unique `(authority, native_id)` and
+    `(project_id, resource_id)` constraints are the real guard. EVERY link and
+    create+link path below is guarded, so a losing racer rolls back and resolves to
+    the committed winner and no raw `IntegrityError` reaches the API.
+    """
+    mutation_capable_membership(session, actor_id, project_id)
+    bounded_title = title[:MAX_LITERATURE_TITLE_CHARS] if title else None
+    existing = provenance.find_literature_reference(session, authority, native_id)
+    if existing is not None:
+        _link_literature_reference_idempotent(session, project_id, existing.literature_id)
+        session.refresh(existing)
+        return existing
+    try:
+        # The whole create+link block is inside the guard: the reference insert
+        # flushes eagerly, so a concurrent loser can hit the unique index HERE, not
+        # only at the final commit.
+        row = provenance.create_literature_reference_row(
+            session, authority, native_id, title=bounded_title
+        )
+        persistence.link(session, project_id, row.literature_id)
+        persistence.steward(session, project_id, row.literature_id)
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        if not (
+            _is_literature_identity_conflict(exc) or _is_link_uniqueness_conflict(exc)
+        ):
+            raise
+        winner = provenance.find_literature_reference(session, authority, native_id)
+        if winner is None:
+            raise ConflictError(
+                "literature import conflicted with a concurrent import; retry"
+            ) from exc
+        _link_literature_reference_idempotent(session, project_id, winner.literature_id)
+        session.refresh(winner)
+        return winner
+    session.refresh(row)
+    return row
 
 
 def create_external_reference(

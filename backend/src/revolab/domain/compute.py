@@ -42,7 +42,7 @@ from revolab.enums import CapabilityErrorKind, CapabilityKind, ProviderRuntimeHe
 from revolab.secret_store import SecretMissingError, SecretStore
 
 
-def _prepared_capability(
+def prepared_capability(
     *,
     session: Session,
     registry: DriverRegistry,
@@ -52,6 +52,14 @@ def _prepared_capability(
     kind: CapabilityKind,
     permitted: bool,
 ) -> tuple[Any, CredentialLease]:
+    """The shared provider-invocation gate for EVERY capability kind.
+
+    Resolves `READY driver -> project policy permits -> required credentials
+    present -> ephemeral CredentialLease` and returns the realized capability for
+    `kind` plus its call-scoped lease. Kept public (Phase 13) so the literature
+    discovery invocation layer (`revolab.domain.discovery`) reaches capabilities
+    through the SAME gate instead of re-deriving availability or credentials.
+    """
     try:
         handle = registry.get(provider_key)
     except LookupError as exc:
@@ -104,7 +112,7 @@ def list_task_kinds(
     *,
     permitted: bool,
 ) -> list[TaskKindRef]:
-    capability, lease = _prepared_capability(
+    capability, lease = prepared_capability(
         session=session,
         registry=registry,
         store=store,
@@ -126,7 +134,7 @@ def task_kind_schema(
     *,
     permitted: bool,
 ) -> TaskKindSchema:
-    capability, lease = _prepared_capability(
+    capability, lease = prepared_capability(
         session=session,
         registry=registry,
         store=store,
@@ -150,7 +158,7 @@ def submit_compute(
     *,
     permitted: bool,
 ) -> RunHandle:
-    capability, lease = _prepared_capability(
+    capability, lease = prepared_capability(
         session=session,
         registry=registry,
         store=store,
@@ -172,7 +180,7 @@ def get_run(
     *,
     permitted: bool,
 ) -> RunView:
-    capability, lease = _prepared_capability(
+    capability, lease = prepared_capability(
         session=session,
         registry=registry,
         store=store,
@@ -194,7 +202,7 @@ def list_artifacts(
     *,
     permitted: bool,
 ) -> list[ArtifactHandle]:
-    capability, lease = _prepared_capability(
+    capability, lease = prepared_capability(
         session=session,
         registry=registry,
         store=store,
@@ -216,7 +224,7 @@ def resolve_artifact(
     *,
     permitted: bool,
 ) -> ArtifactHandle:
-    capability, lease = _prepared_capability(
+    capability, lease = prepared_capability(
         session=session,
         registry=registry,
         store=store,
@@ -246,7 +254,7 @@ def resolve_artifact_preview(
     cannot bound its read fails closed (`PROVIDER_UNAVAILABLE`) instead of
     silently materializing the whole artifact.
     """
-    capability, lease = _prepared_capability(
+    capability, lease = prepared_capability(
         session=session,
         registry=registry,
         store=store,
@@ -282,6 +290,7 @@ __all__ = [
     "get_run",
     "list_artifacts",
     "list_task_kinds",
+    "prepared_capability",
     "resolve_artifact",
     "resolve_artifact_preview",
     "submit_compute",

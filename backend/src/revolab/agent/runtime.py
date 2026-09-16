@@ -41,6 +41,7 @@ from revolab.agent.model_backend import (
 )
 from revolab.agent.prompt import build_model_request, context_payload
 from revolab.agent.skills import load_skill_bodies
+from revolab.capabilities import CapabilityError
 from revolab.content_store import ContentStore
 from revolab.domain.errors import DomainError, ModelUnavailableError
 from revolab.drivers import DriverRegistry
@@ -58,8 +59,10 @@ from revolab.schemas import (
     PendingActionRead,
     ToolCallTraceRead,
     ToolInvocationCreate,
+    ToolResultRead,
 )
 from revolab.secret_store import SecretStore
+from revolab.tools import remote_reads
 from revolab.tools.catalog import build_tool_catalog
 from revolab.tools.explicit_actions import (
     MAX_ACTION_ARGUMENT_CHARS,
@@ -107,17 +110,32 @@ class AgentLoopBounds:
 
 
 def _tool_descriptor_tools(catalog_tools: list[dict[str, Any]]) -> tuple[ToolSpec, ...]:
-    """Project the Agent-facing tool surface. Only local tools and remote
-    explicit-action tools are offered: remote automatic/policy reads are surfaced
-    in the human catalog but are never executed by the Agent loop, so advertising
-    them would waste model turns on tools that can only be refused."""
+    """Project the Agent-facing tool surface.
+
+    Local tools are always offered. A REMOTE tool is offered only when it is
+    either:
+
+    * a remote `explicit_action` (the Agent may PROPOSE it as a durable Action
+      Request; a human authorizes execution), or
+    * a registered remote READ-ONLY `automatic` read (Phase 13): a bounded,
+      credential-light external lookup whose result is untrusted data and whose
+      invocation persists nothing. `revolab.tools.remote_reads` is the single
+      owner of WHICH reads those are.
+
+    Every other remote tool is still omitted: advertising a tool that can only be
+    refused wastes model turns.
+    """
     specs: list[ToolSpec] = []
     for tool in catalog_tools:
-        if (
-            tool["execution_class"] == ToolExecutionClass.REMOTE.value
-            and tool["autonomy"] != AgentToolAutonomy.EXPLICIT_ACTION.value
-        ):
-            continue
+        if tool["execution_class"] == ToolExecutionClass.REMOTE.value:
+            is_remote_action = tool["autonomy"] == AgentToolAutonomy.EXPLICIT_ACTION.value
+            is_remote_read = (
+                tool["autonomy"] == AgentToolAutonomy.AUTOMATIC.value
+                and tool.get("side_effect_class") == ToolSideEffectClass.READ_ONLY.value
+                and remote_reads.is_remote_read_tool(tool["id"])
+            )
+            if not (is_remote_action or is_remote_read):
+                continue
         specs.append(
             ToolSpec(
                 name=tool["id"],
@@ -563,18 +581,91 @@ class AgentTurnRunner:
                 None,
             )
 
-        # Remote (provider) tools are never executed through the closed local
-        # runtime. A remote automatic/policy tool exits the Agent loop here as
-        # typed refusal; the external execution surface remains the human one.
+        # Remote (provider) tools never run through the closed LOCAL runtime. A
+        # registered remote READ-ONLY automatic read is executed directly against
+        # the SAME application service the human workspace calls (Phase 13); every
+        # other remote tool still fails closed here.
         if descriptor.execution_class is ToolExecutionClass.REMOTE:
+            spec = remote_reads.remote_read_spec(call.name)
+            if (
+                spec is None
+                or descriptor.autonomy is not AgentToolAutonomy.AUTOMATIC
+                or descriptor.side_effect_class is not ToolSideEffectClass.READ_ONLY
+                or descriptor.provider_key is None
+            ):
+                return (
+                    ToolCallTraceRead(
+                        tool_id=call.name,
+                        status=AgentToolCallStatus.FAILED,
+                        error="remote provider tools are not executed by the Agent runtime",
+                    ),
+                    None,
+                    None,
+                )
+            input_model, handler = spec
+            try:
+                parsed = input_model.model_validate(call.arguments)
+            except (PydanticValidationError, ValueError):
+                return (
+                    ToolCallTraceRead(
+                        tool_id=call.name,
+                        status=AgentToolCallStatus.FAILED,
+                        error="invalid remote read arguments",
+                    ),
+                    None,
+                    None,
+                )
+            try:
+                # A savepoint keeps the "a failed tool leaves no partial write"
+                # invariant even though a remote read is read-only by contract.
+                with ctx.session.begin_nested():
+                    output = handler(ctx, parsed, descriptor.provider_key)
+            except DomainError as exc:
+                return (
+                    ToolCallTraceRead(
+                        tool_id=call.name, status=AgentToolCallStatus.FAILED, error=str(exc)
+                    ),
+                    None,
+                    None,
+                )
+            except CapabilityError as exc:
+                # A typed provider failure: its message is sanitized by
+                # construction (no URL, query text, upstream body, or traceback).
+                return (
+                    ToolCallTraceRead(
+                        tool_id=call.name, status=AgentToolCallStatus.FAILED, error=str(exc)
+                    ),
+                    None,
+                    None,
+                )
+            except Exception:
+                # Anything else is reported generically and never leaked.
+                return (
+                    ToolCallTraceRead(
+                        tool_id=call.name,
+                        status=AgentToolCallStatus.FAILED,
+                        error="remote read failed",
+                    ),
+                    None,
+                    None,
+                )
+            value = output.value.model_dump(mode="json") if output.value is not None else None
+            result = ToolResultRead(
+                tool_id=call.name,
+                status="completed",
+                result_kind=output.kind,
+                value=value,
+                persisted=False,
+            )
+            result_text = _bounded_json(
+                result.model_dump(mode="json"), self._bounds.max_tool_result_chars
+            )
             return (
                 ToolCallTraceRead(
-                    tool_id=call.name,
-                    status=AgentToolCallStatus.FAILED,
-                    error="remote provider tools are not executed by the Agent runtime",
+                    tool_id=call.name, status=AgentToolCallStatus.COMPLETED, result=result
                 ),
                 None,
-                None,
+                result_text,
             )
 
         # Each tool call runs in its own SAVEPOINT: the turn is one outer
