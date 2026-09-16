@@ -2476,16 +2476,16 @@ Commands run on this branch head:
 ```text
 ruff check backend                                  All checks passed
 mypy (strict, 59 source files)                      Success: no issues found
-pytest (SQLite)                                     597 passed, 31 skipped
+pytest (SQLite)                                     602 passed, 31 skipped
 alembic upgrade head + alembic check (SQLite)       no new upgrade operations
 alembic upgrade head + alembic check (PostgreSQL 16) no new upgrade operations
 pytest backend/tests/test_postgres_integration.py   31 passed (migrated PostgreSQL)
-pytest backend/tests/test_pubmed_driver.py          66 passed (deterministic HTTP)
+pytest backend/tests/test_pubmed_driver.py          71 passed (deterministic HTTP)
 pytest backend/tests/test_literature.py             36 passed
 pytest backend/tests/test_literature_agent.py       12 passed
 python -m revolab.export_openapi -> openapi.json    refreshed (byte-identical after export)
 frontend: npm run typecheck                         clean
-frontend: npm run test                              82 passed
+frontend: npm run test                              86 passed
 frontend: npm run build                             built
 frontend: npm run check:contracts                   clean (generation idempotent)
 playwright test (real FastAPI + DB + fake provider) 12 passed
@@ -2645,6 +2645,50 @@ budget):
   (reverting `httpx.HTTPError` → `httpx.TransportError` makes it fail), and no new
   P0/P1/P2 was introduced. Total final-review subagents: **5** (3 round-1 + 2 delta),
   all completed; **no unresolved P0/P1**.
+
+### Final-review follow-up (three remaining findings)
+
+A follow-up review pass raised three remaining findings; all three are fixed on the
+same branch/PR, each with a focused regression, and every fix was mutation-verified.
+
+- **NCBI Disclaimer/Copyright notice was not evident to users.** NCBI's official
+  E-utilities policy requires its Disclaimer and Copyright notice to be evident to
+  users of any product that uses the E-utilities. The Literature discovery surface
+  now renders a small, unobtrusive attribution line naming the providing provider
+  and linking to `https://www.ncbi.nlm.nih.gov/About/disclaimer.html`
+  (`frontend/src/views/Literature.tsx`, using the existing `scope-note` style). This
+  is legal/terms attribution, NOT capability semantics: provider selection still
+  comes from the backend-owned `literature_discovery` capability kind and the
+  generic frontend never branches on a provider key to decide what a capability
+  does. Regressions: the notice renders with the exact official URL and a
+  `target="_blank"` + `rel="noreferrer noopener"` link and names the provider; and
+  it does not render for a provider with no attribution entry.
+- **A streamed NCBI response was not closed when `_raise_on_error()` raised before
+  body reading.** `_get_json` called `_raise_on_error(response)` before
+  `_read_bounded(response)`, so a non-2xx path — which never enters the bounded read
+  — leaked the streamed connection. Ownership is now ONE scope: a single
+  `try/finally` in `_get_json` covers BOTH status handling and the bounded body read
+  and closes the response exactly once, and `_read_bounded` no longer closes at all,
+  so ownership no longer depends on which branch raised. Regressions: 429/500/502/503
+  each return a typed `PROVIDER_UNAVAILABLE` AND leave the streamed body closed
+  (tracked `httpx.SyncByteStream.close()`), plus the 2xx path is closed too.
+  Mutation-verified: removing the ownership scope fails all four non-2xx cases.
+- **`EvidenceForm` did not reconcile the target selection when `targetOptions`
+  arrived asynchronously.** The form initialized `selected` from the options present
+  at mount, so on the Evidence surface (which loads the project's objects/decisions
+  after mount) the selector stayed empty, submit stayed disabled, and the form
+  showed the false "no target" message. It now reconciles `selected` whenever the
+  option identity set changes: a later arrival selects the first target, while a
+  still-valid user selection is preserved. Regressions: mount with empty options →
+  rerender with options → submit succeeds with the first target and no manual
+  change; and a still-valid explicit selection survives an options refresh.
+  Mutation-verified: removing the reconciliation fails the async-arrival regression.
+
+Re-run gates after this follow-up: backend **602 passed / 31 skipped**, ruff +
+strict mypy clean, PubMed driver **71 passed**, PostgreSQL acceptance **31 passed**,
+alembic drift-clean on SQLite and PostgreSQL 16, OpenAPI byte-identical, frontend
+typecheck clean / **86 passed** / build + `check:contracts` clean, Playwright
+**12 passed**.
 
 ## Known deferrals (explicit, not silently postponed)
 

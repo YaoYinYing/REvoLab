@@ -9,6 +9,7 @@ only — no copyrighted abstract or full-text fixture is committed.
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import httpx
 import pytest
@@ -729,3 +730,56 @@ def test_lazy_undecodable_stream_is_a_typed_network_failure() -> None:
     with pytest.raises(CapabilityError) as excinfo:
         _capability(driver).search("x", 5, _lease())
     assert excinfo.value.kind is CapabilityErrorKind.NETWORK
+
+
+class _TrackingStream(httpx.SyncByteStream):
+    """A streamed body that records whether it was closed."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.closed = False
+
+    def __iter__(self):
+        yield from self._chunks
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
+def test_non_2xx_streamed_response_is_always_closed(status: int) -> None:
+    """A non-2xx response is never body-read, so the close MUST live in an
+    ownership scope that also covers the status handling — otherwise the streamed
+    connection leaks."""
+    streams: list[_TrackingStream] = []
+
+    def esearch(request: httpx.Request) -> httpx.Response:
+        stream = _TrackingStream([b"rate limited or unavailable"])
+        streams.append(stream)
+        return httpx.Response(status, stream=stream)
+
+    driver = _driver(_by_path({"esearch.fcgi": esearch}))
+    with pytest.raises(CapabilityError) as excinfo:
+        _capability(driver).search("x", 5, _lease())
+    assert excinfo.value.kind is CapabilityErrorKind.PROVIDER_UNAVAILABLE
+    assert streams, "the handler was never reached"
+    assert streams[0].closed is True
+
+
+def test_successful_streamed_response_is_closed_too() -> None:
+    streams: list[_TrackingStream] = []
+    payload = json.dumps(_esearch_payload(["111"])).encode()
+
+    def esearch(request: httpx.Request) -> httpx.Response:
+        stream = _TrackingStream([payload])
+        streams.append(stream)
+        return httpx.Response(
+            200, stream=stream, headers={"content-type": "application/json"}
+        )
+
+    def esummary(request: httpx.Request) -> httpx.Response:
+        return _json_response(_esummary_payload([_docsum("111")]))
+
+    driver = _driver(_by_path({"esearch.fcgi": esearch, "esummary.fcgi": esummary}))
+    _capability(driver).search("x", 5, _lease())
+    assert streams and streams[0].closed is True

@@ -369,6 +369,12 @@ class NCBILiteratureDiscoveryCapability:
         `path` is a module constant, never caller input, and the query is passed
         through httpx parameter encoding — caller text is never concatenated into
         a URL. Redirects are not followed.
+
+        Response ownership: the streamed response is opened by `_send` and closed
+        EXACTLY ONCE by the single `try/finally` below, which owns BOTH the status
+        handling and the bounded body read. A non-2xx path (`_raise_on_error`) and a
+        body-read failure therefore both close the stream instead of leaking the
+        connection.
         """
         self._pacer.wait()
         query = dict(params)
@@ -377,8 +383,11 @@ class NCBILiteratureDiscoveryCapability:
         query["retmode"] = "json"
         request = self._client.build_request("GET", path, params=query)
         response = self._send(request)
-        self._raise_on_error(response)
-        body = self._read_bounded(response)
+        try:
+            self._raise_on_error(response)
+            body = self._read_bounded(response)
+        finally:
+            response.close()
         try:
             payload = json.loads(body)
         except (json.JSONDecodeError, ValueError, RecursionError) as exc:
@@ -412,13 +421,18 @@ class NCBILiteratureDiscoveryCapability:
             ) from exc
 
     def _read_bounded(self, response: httpx.Response) -> bytes:
+        """Read at most `MAX_RESPONSE_BYTES` from an already-open stream.
+
+        It deliberately does NOT close the response: the caller (`_get_json`) owns
+        exactly one close in a `finally`, so ownership does not depend on which
+        branch raised.
+        """
         chunks: list[bytes] = []
         total = 0
         try:
             for chunk in response.iter_bytes():
                 total += len(chunk)
                 if total > MAX_RESPONSE_BYTES:
-                    response.close()
                     raise self._error(
                         CapabilityErrorKind.PROVIDER_UNAVAILABLE,
                         "the provider response exceeded the configured size bound",
@@ -430,19 +444,15 @@ class NCBILiteratureDiscoveryCapability:
             # Includes `httpx.DecodingError` (a sibling of TransportError) raised
             # for a malformed/truncated `Content-Encoding`: a 2xx provider body
             # that cannot be decoded is a typed provider failure, not a 500.
-            response.close()
             raise self._error(
                 CapabilityErrorKind.NETWORK,
                 "the provider response could not be read",
                 retryable=True,
             ) from exc
         except Exception as exc:
-            response.close()
             raise self._error(
                 CapabilityErrorKind.UNKNOWN, "the provider response could not be read"
             ) from exc
-        finally:
-            response.close()
         return b"".join(chunks)
 
     def _raise_on_error(self, response: httpx.Response) -> None:

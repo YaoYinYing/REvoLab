@@ -139,6 +139,62 @@ describe('Evidence view creation surface (Phase 13)', () => {
     await waitFor(() => expect(onConsumed).toHaveBeenCalled())
   })
 
+  it('reconciles the target when options arrive after mount and submits without a manual change', async () => {
+    // The project's objects/decisions are still loading when the form mounts.
+    mockedObjects.mockReturnValue(idle([]))
+    mockedDecisions.mockReturnValue(idle([]))
+    const createEvidence = vi.fn().mockResolvedValue({ data: {}, error: undefined })
+    mockedProjectApi.mockReturnValue({
+      createEvidence,
+    } as unknown as ReturnType<typeof projectApi>)
+
+    const user = userEvent.setup()
+    const { rerender } = render(<EvidenceView actorId="actor-1" projectId="project-1" />)
+    await user.click(screen.getByRole('button', { name: 'Add evidence' }))
+    expect(screen.getByRole('button', { name: 'Record evidence' })).toBeDisabled()
+
+    // The asynchronous target loads resolve: the target selector must reconcile to
+    // the first available target with NO manual change.
+    mockedObjects.mockReturnValue(idle([object]))
+    mockedDecisions.mockReturnValue(idle([decision]))
+    rerender(<EvidenceView actorId="actor-1" projectId="project-1" />)
+
+    const submit = screen.getByRole('button', { name: 'Record evidence' })
+    await waitFor(() => expect(submit).toBeEnabled())
+    await user.click(submit)
+
+    expect(createEvidence).toHaveBeenCalledTimes(1)
+    const body = createEvidence.mock.calls[0][1] as Record<string, unknown>
+    expect(body.target_kind).toBe('scientific_object_revision')
+    expect(body.target_id).toBe(revisionId)
+  })
+
+  it('preserves a still-valid user target selection when options refresh', async () => {
+    const createEvidence = vi.fn().mockResolvedValue({ data: {}, error: undefined })
+    mockedProjectApi.mockReturnValue({
+      createEvidence,
+    } as unknown as ReturnType<typeof projectApi>)
+
+    const user = userEvent.setup()
+    const { rerender } = render(<EvidenceView actorId="actor-1" projectId="project-1" />)
+    await user.click(screen.getByRole('button', { name: 'Add evidence' }))
+    await user.selectOptions(screen.getByLabelText('About project target'), `decision:${decisionId}`)
+
+    // A refresh re-supplies the same options as a NEW array: the user's still-valid
+    // choice must not be reset to the first option.
+    mockedObjects.mockReturnValue(idle([{ ...object }]))
+    mockedDecisions.mockReturnValue(idle([{ ...decision }]))
+    rerender(<EvidenceView actorId="actor-1" projectId="project-1" />)
+
+    const submit = screen.getByRole('button', { name: 'Record evidence' })
+    await waitFor(() => expect(submit).toBeEnabled())
+    await user.click(submit)
+
+    const body = createEvidence.mock.calls[0][1] as Record<string, unknown>
+    expect(body.target_kind).toBe('decision')
+    expect(body.target_id).toBe(decisionId)
+  })
+
   it('a viewer has no Add evidence control', () => {
     mockedMembership.mockReturnValue(
       idle({ actor_id: 'actor-2', project_id: 'project-1', role: 'viewer' }),

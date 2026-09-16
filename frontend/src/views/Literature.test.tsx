@@ -206,6 +206,26 @@ describe('Literature view (Phase 13)', () => {
     expect(container.querySelector('script')).toBeNull()
   })
 
+  it("shows NCBI's Disclaimer and Copyright notice on the discovery surface", () => {
+    render(<LiteratureView actorId="actor-1" projectId="project-1" onUseAsEvidence={vi.fn()} />)
+
+    // The official E-utilities policy requires the notice to be evident to users.
+    const link = screen.getByRole('link', { name: /NCBI Disclaimer and Copyright notice/i })
+    expect(link).toHaveAttribute('href', 'https://www.ncbi.nlm.nih.gov/About/disclaimer.html')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link.getAttribute('rel')).toMatch(/noreferrer/)
+    expect(link.getAttribute('rel')).toMatch(/noopener/)
+    // Attributed to the provider that actually supplied the metadata.
+    expect(screen.getByText(/provided by NCBI PubMed/i)).toBeInTheDocument()
+  })
+
+  it('does not show the NCBI notice for a provider without attribution', () => {
+    mockedProviders.mockReturnValue(idle([otherProvider]))
+    render(<LiteratureView actorId="actor-1" projectId="project-1" onUseAsEvidence={vi.fn()} />)
+
+    expect(screen.queryByRole('link', { name: /NCBI Disclaimer/i })).toBeNull()
+  })
+
   it('surfaces a typed import failure without inventing Project context', async () => {
     mockedDiscovery.mockReturnValue(idle(results([candidate])))
     const importLiterature = vi.fn().mockResolvedValue({

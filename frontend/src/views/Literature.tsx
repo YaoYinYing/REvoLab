@@ -23,6 +23,23 @@ import {
 const MAX_QUERY_CHARS = 300
 const IMPORTED_PAGE_SIZE = 50
 
+/**
+ * Data-source attribution for external literature metadata.
+ *
+ * This is legal/terms presentation, NOT capability semantics: the generic frontend
+ * still discovers literature providers by the backend-owned `literature_discovery`
+ * capability kind and never branches on a provider key to decide what a capability
+ * DOES. NCBI's official E-utilities usage policy requires its Disclaimer and
+ * Copyright notice to be evident to users of any product that uses the E-utilities,
+ * so the provider that supplied the metadata is attributed here with a link.
+ */
+const PROVIDER_ATTRIBUTION: Record<string, { label: string; url: string }> = {
+  ncbi: {
+    label: 'NCBI Disclaimer and Copyright notice',
+    url: 'https://www.ncbi.nlm.nih.gov/About/disclaimer.html',
+  },
+}
+
 /** External candidate presentation line: authors · journal · year. */
 function citationLine(candidate: LiteratureCandidateRead): string {
   const parts: string[] = []
@@ -79,6 +96,8 @@ export function LiteratureView({
     litProviders.find((provider) => provider.key === providerKey) ?? litProviders[0] ?? null
   const availability = activeProvider ? literatureCapability(activeProvider)?.availability : undefined
   const providerReady = availability === CAPABILITY_AVAILABILITY_AVAILABLE
+
+  const attribution = activeProvider ? PROVIDER_ATTRIBUTION[activeProvider.key] : undefined
 
   const [query, setQuery] = useState('')
   const [request, setRequest] = useState<LiteratureDiscoveryQuery | null>(null)
@@ -187,6 +206,17 @@ export function LiteratureView({
             {discovery.loading ? 'Searching…' : 'Search'}
           </Button>
         </form>
+        {attribution ? (
+          <p className="scope-note">
+            <span>
+              External citation metadata is provided by {activeProvider?.name}.{' '}
+              <a href={attribution.url} target="_blank" rel="noreferrer noopener">
+                {attribution.label}
+              </a>
+              .
+            </span>
+          </p>
+        ) : null}
         <ErrorBox message={formError ?? membership.error} />
         <ErrorBox message={discovery.error} />
 

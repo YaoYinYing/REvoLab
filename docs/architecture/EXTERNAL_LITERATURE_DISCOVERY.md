@@ -357,6 +357,10 @@ batching                 ONE ESearch + ONE batched ESummary per search
 bounds                   query chars, result count, field lengths, response bytes,
                          connect/read timeout
 read-only                no PDF, no full text, no PMC, no abstract persistence
+notice                   the NCBI Disclaimer and Copyright notice must be evident
+                         to users -> the Literature discovery surface shows an
+                         unobtrusive attribution line linking to
+                         https://www.ncbi.nlm.nih.gov/About/disclaimer.html
 ```
 
 `tool` and `email` are **operator configuration** (`REVOLAB_NCBI_TOOL`,
@@ -366,6 +370,15 @@ anonymously. NCBI's policy additionally requires the operator to **register** th
 `tool`/`email` values with NCBI (sending them is necessary but not sufficient);
 that registration is a deployment/operator step outside this repository and must be
 completed before a deployment is considered compliant.
+
+**Disclaimer / copyright notice.** NCBI's policy requires its Disclaimer and
+Copyright notice to be evident to users of any software that uses the E-utilities.
+The Literature discovery surface therefore renders a small, unobtrusive attribution
+line naming the providing provider and linking to the official notice
+(`frontend/src/views/Literature.tsx`). This is legal/terms attribution, not
+capability semantics: the generic frontend still selects providers by the
+backend-owned `literature_discovery` capability kind and never branches on a provider
+key to decide what a capability does.
 
 **No API-key feature exists in Phase 13** (explicit non-goal): the slice works
 within the official unauthenticated rate. Optional API-key support is a documented

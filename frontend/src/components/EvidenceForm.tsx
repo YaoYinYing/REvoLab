@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { projectApi } from '../api/backend'
 import type {
@@ -91,6 +91,18 @@ export function EvidenceForm({
   const [error, setError] = useState<string | null>(null)
 
   const options = targetOptions ?? []
+  // The target options can arrive ASYNCHRONOUSLY (the Evidence surface loads the
+  // project's objects/decisions after the form mounts). Reconcile the selection
+  // whenever the option set changes so a later arrival selects the first target —
+  // while preserving a still-valid user selection (never yanking the selector away
+  // from a target the user already chose).
+  const optionKeys = options.map((option) => `${option.kind}:${option.id}`)
+  const optionKeySignature = optionKeys.join('\u0001')
+  useEffect(() => {
+    if (optionKeys.length === 0) return
+    setSelected((current) => (optionKeys.includes(current) ? current : optionKeys[0]))
+    // Only the option IDENTITY set matters; `optionKeySignature` is its stable key.
+  }, [optionKeySignature])
   const chosen = fixed
     ? { kind: targetKind as EvidenceTargetKind, id: targetId as string }
     : (() => {
@@ -171,7 +183,10 @@ export function EvidenceForm({
               This project has no scientific object or decision to attach evidence to yet.
             </small>
           ) : (
-            <select value={selected} onChange={(event) => setSelected(event.target.value)}>
+            <select
+              value={optionKeys.includes(selected) ? selected : (optionKeys[0] ?? '')}
+              onChange={(event) => setSelected(event.target.value)}
+            >
               {options.map((option) => (
                 <option key={`${option.kind}:${option.id}`} value={`${option.kind}:${option.id}`}>
                   {option.label}
