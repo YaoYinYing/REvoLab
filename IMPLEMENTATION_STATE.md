@@ -54,11 +54,12 @@ machine evidence recorded at the feature-branch head (`b26524d..0ea18ac` plus th
 round-3 fixes) and is not rewritten to look current; the post-merge reconciliation is
 recorded in "Post-merge record" below.
 
-**Phase 13 (External Literature Discovery & Explicit Import) is implemented on
-`feat/phase-13-external-literature` and machine-verified**; its architectural decision
-is **Proposed — pending human acceptance**
-(`docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md`, ADR-0019). It adds REvoLab's
-first real external-knowledge vertical slice: NCBI PubMed read-only discovery →
+**Phase 13 (External Literature Discovery & Explicit Import) is merged into `main`**
+(PR #14, squash commit `4b60a4bfeaa2735e77c37cc5bca4425771127bdc`,
+`feat(phase 13): add external literature discovery and import`); its architectural
+decision is **Accepted** (`docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md`,
+ADR-0019) — the PR #14 human review and merge is the explicit acceptance event. It adds
+REvoLab's first real external-knowledge vertical slice: NCBI PubMed read-only discovery →
 provider-neutral `LiteratureDiscoveryCapability` → bounded EPHEMERAL
 `LiteratureCandidate` → explicit human Import → CURRENT provider re-resolution of the
 stable `(authority=pubmed, native_id=PMID)` identity → canonical global
@@ -71,6 +72,33 @@ Agent import tool. The governing invariants are:
 
 > **External candidate ≠ Project truth. Imported LiteratureReference ≠ Evidence.
 > Provider/resolver ≠ durable identity authority.**
+
+**Phases 1–13 are the accepted `main` state.** The Phase-13 section below preserves the
+machine evidence recorded at the feature-branch head and during that PR's independent
+review; it is not rewritten to look current. The post-merge reconciliation of the
+Phase-13 acceptance is recorded in "Post-merge record" below.
+
+**Phase 14 (UniProt Protein Discovery & Scientific Object Import) is implemented on
+`feat/phase-14-uniprot-protein-import` and machine-verified**; its architectural
+decision is **Proposed — pending human acceptance**
+(`docs/architecture/EXTERNAL_PROTEIN_IMPORT.md`, ADR-0020). It adds REvoLab's first
+external **biological-entity** import: UniProt read-only discovery → provider-neutral
+`ProteinDiscoveryCapability` → bounded EPHEMERAL, sequence-free `ProteinCandidate` →
+explicit human Import → CURRENT provider resolution of the active primary
+`(authority=uniprot, native_id=UniProtKB accession)` → ONE `ExternalIdentity` + ONE
+immutable `ExternalReference` snapshot → canonical Protein + Sequence ScientificObjects
+(each with one immutable initial Revision) → `identity`/`sequence` mappings →
+`Sequence --represents--> Protein` → `ExternalReference --imported_as-->` both
+revisions → links + new-resource stewardship → Phase-12 Project Search → explicit
+`ContextSelection`/`ContextBuilder` — without adding a Core domain, a search index,
+a candidate cache, an annotation mirror, RAG, or an Agent import Tool. The governing
+invariants are:
+
+> **Resolve externally, import explicitly, snapshot immutably.**
+
+> **External candidate ≠ Project truth. Provider/resolver ≠ durable identity
+> authority. Protein ≠ Sequence. Import provenance ≠ Evidence. A changed external
+> record never silently mutates an imported ScientificObject.**
 
 ## Implemented (Phase 1)
 
@@ -2690,6 +2718,344 @@ alembic drift-clean on SQLite and PostgreSQL 16, OpenAPI byte-identical, fronten
 typecheck clean / **86 passed** / build + `check:contracts` clean, Playwright
 **12 passed**.
 
+## Implemented (Phase 14)
+
+- **Bookkeeping first.** The human-accepted Phase-13 post-merge truth was reconciled
+  before any Phase-14 code: `ADR-0019` and `EXTERNAL_LITERATURE_DISCOVERY.md` were
+  marked **Accepted** (squash commit
+  `4b60a4bfeaa2735e77c37cc5bca4425771127bdc`), and the Status section above now records
+  Phases 1–13 as the accepted `main` baseline. Historical Phase-13 sections were not
+  rewritten.
+- **One new Core capability kind.** `CapabilityKind.PROTEIN_DISCOVERY`
+  (`revolab/enums.py`) plus `READ_ONLY_CAPABILITY_KINDS` membership in
+  `services.py`; not persisted, so no migration.
+- **Provider-neutral value objects + Protocol** (`revolab/capabilities.py`):
+  `ProteinCandidate`, `ProteinSearchResult`, `ResolvedProteinRecord`,
+  `ProteinDiscoveryCapability`, the canonical `MAX_PROTEIN_*` bounds, and the accepted
+  `PROTEIN_SEQUENCE_ALPHABET`. One shared neutral helper
+  `bounded_inert_text()` now owns "how provider text is made inert" for BOTH drivers.
+- **One invocation gate** (`revolab/domain/discovery.py`): `search_proteins` /
+  `resolve_protein`, reusing the existing `prepared_capability` gate (READY driver →
+  policy → credentials → ephemeral lease), so availability/credential translation
+  exists exactly once.
+- **The real UniProt driver** (`revolab/drivers/uniprot.py`): fixed
+  `https://rest.uniprot.org/` host, `GET uniprotkb/search` with a bounded documented
+  `fields` projection, `GET uniprotkb/{accession}.json` for resolution,
+  `follow_redirects=False`, `trust_env=False`, bounded streaming response (2 MiB),
+  bounded timeouts, typed `CapabilityError` translation, and a fixed bounded health
+  probe (`query=P53&size=1&fields=accession`). Inspected against the CURRENT official
+  API on 2026-09-16 (documented in `EXTERNAL_PROTEIN_IMPORT.md` §9), including the
+  **two different** inactive signals (`303` for a MERGED accession; in-body
+  `entryType == "Inactive"` for DELETED/DEMERGED). No undocumented rate limit is
+  invented and `Retry-After` is deliberately not surfaced.
+- **New typed domain commands, no generic writer.**
+  `persistence.insert_edge(..., commit=False)` and
+  `provenance.add_conceptual_edge(..., commit=False)` (defaults preserve every
+  existing caller) plus `provenance.add_import_edge` and
+  `services.record_imported_as(..., commit=False)`, so the whole bundle composes in
+  ONE transaction. `scientific_object.find_external_identity` was split out, and
+  `persistence.is_link_uniqueness_conflict` is now the ONE definition of that
+  constraint (Phase-13's private alias delegates to it). The fail-closed
+  "active Project" backstop moved to the Identity domain
+  (`identity.require_active_project`) and is shared.
+- **The application service** (`revolab/proteins.py`): `discover_proteins` (read-only,
+  zero persistence, re-bounded projection) and `import_protein` (mutation authority →
+  CURRENT re-resolution → identity verification → server-side normalized snapshot →
+  atomic get-or-create). Contains the snapshot-checksum function, the complete-bundle
+  validator (`_load_bundle` fails closed on a manual/half/wrong-typed/twice-snapshotted
+  mapping), the changed-snapshot conflict, SAVEPOINT-guarded idempotent linking, and
+  narrow IntegrityError recovery for concurrent first imports.
+- **API** (`api.py`): `GET /api/projects/{project_id}/proteins/discover` and
+  `POST /api/projects/{project_id}/proteins/import`, with strict Pydantic schemas
+  (`ProteinCandidateRead`, `ProteinDiscoveryResultsRead`, `ProteinSearchToolInput`,
+  `ProteinImportCreate` — `extra="forbid"`, stable identity only — and
+  `ProteinImportRead`, which never echoes the sequence).
+- **Agent Tool**: exactly one read-only remote read registered in
+  `tools/remote_reads.py` (`.protein.search`) and projected by `tools/catalog.py`
+  (`automatic`/`remote`/`read_only`, input `{query, limit}`). There is deliberately no
+  `protein.import` Tool and `ActionRequest` was not generalized.
+- **Bootstrap/config**: opt-in `REVOLAB_UNIPROT_DISCOVERY_ENABLED` (real driver, never
+  enabled in CI) and `REVOLAB_E2E_FAKE_PROTEIN` (in-process fake claiming its own
+  `fakeuniprot` authority). A fake driver (`testing/fake_protein.py`) realizes the SAME
+  capability boundary, with deterministic records and `unavailable` / `hostile` /
+  `mutate` affordances.
+- **Frontend**: the Objects workspace now hosts two compact panels (`Project objects` /
+  `Discover proteins`); a new `ProteinDiscoveryView` selects providers by the
+  backend-owned `protein_discovery` capability kind, labels candidates
+  `external · not yet in Project`, imports by stable identity only, and links to the
+  canonical Protein/Sequence through the EXISTING object-detail surfaces. The only
+  provider-specific code is legal data-source attribution.
+- **Docs**: new `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` and
+  `ADR-0020-external-protein-resolution-imports-immutable-snapshots.md` (both
+  **Proposed**), the new `.agents/skills/protein-research/SKILL.md`, and reconciled
+  `SCIENTIFIC_OBJECT_MODEL.md`, `SCIENTIFIC_GRAPH.md`, `EVIDENCE_PROVENANCE.md`,
+  `PROVIDER_CAPABILITIES.md`, `PROJECT_SEARCH_RETRIEVAL.md`, `AGENT_CONTEXT.md`,
+  `PROJECT_TOOL_HARNESS.md`, `PROJECT_AGENT_RUNTIME.md`,
+  `WORKSPACE_INFORMATION_ARCHITECTURE.md`, `IMPLEMENTATION_ROADMAP.md`, and
+  `DOMAIN_BOUNDARIES.md` (application sub-boundary only — **no ownership change**).
+- **No migration.** `alembic check` is drift-clean on SQLite and PostgreSQL 16 with no
+  new revision: every table, column, and constraint Phase 14 uses already existed, and
+  `_GLOBAL_EDGE_SHAPE` already accepted an `EXTERNAL_REFERENCE` `imported_as` source.
+
+## Verified evidence (Phase 14)
+
+All commands were run from the repository root unless noted; the branch head is
+`feat/phase-14-uniprot-protein-import`.
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Backend lint | `ruff check backend` | **All checks passed** |
+| Backend types | `mypy` (strict) | **no issues in 62 source files** |
+| Backend tests | `pytest` | **768 passed, 40 skipped** |
+| UniProt driver (deterministic HTTP) | `pytest backend/tests/test_uniprot_driver.py` | **83 passed** |
+| SQLite migration drift | `cd backend && alembic upgrade head && alembic check` | **No new upgrade operations detected** |
+| PostgreSQL 16 migration drift | same, `REVOLAB_DATABASE_URL=postgresql+psycopg://…` | **No new upgrade operations detected** |
+| PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **40 passed** (9 Phase-14; repeated green) |
+| OpenAPI export | `python -m revolab.export_openapi > frontend/src/contracts/openapi.json` | **byte-identical on repeat** (idempotent) |
+| Frontend types | `cd frontend && npm run typecheck` | **clean** |
+| Frontend tests | `npm run test` | **102 passed** (14 files) |
+| Frontend build | `npm run build` | **built** |
+| Generated contracts | `npm run generate:contracts` twice | **byte-identical on repeat** |
+| Browser slice | `npm run test:e2e` (Playwright) | **16 passed** (4 Phase-14 specs) |
+| GitHub CI | `gh pr checks 15` | **backend / frontend / e2e all pass** on the pushed head |
+| Whitespace/status | `git diff --check`, `git status` | clean |
+
+Mutation-sensitive regressions added (each fails if the behavior is removed):
+
+1. provider search maps bounded UniProt data into `ProteinCandidate`;
+2. raw UniProt field names never escape the driver;
+3. the official primary-accession grammar validates, and malformed accessions fail
+   closed **before any request**;
+4. isoform accessions fail closed with a distinct error and are never stripped;
+5. a `303` merged accession and an in-body `Inactive` (DELETED/DEMERGED) both fail
+   closed and are never remapped;
+6. `resolve` returns the exact canonical sequence plus bounded release metadata;
+7. malformed/oversized/empty sequences and a reported length mismatch fail closed;
+8. the caller cannot supply a URL/host/scheme, and the client disables redirects and
+   ambient proxy configuration;
+9. timeout / `429` / `5xx` become typed failures with no leaked URL, query, accession,
+   or upstream body;
+10. discovery performs zero persistence and a candidate never enters `project.search`;
+11. a viewer may discover but cannot import (API `403`);
+12. the import body is stable identity only (`extra="forbid"`, no sequence);
+13. import re-resolves and ignores tampered client presentation;
+14. resolver/provider and authority remain conceptually separate, and an alternate
+    `mirrorprotein` resolver still creates the `uniprot` identity;
+15. registering two resolvers for one authority is refused;
+16. initial import creates exactly the canonical bundle **verified in the database**
+    (1 identity, 1 reference, 2 series, 2 revisions, 2 mappings, 3 edges, 5 links,
+    3 stewardships);
+17. `Sequence --represents--> Protein` is the only direction and is not duplicated in
+    the Protein payload;
+18. one `ExternalReference` is imported as both concrete revisions, and its checksum
+    is the deterministic digest of the normalized bundle (formatting-independent);
+19. the identity maps by `identity` and `sequence` qualifiers with one row per
+    accession;
+20. repeat import is idempotent (same ids, no new rows);
+21. cross-Project import reuses the same global objects and adds links only;
+22. the second Project does not steal stewardship (and still cannot mutate);
+23. a changed external snapshot (organism, sequence, or the fake `mutate` affordance)
+    fails closed with the bounded message and changes nothing;
+24. a protein-name-only change is presentation drift: idempotent re-import that does
+    not rewrite the stored name;
+25. a manual incomplete mapping, a wrong object type, a missing `represents` edge, a
+    missing `imported_as` edge, and two source snapshots all fail closed;
+26. a failure after objects are staged leaves no partial durable state;
+27. same-Project and cross-Project concurrent first imports converge on ONE bundle
+    with no raw `IntegrityError` (PostgreSQL), and the existing-bundle link race is
+    idempotent under a SAVEPOINT;
+28. import creates zero Evidence and zero Decision;
+29. provider outage after import invalidates nothing (objects, reference, Search, and
+    context all survive);
+30. imported objects become Project-searchable by accession (both series) and by
+    protein name (the Protein series), with no new index;
+31. a 90k-residue sequence is persisted COMPLETE while `ProjectContext` stays bounded
+    and contains no sequence text;
+32. the Agent protein search writes nothing (zero identity/reference/object/Evidence/
+    ActionRequest/ToolInvocation) and cannot import;
+33. hostile provider text is inert: it cannot widen autonomy, change the ToolCatalog,
+    or trigger an import;
+34. an oversized provider protein name yields a bounded series name (≤200 chars);
+35. the identity/uniqueness constraints are enforced by PostgreSQL itself.
+
+One pre-existing test race was found and fixed while running the Phase-14 gate: the
+Phase-13 `literature.spec.ts` awaited an element (`small.mono` carrying the
+`authority:native_id` line) that ALSO matches the external candidate list, so it did
+not actually wait for the import to commit. It now awaits the import POST response and
+asserts `201`, and the imported-section assertion uses the `Use as Evidence` control
+that exists only in the imported list. The Phase-14 spec uses the same
+response-awaiting pattern for discovery, import, and the conflict case, so neither
+spec depends on incidental rendering order.
+
+## Independent review (Phase 14)
+
+Three fresh, independent, STRICTLY READ-ONLY reviewers were run in parallel against
+commit `4913491` (PR #15) — A: scientific-object/provenance architecture;
+B: provider/network/security/trust; C: persistence/concurrency/API/frontend/
+verification — each with up to 10 minutes wall-clock and 20-second polling. All three
+returned **APPROVE WITH FIXES** with **zero P0 findings**; the integrator reconciled
+the reports and fixed every P1 and every material in-scope P2.
+
+### Verdicts
+
+| Reviewer | Verdict | P0 | P1 | P2 |
+| --- | --- | --- | --- | --- |
+| A — scientific object / provenance | APPROVE WITH FIXES | 0 | 2 | 3 |
+| B — provider / network / security | APPROVE WITH FIXES | 0 | 0 | 4 |
+| C — persistence / concurrency / API / frontend / verification | APPROVE WITH FIXES | 0 | 0 | 7 |
+
+### P1 findings and fixes
+
+- **A-P1-1 — a first-import race could return a spurious `ConflictError` instead of
+  converging.** `_create_bundle` called the read-then-insert
+  `get_or_create_external_identity`, so under READ COMMITTED a winner committing
+  between the outer lookup and that inner read would be *observed* by the loser: no
+  unique-constraint failure, so the loser built a SECOND bundle and then died on the
+  mapping PK with `ConflictError: external identity already maps to another series`
+  instead of reusing the winner (TODO §37, doc §12.9). **Fixed** by adding the
+  insert-only domain command `scientific_object.create_external_identity` and using it
+  in the import path, making the database the single linearization point. The existing
+  `IntegrityError` recovery then converges. Regression:
+  `test_a_winner_committing_after_the_first_lookup_still_converges` (fails if the
+  read-then-insert behavior is restored).
+- **A-P1-2 — `SCIENTIFIC_OBJECT_MODEL.md` stated the opposite `sequence`-qualifier
+  semantics.** Its pre-existing parenthesis asserted `qualifier="sequence"` maps to the
+  *Protein* series, contradicting the frozen Phase-14 mapping and repeating the exact
+  Protein≡Sequence conflation ADR-0020 forbids; an implementer following it would make
+  every later import fail closed. **Fixed** by restating the qualifier as naming the
+  SENSE (identity → Protein series, sequence → Sequence series) in the same file that
+  carries the worked example.
+
+### P2 findings and fixes
+
+- **A-P2-1 / C-P2-1 / C-P2-2 / C-P2-3 — the bundle validator was incomplete.**
+  `_load_bundle` accepted an archived (retired) series, an identity whose `kind`
+  disagreed with `protein`, a non-canonical qualifier mapping, and a stored snapshot
+  checksum that did not match the stored revision payloads. All four are now typed
+  conflicts, with a dedicated regression each
+  (`test_an_archived_bundle_series_fails_closed`,
+  `test_a_disagreeing_identity_kind_fails_closed`,
+  `test_a_non_canonical_qualifier_mapping_fails_closed`,
+  `test_a_snapshot_digest_that_disagrees_with_its_revisions_fails_closed`), and
+  `_imported_revision` now returns the revision rows so the digest can be recomputed
+  from what is actually stored.
+- **B-P2-1 — a false security claim about the fake/real authority collision.** The
+  fake claims its OWN `fakeuniprot` authority, so registering it alongside the real
+  driver does **not** trip the collision check — the opposite of what the fake
+  docstring, `config.py`, and the architecture doc asserted (the same inverted claim
+  was inherited from the Phase-13 literature fake). **Fixed** by stating and TESTING the
+  true guarantee instead of faking a collision: the fake's own namespace, the
+  registry's refusal of a second resolver claiming `uniprot`
+  (`test_the_real_uniprot_authority_is_guarded_by_the_collision_check`), and the
+  production refusal. Also corrected in the Phase-13 literature fake/config.
+- **B-P2-2 — a vacuous test assertion.** A markup-inertness check used
+  `"...".replace("<script>", "")`, which made it tautological. **Fixed** to assert what
+  is actually true and load-bearing (markup is RETAINED as inert data; control/format
+  characters are removed), with the "never rendered as HTML" guarantee explicitly owned
+  by the frontend test `renders hostile provider text inert`.
+- **B-P2-3 — a malformed provider `sequence.length` was silently treated as absent**,
+  which skipped the sequence/length agreement check instead of failing closed
+  (TODO §17). **Fixed** by distinguishing ABSENT (allowed → `None`) from PRESENT BUT
+  INVALID (typed `CapabilityError`) in the driver, mirroring the distinction
+  defensively at the service boundary, and adding three regressions (invalid → fails
+  closed; absent → allowed; a malformed CANDIDATE length is omitted as presentation
+  data).
+- **B-P2-4 / B-residual — documentation precision.** §9 now states the exact
+  reproducible help URL form (`/help/<id>.json`; a bare `/help/<id>` is
+  content-negotiated and can answer `500`), and §10 records the httpx INFO
+  transport-logging caveat explicitly instead of leaving it accidental.
+- **A-P2-2 / A-P2-3 / C-P2-4 — doc precision on real behavior.** §12.6 now names the
+  one user-visible consequence of the name-only-drift carve-out (search matches the
+  STORED name, so accession is the reliable handle until a steward renames the series);
+  the `is_canonical` "one may be" wording is corrected to per-qualifier flags; and
+  §12.9 no longer overstates the concurrency guarantee — it is a property of THIS
+  import path (the pre-existing generic surfaces can commit a bare identity, and the
+  loser path never assumes completeness, it validates and fails closed).
+- **C-P2-5 — dead generated-contract exports.** `OBJECT_TYPE_PROTEIN` /
+  `OBJECT_TYPE_SEQUENCE` were unused; removed rather than kept as speculative surface
+  (the Objects workspace renders `object_type` generically from the wire value).
+- **C-P2-6 — a pre-existing global surface can block an accession everywhere.**
+  Any owner/member can attach an extra `ExternalReference` through the pre-existing
+  generic endpoint, after which the Phase-14 validator fails closed for that accession
+  in every Project. That IS the correct fail-closed reaction, and Phase 14 deliberately
+  does not change that endpoint's authority; it is now recorded as a **named deferral**
+  in §12.8/§18 (identity reconciliation).
+- **C-P2-7 — rollback was tested by mirroring the contract, not exercising it.** A new
+  `client`-level regression forces a post-staging failure through the real FastAPI
+  request lifecycle and asserts the dependency's session teardown rolls back, with zero
+  rows in a fresh session.
+
+Findings recorded and deliberately NOT changed: rounding the "5 consecutive repeats"
+claim down to the runs actually performed, and confirming (reviewer C) that the
+frontend cannot show stale cross-Project state because `selectProject` resets the view
+and unmounts the un-scoped `ObjectsView`.
+
+### Delta review
+
+Because the fixes materially change concurrency (A-P1-1), provider validation
+(B-P2-3), and the bundle-identity checks (A-P2-1/C-P2-1-3), additional fresh
+read-only delta reviewers were run against the fixed head `81c5f6f` (two attempts
+failed for infrastructure reasons and returned no report; a third, focused delta
+reviewer completed). Total meaningful final-review coverage: **4 completed
+independent reviews** (three first-round + one delta), within the 3–5 bound.
+
+**The delta reviewer returned PARTIALLY FIXED and caught a real defect in the fix
+round itself.** The integrator's own edit script wrote the test file twice from an
+in-memory string read BEFORE the first edit, so the re-applied B-P2-2 assertion was
+silently reverted while the changelog claimed it was fixed. That is exactly the
+"recorded evidence must be executable" hazard, and it is recorded here rather than
+quietly corrected. Re-applied and verified by reading the file back, plus a
+mutation: making `bounded_inert_text` strip markup now FAILS
+`test_search_provider_text_is_made_inert`.
+
+Delta verdict per claim (all re-verified after the re-application):
+
+| Claim | Delta verdict | Independent verification |
+| --- | --- | --- |
+| A-P1-1 concurrency fix | VERIFIED | restore `get_or_create_external_identity` → ONLY `test_a_winner_committing_after_the_first_lookup_still_converges` fails, with the predicted `ConflictError: external identity already maps to another series for this qualifier` |
+| `_load_bundle` hardening (4 checks) | VERIFIED | removing each check alone fails exactly its own regression; 4/4 mutation-verified independently |
+| B-P2-3 length fail-closed | VERIFIED | deleting the driver branch fails exactly the 5 parametrized invalid-length cases |
+| B-P2-1 corrected claim | VERIFIED | fake+real coexist under disjoint authorities; a second `uniprot` resolver is refused |
+| Gates | VERIFIED | ruff / mypy / pytest / driver / PostgreSQL all green |
+
+Delta findings, both fixed:
+
+- **The reverted B-P2-2 assertion** (above) — re-applied, read back, and
+  mutation-verified.
+- **A stale test-name reference** in `testing/fake_protein.py` citing a test the fix
+  round had renamed — corrected to
+  `test_the_real_uniprot_authority_is_guarded_by_the_collision_check` (repo-wide grep
+  now finds no occurrence of the old name).
+
+Delta coverage gaps, all closed with new regressions:
+
+- the SERVICE-side length re-check had no test → `test_import_rejects_an_invalid_reported_length_server_side`
+  (mutation-verified: removing the guard fails it with the "disagrees" message);
+- an explicit JSON `null` length was untested → `test_resolve_treats_an_explicit_null_length_as_absent`
+  documents it as ABSENT (a null means "no value"), never as malformed;
+- no test registered the fake protein driver and the real driver together →
+  asserted in `test_the_real_uniprot_authority_is_guarded_by_the_collision_check`
+  (disjoint authorities, both registered);
+- no literature analogue of the production-refusal guard →
+  `test_fake_literature_provider_refuses_production`.
+
+The delta round therefore added **3 backend regressions and 2 test assertions**
+(`pytest` 765 → 768 passed; driver suite 82 → 83), with every one mutation-verified.
+
+## Explicit deferrals (Phase 14)
+
+Named, not silently postponed (normative detail:
+`docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` §18, ADR-0020): external refresh → new
+revisions, inactive/secondary accession reconciliation, UniProt isoforms, UniProt ID
+Mapping, RCSB/PDB discovery/import, structure import, UniProt↔PDB reconciliation,
+GO/domain/PTM/pathway annotation import, a protein feature graph, external sequence
+alignment, RAG/vector retrieval/embeddings/semantic memory/pgvector, external Web
+search, an Agent import Tool, automatic import, background sync/crawling, and provider
+cache tables. Phase 14 adds **no migration**; live UniProt is never CI truth (the real
+driver is tested over an injected deterministic HTTP transport, and the browser slice
+uses an in-process fake realizing the SAME capability boundary through the SAME
+Driver/Capability registry).
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
@@ -2801,5 +3167,23 @@ that merge is the explicit human acceptance of ADR-0018:
   1–12 as the accepted baseline.
 
 The historical Phase-12 sections above (implementation, the machine evidence recorded at
+the feature-branch head, the independent-review reconciliation, and the explicit
+deferrals) are preserved verbatim; no past test count was rewritten.
+
+### Post-merge record: Phase-13 acceptance reconciliation
+
+PR #14 (`feat(phase 13): add external literature discovery and import`) was
+human-reviewed and squash-merged into `main` as
+`4b60a4bfeaa2735e77c37cc5bca4425771127bdc`. Per the Phase-14 execution contract
+(TODO.md section 2) that merge is the explicit human acceptance of ADR-0019:
+
+- `docs/architecture/adr/ADR-0019-external-literature-discovery.md` — status changed
+  from `Proposed — pending human acceptance` to **Accepted**.
+- `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` — status header changed to
+  **Accepted**, matching the ADR.
+- This file's Status section now records Phase 13 as accepted `main` state and Phases
+  1–13 as the accepted baseline.
+
+The historical Phase-13 sections above (implementation, the machine evidence recorded at
 the feature-branch head, the independent-review reconciliation, and the explicit
 deferrals) are preserved verbatim; no past test count was rewritten.

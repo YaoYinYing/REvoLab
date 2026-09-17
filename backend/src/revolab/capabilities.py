@@ -15,6 +15,7 @@ never as Core enums or fields.
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -22,6 +23,35 @@ from uuid import UUID
 
 from revolab.credentials import CredentialLease
 from revolab.enums import CapabilityErrorKind, CapabilityKind, ResourceKind
+
+# Unicode categories that are never part of bounded presentation text: C0/C1
+# controls, format characters, surrogates, private use, unassigned.
+_STRIPPED_CATEGORIES = frozenset({"Cc", "Cf", "Cs", "Co", "Cn"})
+
+
+def bounded_inert_text(value: Any, limit: int) -> str | None:
+    """Normalize ONE untrusted external text field into bounded inert text.
+
+    Every external provider's text is untrusted data. Control/format characters
+    are removed (so provider text can never carry terminal escapes or invisible
+    instruction-shaping characters), whitespace is collapsed, and the result is
+    truncated to `limit`. The caller is responsible for treating the result as
+    data — never as markup, HTML, or instructions.
+
+    Shared by every driver so "how provider text is made inert" has exactly one
+    definition; it lives in the neutral capability leaf rather than in any one
+    driver.
+    """
+    if not isinstance(value, str):
+        return None
+    cleaned = "".join(
+        " " if unicodedata.category(char) in _STRIPPED_CATEGORIES else char
+        for char in value
+    )
+    collapsed = " ".join(cleaned.split())
+    if not collapsed:
+        return None
+    return collapsed[:limit]
 
 
 class CapabilityError(Exception):
@@ -329,3 +359,141 @@ class LiteratureDiscoveryCapability(Protocol):
     def resolve(
         self, authority: str, native_id: str, credentials: CredentialLease
     ) -> LiteratureCandidate: ...
+
+
+# ---------------------------------------------------------------------------
+# Protein discovery capability (Phase 14)
+#
+# The provider-neutral boundary for "discover biological entities REvoLab does not
+# yet know". A provider realizing this protocol returns EPHEMERAL candidates and,
+# for an explicit import, a CURRENTLY RE-RESOLVED record. Provider vocabulary
+# (UniProt REST routes, UniProtKB query grammar, UniProt JSON field names) stays
+# inside the driver.
+#
+# `search` and `resolve` are both read-only and persist nothing.
+# ---------------------------------------------------------------------------
+
+# Provider-neutral ceilings for one protein discovery call. They are the SINGLE
+# canonical values: the driver enforces them at the wire boundary and the
+# application service re-applies them to the projection, so a misbehaving driver
+# cannot widen the Agent/frontend surface.
+MAX_PROTEIN_QUERY_CHARS = 300
+DEFAULT_PROTEIN_RESULT_LIMIT = 10
+MAX_PROTEIN_RESULT_LIMIT = 20
+MAX_PROTEIN_NAME_CHARS = 300
+MAX_PROTEIN_GENE_NAME_CHARS = 200
+MAX_PROTEIN_ORGANISM_NAME_CHARS = 300
+MAX_PROTEIN_ENTRY_NAME_CHARS = 100
+MAX_PROTEIN_SOURCE_RELEASE_CHARS = 100
+
+# Durable external identity bounds, mirroring the persisted columns
+# (`external_identities.authority` varchar(100), `.native_id` varchar(300)).
+MAX_PROTEIN_AUTHORITY_CHARS = 100
+MAX_PROTEIN_NATIVE_ID_CHARS = 300
+
+# The canonical amino-acid sequence is stored COMPLETE as an immutable Sequence
+# revision; this is a persistence bound, never a presentation truncation. It is
+# deliberately far above the longest known protein (~35k residues for titin) so a
+# legitimate very large protein is never rejected, while an absurd provider body
+# still fails closed before persistence.
+MAX_PROTEIN_SEQUENCE_CHARS = 100_000
+
+# The amino-acid alphabet accepted for a canonical UniProtKB sequence. This is the
+# IUPAC protein alphabet including the sequence-level ambiguity codes that
+# genuinely occur in UniProt entries (`B`, `Z`, `X`, `U`, `O`, `J`) and the
+# selenocysteine/pyrrolysine letters; over-constraining it would reject legitimate
+# rare/ambiguous residues. A canonical UniProtKB sequence is UPPERCASE, so any
+# other character — including a lowercase residue letter, whitespace, or markup —
+# is malformed provider data and fails closed rather than being silently repaired.
+PROTEIN_SEQUENCE_ALPHABET = frozenset("ACDEFGHIKLMNPQRSTVWYBXZUOJ")
+
+
+@dataclass(frozen=True)
+class ProteinCandidate:
+    """One EPHEMERAL external protein discovery candidate (Phase 14).
+
+    This is provider-neutral presentation data returned by a read-only external
+    lookup. It is deliberately NOT a ScientificObject, `ExternalIdentity`,
+    `ExternalReference`, `Evidence`, `SearchHit`, or Project truth, and searching
+    never persists it. All text fields are untrusted external data bounded by the
+    driver.
+
+    `authority` is the DURABLE identity namespace (e.g. `uniprot`), never the
+    resolver/provider key: another resolver may resolve the same
+    `(authority, native_id)` identity without changing any stored reference.
+
+    The canonical sequence is deliberately ABSENT: a search result is presentation
+    data, and the sequence is only read by the explicit import re-resolution.
+    """
+
+    provider_key: str
+    authority: str
+    native_id: str
+    protein_name: str | None = None
+    gene_name: str | None = None
+    organism_name: str | None = None
+    organism_id: int | None = None
+    sequence_length: int | None = None
+    reviewed: bool | None = None
+
+
+@dataclass(frozen=True)
+class ProteinSearchResult:
+    """The bounded result of one external protein discovery search (ephemeral)."""
+
+    provider_key: str
+    candidates: tuple[ProteinCandidate, ...]
+
+
+@dataclass(frozen=True)
+class ResolvedProteinRecord:
+    """The CURRENT provider record an explicit import re-resolves (Phase 14).
+
+    This is the canonical, provider-neutral scientific snapshot input: everything
+    needed to build the Protein + Sequence ScientificObjects, and nothing else.
+    It is NOT durable truth by itself — the application service validates it and
+    turns it into immutable revisions, an `ExternalReference` snapshot, and typed
+    provenance edges. It is never persisted as a whole.
+
+    `canonical_sequence` is the exact canonical (non-isoform) amino-acid sequence.
+    `sequence_length` is the provider-reported length and must agree with it.
+    """
+
+    provider_key: str
+    authority: str
+    native_id: str
+    canonical_sequence: str
+    protein_name: str | None = None
+    organism_name: str | None = None
+    entry_name: str | None = None
+    primary_gene_name: str | None = None
+    sequence_length: int | None = None
+    reviewed: bool | None = None
+    source_release: str | None = None
+    source_release_date: str | None = None
+
+
+class ProteinDiscoveryCapability(Protocol):
+    """The executable external-protein discovery + resolution boundary.
+
+    `search` is a bounded read-only lookup by opaque provider search text;
+    `resolve` re-reads ONE protein by its durable `(authority, native_id)`
+    identity so an explicit import never trusts client-supplied scientific
+    metadata. Neither method persists anything, and neither accepts a URL, host,
+    scheme, port, proxy, or HTTP method.
+
+    Phase 14 resolves ACTIVE PRIMARY accessions only. A redirect/inactive/
+    secondary accession, or an isoform-suffixed accession, fails closed as a
+    typed capability error rather than being silently remapped.
+    """
+
+    provider_key: str
+    kind: CapabilityKind
+
+    def search(
+        self, query: str, limit: int, credentials: CredentialLease
+    ) -> ProteinSearchResult: ...
+
+    def resolve(
+        self, authority: str, native_id: str, credentials: CredentialLease
+    ) -> ResolvedProteinRecord: ...

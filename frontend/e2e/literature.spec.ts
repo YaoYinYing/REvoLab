@@ -173,22 +173,42 @@ test('external discovery is ephemeral; explicit import makes a publication Proje
   await expect(page.getByText('No publication has been imported into this project yet.')).toBeVisible()
   expect(await importedLiterature(request, actor, project)).toHaveLength(0)
 
-  // --- Explicit human Import.
+  // --- Explicit human Import. The POST response is awaited explicitly: the
+  // external candidate list ALSO renders the `authority:native_id` line, so that
+  // line alone is not a completion signal.
   await openLiterature(page, project)
   await page.getByLabel('Literature search query').fill(query)
   await page.getByRole('search').getByRole('button', { name: 'Search' }).click()
-  await firstImportButton(page).click()
+  const [importResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes('/literature/import') && response.request().method() === 'POST',
+    ),
+    firstImportButton(page).click(),
+  ])
+  expect(importResponse.status()).toBe(201)
 
-  // The canonical LiteratureReference now appears in "Imported literature".
+  // The canonical LiteratureReference now appears in "Imported literature" (the
+  // `Use as Evidence` control exists ONLY in that section).
   await expect(page.getByText('Imported literature')).toBeVisible()
-  await expect(page.locator('small.mono', { hasText: candidate.nativeId }).first()).toBeVisible()
+  await expect(
+    page
+      .locator('.list-row', { has: page.getByRole('button', { name: /Use as Evidence/ }) })
+      .first(),
+  ).toBeVisible()
   const imported = await importedLiterature(request, actor, project)
   expect(imported).toHaveLength(1)
   expect(imported[0].native_id).toBe(candidate.nativeId)
 
   // Repeated Import is idempotent: still exactly one global reference/link.
-  await firstImportButton(page).click()
-  await expect(page.locator('small.mono', { hasText: candidate.nativeId }).first()).toBeVisible()
+  const [repeatResponse] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.url().includes('/literature/import') && response.request().method() === 'POST',
+    ),
+    firstImportButton(page).click(),
+  ])
+  expect(repeatResponse.status()).toBe(201)
   expect(await importedLiterature(request, actor, project)).toHaveLength(1)
 
   // --- The imported publication is now visible to Phase-12 Project Search.

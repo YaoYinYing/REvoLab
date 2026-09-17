@@ -186,3 +186,21 @@ export type LiteratureImportCreate =
 
 export type LiteratureImportRead =
   paths['/api/projects/{project_id}/literature/import']['post']['responses']['201']['content']['application/json']
+
+// Phase-14 external protein discovery + explicit import. A candidate is
+// EPHEMERAL external data (never a SearchHit, never Project truth, and it carries
+// no sequence); the import result names the canonical Protein/Sequence objects the
+// import produced or reused and never echoes the sequence.
+export type ProteinCandidateRead = components['schemas']['ProteinCandidateRead']
+
+export type ProteinDiscoveryResultsRead =
+  paths['/api/projects/{project_id}/proteins/discover']['get']['responses']['200']['content']['application/json']
+
+export type ProteinDiscoveryQuery =
+  paths['/api/projects/{project_id}/proteins/discover']['get']['parameters']['query']
+
+export type ProteinImportCreate =
+  paths['/api/projects/{project_id}/proteins/import']['post']['requestBody']['content']['application/json']
+
+export type ProteinImportRead =
+  paths['/api/projects/{project_id}/proteins/import']['post']['responses']['201']['content']['application/json']

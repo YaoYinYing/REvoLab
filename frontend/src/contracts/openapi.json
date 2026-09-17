@@ -500,11 +500,12 @@
         "type": "string"
       },
       "CapabilityKind": {
-        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly realized capability kinds exist. Any additional kind is added only when a\nconcrete, provider-neutral use case forces it \u2014 never pre-projected as\nspeculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a\nreal provider (NCBI PubMed) now realizes it.",
+        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly realized capability kinds exist. Any additional kind is added only when a\nconcrete, provider-neutral use case forces it \u2014 never pre-projected as\nspeculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a\nreal provider (NCBI PubMed) now realizes it; `PROTEIN_DISCOVERY` was added by\nPhase 14 because a real provider (UniProt) now realizes it.",
         "enum": [
           "compute",
           "artifact_resolution",
-          "literature_discovery"
+          "literature_discovery",
+          "protein_discovery"
         ],
         "title": "CapabilityKind",
         "type": "string"
@@ -3776,6 +3777,207 @@
         ],
         "title": "ProjectVisibility",
         "type": "string"
+      },
+      "ProteinCandidateRead": {
+        "description": "One bounded, untrusted external protein discovery candidate (never truth).",
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "gene_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gene Name"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "organism_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organism Id"
+          },
+          "organism_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organism Name"
+          },
+          "protein_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Protein Name"
+          },
+          "provider_key": {
+            "title": "Provider Key",
+            "type": "string"
+          },
+          "reviewed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed"
+          },
+          "sequence_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sequence Length"
+          }
+        },
+        "required": [
+          "provider_key",
+          "authority",
+          "native_id"
+        ],
+        "title": "ProteinCandidateRead",
+        "type": "object"
+      },
+      "ProteinDiscoveryResultsRead": {
+        "description": "The bounded envelope of one external protein discovery search.\n\nDeliberately exposes no total count, no relevance score, and no canonical\nsequence: ordered top-N candidates are the contract, and the query text stays\nopaque provider grammar that Core never parses.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ProteinCandidateRead"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "provider_key": {
+            "title": "Provider Key",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_key",
+          "query"
+        ],
+        "title": "ProteinDiscoveryResultsRead",
+        "type": "object"
+      },
+      "ProteinImportCreate": {
+        "additionalProperties": false,
+        "description": "Explicit human import request: stable identity ONLY.\n\nThe client supplies enough to RE-RESOLVE the candidate at the current provider\n(`provider_key` + durable `(authority, native_id)`) and nothing that will be\npersisted. A protein name, organism, gene name, reviewed status, or sequence\nsupplied here would be untrusted browser-provided scientific data and is\ntherefore not part of the contract at all.",
+        "properties": {
+          "authority": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Authority",
+            "type": "string"
+          },
+          "native_id": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Native Id",
+            "type": "string"
+          },
+          "provider_key": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+            "title": "Provider Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_key",
+          "authority",
+          "native_id"
+        ],
+        "title": "ProteinImportCreate",
+        "type": "object"
+      },
+      "ProteinImportRead": {
+        "description": "The canonical identity of one explicit protein import.\n\nIt names the durable objects the import produced or reused \u2014 both Series and\nboth immutable Revisions, plus the snapshot `ExternalReference` \u2014 and echoes the\nstable external identity. It does NOT echo the provider payload or the\ncanonical sequence: the ordinary object-detail surfaces own object detail.",
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "external_reference_id": {
+            "format": "uuid",
+            "title": "External Reference Id",
+            "type": "string"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "protein_name": {
+            "maxLength": 300,
+            "title": "Protein Name",
+            "type": "string"
+          },
+          "protein_revision_id": {
+            "format": "uuid",
+            "title": "Protein Revision Id",
+            "type": "string"
+          },
+          "protein_series_id": {
+            "format": "uuid",
+            "title": "Protein Series Id",
+            "type": "string"
+          },
+          "sequence_revision_id": {
+            "format": "uuid",
+            "title": "Sequence Revision Id",
+            "type": "string"
+          },
+          "sequence_series_id": {
+            "format": "uuid",
+            "title": "Sequence Series Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protein_series_id",
+          "protein_revision_id",
+          "sequence_series_id",
+          "sequence_revision_id",
+          "external_reference_id",
+          "authority",
+          "native_id",
+          "protein_name"
+        ],
+        "title": "ProteinImportRead",
+        "type": "object"
       },
       "ProviderCapabilityRead": {
         "description": "One realized capability of a provider, with the calling Actor's derived\navailability for that specific capability (the policy component of the\navailability formula is operation-specific, so availability lives here).",
@@ -9321,6 +9523,163 @@
           }
         },
         "summary": "Append Revision"
+      }
+    },
+    "/api/projects/{project_id}/proteins/discover": {
+      "get": {
+        "description": "Read-only bounded external protein discovery (no persistence).\n\n`q` is opaque provider search text: Core never parses UniProtKB\n`protein_name:`/`organism_id:` grammar \u2014 provider vocabulary stays behind the\ndriver.",
+        "operationId": "discover_proteins_api_projects__project_id__proteins_discover_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Provider Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 300,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProteinDiscoveryResultsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover Proteins"
+      }
+    },
+    "/api/projects/{project_id}/proteins/import": {
+      "post": {
+        "description": "Explicitly import one protein + its canonical sequence (idempotent).\n\nThe request carries stable identity only; the server re-resolves it at the\ncurrent provider, builds the canonical normalized scientific snapshot itself, and\npersists ONE atomic bundle. The canonical sequence is never accepted from the\nclient and is never echoed in the response.",
+        "operationId": "import_protein_api_projects__project_id__proteins_import_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProteinImportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProteinImportRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Protein"
       }
     },
     "/api/projects/{project_id}/providers": {

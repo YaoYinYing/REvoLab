@@ -95,7 +95,11 @@ def _is_frozen(session: Session, evidence_id: UUID) -> bool:
 # is the Phase-3 minimal policy, not an RBAC engine: the ONLY authorization
 # truth remains Phase-1 ProjectMembership roles.
 READ_ONLY_CAPABILITY_KINDS = frozenset(
-    {CapabilityKind.ARTIFACT_RESOLUTION, CapabilityKind.LITERATURE_DISCOVERY}
+    {
+        CapabilityKind.ARTIFACT_RESOLUTION,
+        CapabilityKind.LITERATURE_DISCOVERY,
+        CapabilityKind.PROTEIN_DISCOVERY,
+    }
 )
 
 
@@ -212,16 +216,12 @@ def _is_membership_uniqueness_conflict(exc: IntegrityError) -> bool:
 
 
 def _is_link_uniqueness_conflict(exc: IntegrityError) -> bool:
-    """Narrow detection of the `uq_link_project_resource` unique constraint."""
-    orig = exc.orig
-    diagnostics = getattr(orig, "diag", None)
-    if diagnostics is not None:  # PostgreSQL psycopg
-        return bool(diagnostics.constraint_name == "uq_link_project_resource")
-    message = str(orig)
-    return (
-        "UNIQUE constraint failed" in message
-        and "project_resource_links.project_id" in message
-    )
+    """Narrow detection of the `uq_link_project_resource` unique constraint.
+
+    Delegates to the ONE definition in `revolab.domain.persistence`, which owns
+    `ProjectResourceLink`. Kept as a module-level name so it remains the single
+    seam every idempotent linker here consults (and remains monkeypatchable)."""
+    return persistence.is_link_uniqueness_conflict(exc)
 
 
 def _other_owner_count(session: Session, project_id: UUID, excluding_actor_id: UUID) -> int:
@@ -1079,12 +1079,24 @@ def add_variant_of(
 
 
 def add_represents(
-    session: Session, actor_id: UUID, project_id: UUID, source_series_id: UUID, target_series_id: UUID
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    source_series_id: UUID,
+    target_series_id: UUID,
+    *,
+    commit: bool = True,
 ) -> GlobalProvenanceEdge:
+    """`represents` (#3): steward(source Series) + read(target Series).
+
+    `commit=False` is used by the Phase-14 atomic import bundle, which creates the
+    whole scientific graph in ONE transaction; the typed authority check still runs
+    here, at the command boundary.
+    """
     grant = can_mutate(session, actor_id, project_id, source_series_id, purpose="represents")
     persistence.require_visible(session, project_id, target_series_id)
     return provenance.add_conceptual_edge(
-        session, grant, RelationType.REPRESENTS, source_series_id, target_series_id
+        session, grant, RelationType.REPRESENTS, source_series_id, target_series_id, commit=commit
     )
 
 
@@ -1151,6 +1163,33 @@ def import_revision(
         raise AuthorizationError("series must be visible in the project before importing into it")
     return provenance.import_revision(
         session, grant, project_id, series_id, source_id, payload=payload
+    )
+
+
+def record_imported_as(
+    session: Session,
+    actor_id: UUID,
+    project_id: UUID,
+    revision_id: UUID,
+    source_id: UUID,
+    *,
+    commit: bool = True,
+) -> GlobalProvenanceEdge:
+    """#7 `imported_as` for an EXISTING immutable revision (Phase 14).
+
+    The Phase-14 import creates both revisions itself, so it cannot use
+    `import_revision` (which appends a new revision). This command records the
+    frozen #7 provenance for a revision that already exists: import authority +
+    steward(target Series), plus read(source reference). Authority over the
+    revision's OWNING series is derived here — the caller cannot name a series that
+    does not own the revision. `commit=False` keeps the whole import bundle atomic.
+    """
+    series_id = persistence.revision_series_id(session, revision_id)
+    grant = can_mutate(session, actor_id, project_id, series_id, purpose="import object")
+    if not persistence.is_visible(session, project_id, series_id):
+        raise AuthorizationError("series must be visible in the project before importing into it")
+    return provenance.add_import_edge(
+        session, grant, project_id, source_id, revision_id, commit=commit
     )
 
 

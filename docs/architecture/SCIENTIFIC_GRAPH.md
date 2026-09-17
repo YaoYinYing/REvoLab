@@ -134,6 +134,18 @@ mutable draft state, not graph edges yet).
   Variant"; the run's role is expressed by the Assay revision that references the run.
 - **`variant_of`** and **`represents`**: always Series → Series (conceptual identity,
   not content version).
+  Worked example (Phase 14, frozen direction): a canonical protein import creates two
+  series and relates them **Sequence → Protein**:
+
+  ```text
+  SequenceSeries(P12345 canonical sequence)  --represents-->  ProteinSeries(P12345)
+  ```
+
+  The Sequence *represents* the Protein; the Protein does not "have" a sequence edge.
+  The relation is Series → Series (conceptual identity), so it survives a new revision
+  of either side, and it is NOT duplicated as a `source_sequence_ref` string in the
+  Protein payload — that would be a second, non-authoritative representation of the
+  same fact. Do not invent `has_sequence` / `sequence_of` / `protein_sequence_of`.
 - **`imported_as`**: `ArtifactReference | ExternalReference → imported_as →
   ScientificObjectRevision` — an external output artifact or an external lookup
   identity is imported as a specific immutable REvoLab revision (source kind stored on

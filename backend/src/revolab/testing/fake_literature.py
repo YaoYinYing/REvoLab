@@ -7,11 +7,12 @@ registry — there is deliberately no test-only search bypass, no fake frontend
 fixture list, and no `TEST_ONLY_LITERATURE_API`.
 
 Its provider key (`fakeliterature`) and durable authority (`fakepubmed`) are the
-fake's OWN vocabulary: the fake never claims the real `pubmed` namespace, so a
-test that registers both the fake and the real driver fails loudly on the
-authority-collision check instead of silently mixing fixtures with production
-identity. The real driver's `ncbi`/`pubmed` separation is asserted by its own
-deterministic transport tests.
+fake's OWN vocabulary, so a synthetic fixture identity can never be mistaken for a
+real PubMed identifier. The real namespace is guarded two ways: the driver registry
+refuses any SECOND resolver that claims `pubmed` alongside the real driver, and
+`install_drivers` refuses this fake outright when the environment is `production`.
+The real driver's separation of the `pubmed` AUTHORITY from its `ncbi` resolver key is
+asserted by its own deterministic transport tests.
 
 Results are deterministic functions of the query, so a browser spec can assert on
 exact titles/identities without a committed fixture corpus (and without any

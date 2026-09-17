@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from revolab import actions as action_service
 from revolab import literature as literature_service
+from revolab import proteins as protein_service
 from revolab import queries, schemas, services
 from revolab import search as search_service
 from revolab.agent.builder import build_context
@@ -44,8 +45,11 @@ from revolab.agent.model_backend import ModelBackend, OpenAICompatModelBackend
 from revolab.agent.runtime import AgentLoopBounds, AgentTurnRunner
 from revolab.capabilities import (
     DEFAULT_LITERATURE_RESULT_LIMIT,
+    DEFAULT_PROTEIN_RESULT_LIMIT,
     MAX_LITERATURE_QUERY_CHARS,
     MAX_LITERATURE_RESULT_LIMIT,
+    MAX_PROTEIN_QUERY_CHARS,
+    MAX_PROTEIN_RESULT_LIMIT,
     CapabilityError,
     ExternalArtifactRef,
     InputBinding,
@@ -876,6 +880,82 @@ def _literature_import_read(
     data = _reference_read(row.literature_id, ResourceKind.LITERATURE_REFERENCE, row)
     data["read_only"] = queries.read_only(session, project_id, row.literature_id)
     return schemas.ReferenceRead(**data)
+
+
+# ---------------------------------------------------------------------------
+# External protein discovery + explicit import (Phase 14)
+#
+# Discovery is a READ: a viewer may discover proteins when ordinary read policy
+# permits, and it never returns a `SearchHit` or a Project resource. Import is an
+# explicit owner/member command that RE-RESOLVES the stable identity at the CURRENT
+# provider and then creates the canonical Protein + Sequence ScientificObjects plus
+# their identity/provenance graph in ONE transaction. Import never creates Evidence,
+# and it never mutates or refreshes an already-imported object.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/projects/{project_id}/proteins/discover",
+    response_model=schemas.ProteinDiscoveryResultsRead,
+)
+def discover_proteins(
+    project_id: UUID,
+    provider_key: str = Query(..., pattern=PROVIDER_KEY_PATTERN),
+    q: str = Query(..., min_length=1, max_length=MAX_PROTEIN_QUERY_CHARS),
+    limit: int = Query(DEFAULT_PROTEIN_RESULT_LIMIT, ge=1, le=MAX_PROTEIN_RESULT_LIMIT),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.ProteinDiscoveryResultsRead:
+    """Read-only bounded external protein discovery (no persistence).
+
+    `q` is opaque provider search text: Core never parses UniProtKB
+    `protein_name:`/`organism_id:` grammar — provider vocabulary stays behind the
+    driver.
+    """
+    return protein_service.discover_proteins(
+        session,
+        registry,
+        store,
+        actor_id,
+        project_id,
+        provider_key=provider_key,
+        query=q,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/proteins/import",
+    response_model=schemas.ProteinImportRead,
+    status_code=201,
+)
+def import_protein(
+    project_id: UUID,
+    payload: schemas.ProteinImportCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.ProteinImportRead:
+    """Explicitly import one protein + its canonical sequence (idempotent).
+
+    The request carries stable identity only; the server re-resolves it at the
+    current provider, builds the canonical normalized scientific snapshot itself, and
+    persists ONE atomic bundle. The canonical sequence is never accepted from the
+    client and is never echoed in the response.
+    """
+    return protein_service.import_protein(
+        session,
+        registry,
+        store,
+        actor_id,
+        project_id,
+        provider_key=payload.provider_key,
+        authority=payload.authority,
+        native_id=payload.native_id,
+    )
 
 
 @router.post("/projects/{project_id}/external-references", status_code=201)

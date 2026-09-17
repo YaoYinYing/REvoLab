@@ -24,6 +24,7 @@ def build_driver_context(settings: Settings) -> DriverContext:
         "ncbi_email": settings.ncbi_email,
         "ncbi_timeout_seconds": settings.ncbi_timeout_seconds,
         "ncbi_min_request_interval_seconds": settings.ncbi_min_request_interval_seconds,
+        "uniprot_timeout_seconds": settings.uniprot_timeout_seconds,
     }
     return DriverContext(
         environment=settings.environment,
@@ -68,3 +69,21 @@ def install_drivers(registry: DriverRegistry, context: DriverContext, settings: 
         from revolab.testing.fake_literature import FakeLiteratureDriver
 
         registry.register(FakeLiteratureDriver())
+    # Phase-14 UniProt protein discovery. The public REST surface needs no
+    # credential and no operator identity, but the real remote driver is installed
+    # only when the deployment explicitly enables it — exactly like NCBI — so a
+    # zero-config deployment keeps the Provider Catalog an honest empty set and CI
+    # never performs a live UniProt request. Its authority (`uniprot`) collides
+    # loudly with any other driver claiming the same durable identity namespace.
+    if settings.uniprot_discovery_enabled:
+        from revolab.drivers.uniprot import UniProtDriver
+
+        registry.register(UniProtDriver())
+    if settings.e2e_fake_protein:
+        if settings.environment == "production":
+            raise RuntimeError(
+                "the in-process fake protein provider must not be enabled in production"
+            )
+        from revolab.testing.fake_protein import FakeProteinDriver
+
+        registry.register(FakeProteinDriver())

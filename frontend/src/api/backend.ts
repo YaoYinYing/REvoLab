@@ -46,6 +46,8 @@ type NoteRevisionCreate = NonNullable<
 >
 type LiteratureImportCreate =
   paths['/api/projects/{project_id}/literature/import']['post']['requestBody']['content']['application/json']
+type ProteinImportCreate =
+  paths['/api/projects/{project_id}/proteins/import']['post']['requestBody']['content']['application/json']
 
 /**
  * The typed wire query of the Project search endpoint. `target_kinds` is derived
@@ -72,6 +74,7 @@ export type {
   NotePatch,
   NoteRevisionCreate,
   ObjectCreate,
+  ProteinImportCreate,
   PreferredRevisionPut,
   ProjectCreate,
   ProjectPatch,
@@ -85,6 +88,14 @@ export type {
  */
 export type LiteratureDiscoveryQuery = NonNullable<
   paths['/api/projects/{project_id}/literature/discover']['get']['parameters']['query']
+>
+
+/**
+ * The typed wire query of the external protein discovery endpoint. `query` is
+ * opaque provider search text; Core never parses UniProtKB query grammar.
+ */
+export type ProteinDiscoveryQuery = NonNullable<
+  paths['/api/projects/{project_id}/proteins/discover']['get']['parameters']['query']
 >
 
 /**
@@ -255,6 +266,31 @@ export function projectApi(actorId: string) {
      */
     importLiterature: (projectId: string, body: LiteratureImportCreate) =>
       api.POST('/api/projects/{project_id}/literature/import', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    /**
+     * Bounded read-only external protein discovery (Phase 14). Returns EPHEMERAL
+     * candidates — never Project truth, never a `SearchHit`, and never a canonical
+     * sequence. It persists nothing, so the caller must not treat the result as
+     * durable.
+     */
+    discoverProteins: (projectId: string, query: ProteinDiscoveryQuery) =>
+      api.GET('/api/projects/{project_id}/proteins/discover', {
+        headers,
+        params: { path: { project_id: projectId }, query },
+      }),
+
+    /**
+     * Explicit human import of ONE protein by stable identity. The server
+     * re-resolves it at the current provider and builds the canonical scientific
+     * snapshot itself; the browser never supplies the sequence, organism, or name
+     * that will be persisted.
+     */
+    importProtein: (projectId: string, body: ProteinImportCreate) =>
+      api.POST('/api/projects/{project_id}/proteins/import', {
         headers,
         params: { path: { project_id: projectId } },
         body,

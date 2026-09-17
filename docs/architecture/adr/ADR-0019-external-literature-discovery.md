@@ -1,8 +1,9 @@
 # ADR-0019: External Literature Discovery Uses Ephemeral Candidates and Explicit Import
 
-> **Status: Proposed — pending human acceptance.**
-> Accepted only by explicit human acceptance at PR review; a green test suite does
-> not promote this ADR's status.
+> **Status: Accepted** (Phase 13; human-accepted during PR #14 review; squash-merged
+> into `main` as `4b60a4bfeaa2735e77c37cc5bca4425771127bdc`). The PR #14 human review
+> and merge is the explicit acceptance event; a green test suite never promotes an
+> ADR's status.
 
 ## Context
 

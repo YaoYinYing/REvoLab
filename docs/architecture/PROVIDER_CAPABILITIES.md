@@ -102,6 +102,7 @@ capability kind is deliberately absent until forced by a real provider.
 class Capability(Protocol):            # base
     provider_key: str
     kind: CapabilityKind               # COMPUTE | ARTIFACT_RESOLUTION | LITERATURE_DISCOVERY
+                                       # | PROTEIN_DISCOVERY
 
 class ComputeCapability(Capability, Protocol):            # REvoCompute (batch)
     def list_task_kinds(self, credentials: CredentialLease) -> list[TaskKindRef]: ...
@@ -135,6 +136,26 @@ provider-neutral candidates and `resolve` re-reads ONE publication by its durabl
 `(authority, native_id)` identity. Neither persists anything. A candidate is never
 a `LiteratureReference`, a `SearchHit`, Evidence, or Project truth. Normative
 semantics: `docs/architecture/EXTERNAL_LITERATURE_DISCOVERY.md` (ADR-0019).
+
+`ProteinDiscoveryCapability` was added by Phase 14 and is realized by the UniProt
+driver:
+
+```python
+class ProteinDiscoveryCapability(Capability, Protocol):     # UniProt REST (read-only)
+    def search(self, query, limit, credentials: CredentialLease) -> ProteinSearchResult: ...
+    def resolve(self, authority, native_id, credentials: CredentialLease) -> ResolvedProteinRecord: ...
+```
+
+`PROTEIN_DISCOVERY` is deliberately narrow and read-only: `search` returns EPHEMERAL
+provider-neutral candidates (bounded presentation fields, and deliberately **no
+sequence**), and `resolve` re-reads ONE protein by its durable `(authority,
+native_id)` identity and returns the canonical normalized snapshot input. Neither
+persists anything. A candidate is never a ScientificObject, an `ExternalIdentity`, a
+`SearchHit`, Evidence, or Project truth. It is registered in
+`READ_ONLY_CAPABILITY_KINDS`, so any readable membership may discover while only
+owner/member may import. The real UniProt driver is installed only when the
+deployment opts in (`REVOLAB_UNIPROT_DISCOVERY_ENABLED`), exactly like NCBI. Normative
+semantics: `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
 
 ## Schema-as-data discovery
 

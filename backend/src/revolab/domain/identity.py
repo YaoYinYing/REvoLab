@@ -35,10 +35,25 @@ __all__ = [
     "mutation_capable_membership",
     "owner_membership",
     "readable_membership",
+    "require_active_project",
 ]
 
 MUTATION_ROLES = frozenset({Role.OWNER, Role.MEMBER})
 READ_ROLES = frozenset({Role.OWNER, Role.MEMBER, Role.VIEWER})
+
+
+def require_active_project(session: Session, project_id: UUID) -> Project:
+    """The ONE fail-closed "this Project exists and is not tombstoned" backstop.
+
+    Membership checks already imply an active Project; this exists so a caller that
+    acts on a Project without deriving a membership (e.g. an application service
+    that has already authorized) still cannot touch a tombstoned Project, and so
+    there is exactly one definition of that condition.
+    """
+    project = session.get(Project, project_id)
+    if project is None or project.deleted_at is not None:
+        raise AuthorizationError("project is not active")
+    return project
 
 
 def _active_membership(

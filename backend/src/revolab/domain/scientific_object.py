@@ -141,15 +141,44 @@ def mark_archived(session: Session, grant: MutationGrant, series_id: UUID) -> No
     session.flush()
 
 
-def get_or_create_external_identity(
-    session: Session, authority: str, native_id: str, *, kind: str | None
-) -> ExternalIdentity:
-    """The Scientific Object domain owns the ExternalIdentity registry."""
-    identity = session.scalar(
+def find_external_identity(
+    session: Session, authority: str, native_id: str
+) -> ExternalIdentity | None:
+    """Read the ExternalIdentity registry for one durable `(authority, native_id)`."""
+    return session.scalar(
         select(ExternalIdentity).where(
             ExternalIdentity.authority == authority, ExternalIdentity.native_id == native_id
         )
     )
+
+
+def create_external_identity(
+    session: Session, authority: str, native_id: str, *, kind: str | None
+) -> ExternalIdentity:
+    """INSERT the ExternalIdentity for one durable `(authority, native_id)`.
+
+    Unlike `get_or_create_external_identity` this performs NO read: the unique
+    constraint `uq_external_identity_authority_native` is the arbiter, so a racing
+    creator LOSES with an `IntegrityError` that the caller resolves by re-reading the
+    committed winner.
+
+    The Phase-14 atomic import bundle uses this deliberately. A read-then-insert would
+    open a window in which the winning transaction commits between the lookup and the
+    insert, after which the loser would build a SECOND bundle and only fail on the
+    mapping PK — a spurious conflict instead of the documented convergence on the
+    winner. Inserting straight away makes the database the single linearization point.
+    """
+    identity = ExternalIdentity(authority=authority, native_id=native_id, kind=kind)
+    session.add(identity)
+    session.flush()
+    return identity
+
+
+def get_or_create_external_identity(
+    session: Session, authority: str, native_id: str, *, kind: str | None
+) -> ExternalIdentity:
+    """The Scientific Object domain owns the ExternalIdentity registry."""
+    identity = find_external_identity(session, authority, native_id)
     if identity is not None:
         return identity
     identity = ExternalIdentity(authority=authority, native_id=native_id, kind=kind)

@@ -40,3 +40,50 @@ def test_install_drivers_installs_revocompute_when_configured() -> None:
     registry = DriverRegistry()
     install_drivers(registry, build_driver_context(settings), settings)
     assert "revocompute" in registry.names()
+
+
+def test_fake_protein_provider_refuses_production() -> None:
+    settings = Settings(environment="production", e2e_fake_protein=True)
+    registry = DriverRegistry()
+    with pytest.raises(RuntimeError, match="must not be enabled in production"):
+        install_drivers(registry, build_driver_context(settings), settings)
+
+
+def test_fake_literature_provider_refuses_production() -> None:
+    """The Phase-13 fake carries the same production guard as the Phase-14 one."""
+    settings = Settings(environment="production", e2e_fake_literature=True)
+    registry = DriverRegistry()
+    with pytest.raises(RuntimeError, match="must not be enabled in production"):
+        install_drivers(registry, build_driver_context(settings), settings)
+
+
+def test_uniprot_driver_is_installed_only_when_enabled() -> None:
+    """The real remote provider is opt-in, exactly like NCBI.
+
+    A zero-config deployment keeps the Provider Catalog an honest empty set, so no
+    test or browser run can perform a live UniProt request by accident.
+    """
+    default = Settings()
+    registry = DriverRegistry()
+    install_drivers(registry, build_driver_context(default), default)
+    assert "uniprot" not in registry.names()
+
+    enabled = Settings(uniprot_discovery_enabled=True)
+    registry = DriverRegistry()
+    install_drivers(registry, build_driver_context(enabled), enabled)
+    assert "uniprot" in registry.names()
+
+    fake = Settings(e2e_fake_protein=True)
+    registry = DriverRegistry()
+    install_drivers(registry, build_driver_context(fake), fake)
+    assert "fakeprotein" in registry.names()
+    # The fake NEVER brings the real remote provider with it.
+    assert "uniprot" not in registry.names()
+
+
+def test_fake_protein_provider_claims_its_own_authority() -> None:
+    from revolab.drivers.uniprot import UNIPROT_AUTHORITY
+    from revolab.testing.fake_protein import FAKE_PROTEIN_AUTHORITY, FakeProteinDriver
+
+    assert FAKE_PROTEIN_AUTHORITY != UNIPROT_AUTHORITY
+    assert FakeProteinDriver().authorities == (FAKE_PROTEIN_AUTHORITY,)

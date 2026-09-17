@@ -3,6 +3,7 @@ import {
   type ContextSelectionCreate,
   type LiteratureDiscoveryQuery,
   type ProjectApi,
+  type ProteinDiscoveryQuery,
   type SearchQuery,
 } from './backend'
 import { apiErrorMessage } from './client'
@@ -24,6 +25,7 @@ import type {
   ObjectSummaryRead,
   ProjectContextRead,
   ProjectRead,
+  ProteinDiscoveryResultsRead,
   ProjectSearchResultsRead,
   ProviderRead,
   ReferenceRead,
@@ -272,6 +274,33 @@ export function useLiteratureDiscovery(
             .then((res) =>
               value<LiteratureDiscoveryResultsRead>(
                 res as ApiResult<LiteratureDiscoveryResultsRead>,
+              ),
+            )
+        : Promise.resolve(null),
+    [actorId, projectId, requestKey],
+  )
+}
+
+/**
+ * Bounded read-only external protein discovery (Phase 14). `request === null` means
+ * "nothing submitted yet" — discovery is an explicit user action, and a page reload
+ * legitimately requires searching again (candidates are never cached). The result is
+ * EPHEMERAL external data, never Project context.
+ */
+export function useProteinDiscovery(
+  actorId: string | null,
+  projectId: string | null,
+  request: ProteinDiscoveryQuery | null,
+): AsyncState<ProteinDiscoveryResultsRead | null> {
+  const requestKey = JSON.stringify(request ?? {})
+  return useAsync(
+    () =>
+      actorId && projectId && request
+        ? projectApi(actorId)
+            .discoverProteins(projectId, request)
+            .then((res) =>
+              value<ProteinDiscoveryResultsRead>(
+                res as ApiResult<ProteinDiscoveryResultsRead>,
               ),
             )
         : Promise.resolve(null),

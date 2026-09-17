@@ -169,15 +169,22 @@ def test_revocation_changes_next_query_availability_without_stored_state(session
 
 def test_provider_vocabulary_does_not_enter_core_enums():
     core_values = {kind.value for kind in CapabilityKind}
-    # Phase 13 added exactly ONE capability kind, because a real provider
-    # (NCBI PubMed) now realizes it. Capability kinds are provider-NEUTRAL
-    # categories; no vendor-specific term is a Core enum value.
-    assert core_values == {"compute", "artifact_resolution", "literature_discovery"}
+    # Phase 13 added `literature_discovery` and Phase 14 added `protein_discovery`,
+    # each because a real provider (NCBI PubMed, UniProt) now realizes it.
+    # Capability kinds are provider-NEUTRAL categories; no vendor-specific term is
+    # a Core enum value.
+    assert core_values == {
+        "compute",
+        "artifact_resolution",
+        "literature_discovery",
+        "protein_discovery",
+    }
     # Credential kinds are provider-declared; no vendor-specific term is a Core enum.
     assert "api_key" not in core_values
     assert "organization_token" not in core_values
     assert "ncbi" not in core_values
     assert "pubmed" not in core_values
+    assert "uniprot" not in core_values
 
 
 def _started_registry() -> DriverRegistry:
@@ -299,6 +306,53 @@ def test_keyless_literature_provider_is_available_to_a_viewer(session):
         provider_key="ncbi",
         required=(),
         capability_kind=CapabilityKind.LITERATURE_DISCOVERY,
+    )
+    assert availability is CapabilityAvailability.AVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# Phase 14 — PROTEIN_DISCOVERY availability (read-only, keyless)
+# ---------------------------------------------------------------------------
+
+
+def test_protein_discovery_is_read_only_for_policy(session):
+    owner = _actor(session)
+    project_id = _project(session, owner, "Protein availability")
+    member = _actor(session)
+    viewer = _actor(session)
+    stranger = _actor(session)
+    _member(session, owner, project_id, member, "member")
+    _member(session, owner, project_id, viewer, "viewer")
+
+    # A read-only capability kind: any readable membership permits it.
+    assert services.project_policy_permits(
+        session, owner, project_id, CapabilityKind.PROTEIN_DISCOVERY
+    )
+    assert services.project_policy_permits(
+        session, member, project_id, CapabilityKind.PROTEIN_DISCOVERY
+    )
+    assert services.project_policy_permits(
+        session, viewer, project_id, CapabilityKind.PROTEIN_DISCOVERY
+    )
+    # A non-member never does.
+    assert not services.project_policy_permits(
+        session, stranger, project_id, CapabilityKind.PROTEIN_DISCOVERY
+    )
+
+
+def test_keyless_protein_provider_is_available_to_a_viewer(session):
+    owner = _actor(session)
+    project_id = _project(session, owner, "Keyless protein")
+    viewer = _actor(session)
+    _member(session, owner, project_id, viewer, "viewer")
+
+    availability = _availability(
+        session,
+        viewer,
+        project_id,
+        provider_key="uniprot",
+        required=(),
+        capability_kind=CapabilityKind.PROTEIN_DISCOVERY,
     )
     assert availability is CapabilityAvailability.AVAILABLE
 
