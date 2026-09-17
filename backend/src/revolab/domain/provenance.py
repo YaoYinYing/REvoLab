@@ -11,13 +11,12 @@ re-derives mutation authority.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, NamedTuple, cast
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from revolab.domain import persistence, scientific_object
@@ -171,8 +170,15 @@ def create_artifact_reference_row_if_absent(
         )
     else:  # pragma: no cover - an unsupported substrate fails closed
         raise ValidationError(f"unsupported database dialect {dialect!r}")
-    inserted = cast(CursorResult[Any], session.execute(statement)).rowcount
-    if not inserted:
+    # `RETURNING` (not `rowcount`) decides whether we won: psycopg reports
+    # `rowcount == -1` for this statement form, so a `rowcount`-based check silently
+    # skipped the lost-race cleanup on PostgreSQL and leaked an unused
+    # `GlobalResourceRegistry` row per lost race. `RETURNING` is unambiguous on both
+    # substrates (SQLite 3.35+), and a lost race yields no row.
+    inserted_id = session.execute(
+        statement.returning(ArtifactReference.artifact_id)
+    ).scalar_one_or_none()
+    if inserted_id is None:
         # Our own unused registry row must not survive a lost race.
         session.delete(registry)
         session.flush()

@@ -43,7 +43,11 @@ official hosts.
   4-character id `XXXX` is exactly `pdb_0000xxxx`. The Search and Data APIs accept
   the 4-character form as of 2026-09-17 (live-verified: an extended-only id answers
   `204` / `null` / `404`), so the driver normalizes the documented alias before
-  querying and stores the provider-confirmed canonical `rcsb_id`.
+  querying and stores the provider-confirmed canonical `rcsb_id`. The metadata index
+  is keyed by BOTH forms, so a future switch to extended primary ids cannot silently
+  break discovery. `results_content_type` does NOT exclude integrative entries
+  (live-verified), so discovery re-validates the determination methodology on the
+  returned METADATA and fails closed on any non-experimental entry.
 * Computed Structure Models are identified by an `AF_`/`MA_` id prefix AND by
   `rcsb_entry_info.structure_determination_methodology == "computational"`. Phase 15
   excludes them from discovery and rejects them at resolution, so a computed model
@@ -51,9 +55,10 @@ official hosts.
 * Rate policy: the official documentation publishes no numeric quota — only
   "we recommend starting with a handful of requests per second" and that exceeding
   the limit answers `429`. Phase 15 makes exactly TWO bounded API requests per
-  search (one Search + one batched Data) and TWO API requests plus one static-file
-  download per resolve, so no invented pacing constant is introduced, nothing is
-  retried, and nothing is paginated or prefetched beyond the requested bound.
+  search (one Search + one batched Data) and exactly ONE batched Data API request
+  plus ONE static-file coordinate download per resolve/import, so no invented pacing
+  constant is introduced, nothing is retried, and nothing is paginated or prefetched
+  beyond the requested bound.
 * Read-only: discovering persists nothing, and `resolve` only RETURNS bytes. Byte
   custody is taken later by the explicit human import.
 """
@@ -282,10 +287,12 @@ def _entry_title(entry: Mapping[str, Any]) -> str | None:
 def _entry_methods(entry: Mapping[str, Any]) -> tuple[str, ...] | None:
     """The entry's deposited experimental methods, deterministically normalized.
 
-    Returns None when the provider reports an absurd number of methods
-    (structurally impossible data). Deduplication is case-insensitive and the
-    result is SORTED, so the persisted representation never depends on arbitrary
-    provider ordering.
+    Returns None for structurally impossible provider data: an absurd number of
+    methods, or an `exptl` collection that is PRESENT but yields no usable method at
+    all (an entry that reports experiments but no method is not the same thing as an
+    entry that reports none, and must not silently become "no method").
+    Deduplication is case-insensitive and the result is SORTED, so the persisted
+    representation never depends on arbitrary provider ordering.
     """
     raw = entry.get("exptl")
     if raw is None:
@@ -299,6 +306,8 @@ def _entry_methods(entry: Mapping[str, Any]) -> tuple[str, ...] | None:
             continue
         seen.setdefault(method.casefold(), method)
     if len(seen) > MAX_STRUCTURE_METHODS:
+        return None
+    if raw and not seen:
         return None
     return tuple(seen[key] for key in sorted(seen))
 
@@ -404,6 +413,19 @@ class RcsbStructureDiscoveryCapability:
                 raise self._error(
                     CapabilityErrorKind.UNKNOWN,
                     "provider returned a mismatched entry identifier",
+                )
+            # The experimental-archive constraint is re-validated on the METADATA,
+            # never delegated to the upstream query. `results_content_type` does NOT
+            # exclude integrative entries (live-verified 2026-09-17), so a
+            # non-experimental entry here means the provider returned something an
+            # experimental-only query structurally cannot contain — and a candidate
+            # must never carry `authority="pdb"` for a computational or integrative
+            # entry. Fail closed rather than forward it.
+            if _entry_methodology(entry) != _EXPERIMENTAL_METHODOLOGY:
+                raise self._error(
+                    CapabilityErrorKind.UNKNOWN,
+                    "provider search returned a non-experimental entry for an "
+                    "experimental-only query",
                 )
             methods = _entry_methods(entry)
             if methods is None:
@@ -645,13 +667,21 @@ class RcsbStructureDiscoveryCapability:
     def _entry_metadata_by_id(
         self, lookup_ids: Sequence[str]
     ) -> dict[str, Mapping[str, Any]]:
-        """ONE batched metadata request, keyed by the provider-confirmed id."""
+        """ONE batched metadata request, keyed by BOTH identifier forms.
+
+        The Data API keys entries by its own canonical `rcsb_id`, while the Search
+        API returns whatever id form it uses. Indexing each entry under its
+        canonical id AND its documented API-lookup alias means a future wwPDB switch
+        to extended primary ids cannot silently turn a search hit into "no
+        resolvable metadata".
+        """
         entries = self._fetch_entries(lookup_ids)
         by_id: dict[str, Mapping[str, Any]] = {}
         for entry in entries:
             confirmed = self._confirmed_entry_id(entry)
             if confirmed is not None:
                 by_id[confirmed] = entry
+                by_id.setdefault(_api_lookup_id(confirmed), entry)
         return by_id
 
     def _fetch_entries(self, entry_ids: Sequence[str]) -> list[Mapping[str, Any]]:

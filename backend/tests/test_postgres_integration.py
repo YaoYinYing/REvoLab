@@ -3378,6 +3378,19 @@ def test_phase15_postgres_content_only_race_yields_one_artifact(
     _seed_structure(registry, native_b, coordinate_seed=shared_seed)
     content_store = ContentStore(tmp_path / "content")
 
+    # The acceptance database is shared and is NOT truncated, so the lost-race
+    # registry cleanup is proven RELATIVELY: the race must add exactly ONE
+    # `artifact_reference` registry row (the winner's), never one per racer.
+    with Session(pg_engine) as pre:
+        registry_rows_before = int(
+            pre.scalar(
+                select(func.count())
+                .select_from(GlobalResourceRegistry)
+                .where(GlobalResourceRegistry.resource_kind == "artifact_reference")
+            )
+            or 0
+        )
+
     barrier = threading.Barrier(2)
     real_find = provenance_module.find_artifact_reference
     local = threading.local()
@@ -3453,12 +3466,24 @@ def test_phase15_postgres_content_only_race_yields_one_artifact(
             outcomes["a"][1],
             outcomes["b"][1],
         }
-        registry = verify.scalar(
-            select(func.count())
-            .select_from(GlobalResourceRegistry)
-            .where(GlobalResourceRegistry.resource_id == outcomes["a"][2])
+        registry_rows_after = int(
+            verify.scalar(
+                select(func.count())
+                .select_from(GlobalResourceRegistry)
+                .where(GlobalResourceRegistry.resource_kind == "artifact_reference")
+            )
+            or 0
         )
-        assert registry == 1
+        assert registry_rows_after == registry_rows_before + 1
+        # The winner's own registry row is present exactly once.
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(GlobalResourceRegistry)
+                .where(GlobalResourceRegistry.resource_id == outcomes["a"][2])
+            )
+            == 1
+        )
 
 
 def test_phase15_postgres_atomic_rollback_leaves_no_partial_bundle(

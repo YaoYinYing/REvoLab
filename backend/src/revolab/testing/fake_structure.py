@@ -8,12 +8,17 @@ fixture list, and no `TEST_ONLY_STRUCTURE_API`.
 
 Its provider key (`fakepdb`) and durable authority (`fakepdb`) are the fake's OWN
 vocabulary, so a synthetic fixture identity can never be mistaken for a real `pdb`
-entry. The real namespace is guarded two ways, both covered by regressions: the
-driver registry refuses any SECOND resolver that claims `pdb` alongside the real
-driver (`test_the_real_pdb_authority_is_guarded_by_the_collision_check`, which also
-asserts that the fake and the real driver coexist under distinct authorities), and
+entry. The real namespace is guarded two ways, both covered by regressions:
 `install_drivers` refuses this fake outright when the environment is `production`
-(`test_fake_structure_provider_refuses_production`).
+(`backend/tests/test_bootstrap.py::test_fake_structure_provider_refuses_production`),
+and the registry refuses any SECOND resolver that claims `pdb`
+(`backend/tests/test_structures.py::test_the_real_pdb_authority_is_guarded_by_the_collision_check`,
+which also asserts that this fake and a `pdb`-authority resolver coexist under
+distinct namespaces). The real driver's own `pdb` declaration and its opt-in install
+are asserted by `test_bootstrap.py::test_rcsb_driver_is_installed_only_when_enabled`,
+and the resolver/authority separation is asserted by
+`test_structures.py::test_an_alternate_resolver_for_the_pdb_authority_still_creates_the_pdb_identity`
+plus the deterministic driver tests.
 
 Records are deterministic functions of the query, and the synthetic coordinate
 bytes are a small but structurally valid PDBx/mmCIF data block, so a browser spec

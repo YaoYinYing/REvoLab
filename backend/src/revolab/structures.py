@@ -62,13 +62,16 @@ from revolab import services
 from revolab.capabilities import (
     DEFAULT_STRUCTURE_RESULT_LIMIT,
     MAX_STRUCTURE_AUTHORITY_CHARS,
+    MAX_STRUCTURE_COORDINATE_BYTES,
     MAX_STRUCTURE_METHOD_CHARS,
+    MAX_STRUCTURE_METHODS,
     MAX_STRUCTURE_NATIVE_ID_CHARS,
     MAX_STRUCTURE_QUERY_CHARS,
     MAX_STRUCTURE_RESULT_LIMIT,
     MAX_STRUCTURE_REVISION_TEXT_CHARS,
     MAX_STRUCTURE_TITLE_CHARS,
     STRUCTURE_COORDINATE_CONTENT_TYPE,
+    STRUCTURE_COORDINATE_FORMAT,
     ResolvedStructureRecord,
     StructureCandidate,
     bounded_inert_text,
@@ -109,8 +112,8 @@ IDENTITY_QUALIFIER = "identity"
 # The ONE byte-custody authority: `authority="revolab"` on an ArtifactReference
 # means REvoLab can reproduce those exact bytes. It NEVER means REvoLab authored
 # or scientifically originated them — origin is the `pdb:<entry>` ExternalIdentity
-# plus the `imported_as` provenance.
-INTERNAL_ARTIFACT_AUTHORITY = "revolab"
+# plus the `imported_as` provenance. (Single-sourced from the byte-custody owner.)
+INTERNAL_ARTIFACT_AUTHORITY = services.INTERNAL_ARTIFACT_AUTHORITY
 
 # `scientific_object_series.name` is varchar(200).
 MAX_SERIES_NAME_CHARS = 200
@@ -361,10 +364,20 @@ def _normalized_snapshot(
             "ligand_ref": None,
         },
     )
+    if record.coordinate_format != STRUCTURE_COORDINATE_FORMAT:
+        # Phase 15 imports PDBx/mmCIF only. A mis-wired driver returning any other
+        # format (e.g. legacy PDB) must never be persisted under the canonical mmCIF
+        # content type.
+        raise ValidationError("resolved structure is not in the canonical PDBx/mmCIF format")
     if not coordinate_checksum or len(coordinate_checksum) != 64:
         raise ValidationError("resolved structure has no usable coordinate checksum")
     if not record.coordinate_bytes:
         raise ValidationError("resolved structure has no coordinate bytes")
+    if len(record.coordinate_bytes) > MAX_STRUCTURE_COORDINATE_BYTES:
+        # The driver already aborts an over-ceiling stream; re-applying the SAME
+        # canonical ceiling here is defense-in-depth so a mis-wired driver cannot
+        # push an unbounded blob into ContentStore. Never truncated — it fails.
+        raise ValidationError("resolved structure coordinates exceed the supported size")
     title = bounded_inert_text(record.title, MAX_STRUCTURE_TITLE_CHARS)
     # A series name is governance/presentation metadata, never identity: the durable
     # identity is `(authority, native_id)`. Fall back to `PDB <native_id>` when the
@@ -414,20 +427,25 @@ def _validated_resolution(value: Any) -> float | None:
 def _normalized_method(methods: tuple[str, ...]) -> str | None:
     """One documented deterministic representation of the experimental method(s).
 
-    The driver already normalizes each method to bounded inert text, de-duplicates
-    case-insensitively, SORTS them, and bounds the count, so the persisted string
-    never depends on arbitrary provider ordering. Multiple methods are joined with
-    `"; "` rather than silently dropped or arbitrarily chosen.
+    The driver already applies this rule at the wire boundary, and it is re-applied
+    here as defense-in-depth: each method is re-bounded to inert text, de-duplicated
+    case-insensitively, SORTED, and the count is bounded by `MAX_STRUCTURE_METHODS`.
+    The persisted string therefore never depends on arbitrary provider ordering, and
+    a mis-wired driver cannot persist an over-long or order-dependent method string.
+    Multiple methods are joined with `"; "` rather than silently dropped or
+    arbitrarily chosen.
     """
-    normalized: list[str] = []
+    seen: dict[str, str] = {}
     for raw in methods:
         method = bounded_inert_text(raw, MAX_STRUCTURE_METHOD_CHARS)
         if method is None:
             continue
-        normalized.append(method)
-    if not normalized:
+        seen.setdefault(method.casefold(), method)
+    if len(seen) > MAX_STRUCTURE_METHODS:
+        raise ValidationError("resolved structure reported too many experimental methods")
+    if not seen:
         return None
-    return "; ".join(normalized)
+    return "; ".join(seen[key] for key in sorted(seen))
 
 
 # ---------------------------------------------------------------------------
@@ -867,14 +885,16 @@ def _candidate_read(candidate: StructureCandidate) -> StructureCandidateRead:
 
     The driver already applies these limits; re-applying them here is
     defense-in-depth so a mis-wired driver cannot widen the frontend/Agent surface.
-    Truncation is honest bounded presentation data, and coordinate bytes are
-    structurally absent from a candidate. Text stays UNTRUSTED inert data.
+    The method set is re-bounded, de-duplicated case-insensitively, SORTED, and
+    truncated to the canonical count (honest bounded presentation data); coordinate
+    bytes are structurally absent from a candidate. Text stays UNTRUSTED inert data.
     """
-    methods: list[str] = []
+    seen: dict[str, str] = {}
     for raw in candidate.experimental_methods:
         method = bounded_inert_text(raw, MAX_STRUCTURE_METHOD_CHARS)
-        if method is not None and method not in methods:
-            methods.append(method)
+        if method is not None:
+            seen.setdefault(method.casefold(), method)
+    methods = [seen[key] for key in sorted(seen)][:MAX_STRUCTURE_METHODS]
     resolution = _positive_float(candidate.resolution_angstrom)
     polymer_entity_count = candidate.polymer_entity_count
     if (

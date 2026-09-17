@@ -366,10 +366,14 @@ imported byte truth.
 
 ### 8.4 The canonical coordinate media type
 
-There is no IANA-registered media type for PDBx/mmCIF, and the RCSB file-download
-documentation states that the generic short-style "download" URL sets
+There is no IANA-registered media type for PDBx/mmCIF. The RCSB *File Download
+Services* page (`rcsb.org/docs/programmatic-access/file-download-services`) states
+that the generic short-style "download" URL sets
 `Content-Type: application/octet-stream` — a byte-stream description that carries
-**no scientific meaning**. Phase 15 therefore asserts its own canonical semantic
+**no scientific meaning** — while the exact `.cif` download URL this driver uses
+actually answers `Content-Type: chemical/x-cif` (live-observed 2026-09-17). Either
+way the provider header is transport metadata, so it is never adopted as the
+scientific type. Phase 15 therefore asserts its own canonical semantic
 type:
 
 ```text
@@ -516,9 +520,9 @@ remote URL stays available.
   you exceed the limit, the service will respond with a 429 HTTP error code."*
 * No numeric quota is published, so **no undocumented numeric ceiling is invented**.
   Phase 15 makes exactly **two** bounded API requests per search (one Search + one
-  batched Data) and **two API requests plus one static-file download** per import —
-  well inside the published guidance — with **no retry, no pagination, no prefetch,
-  and no crawler**. `429`/`5xx` become a typed retryable
+  batched Data) and exactly **one batched Data API request plus one static-file
+  coordinate download** per import/resolve — well inside the published guidance — with
+  **no retry, no pagination, no prefetch, and no crawler**. `429`/`5xx` become a typed retryable
   `PROVIDER_UNAVAILABLE` failure; `Retry-After` is deliberately not surfaced (nothing
   in Phase 15 consumes it, and a background retry scheduler is an explicit deferral).
 

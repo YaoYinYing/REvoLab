@@ -104,6 +104,12 @@ READ_ONLY_CAPABILITY_KINDS = frozenset(
 )
 
 
+# The ONE byte-custody authority for internally owned bytes. `authority="revolab"`
+# on an ArtifactReference means REvoLab can reproduce those exact bytes; it NEVER
+# means REvoLab authored or scientifically originated them.
+INTERNAL_ARTIFACT_AUTHORITY = "revolab"
+
+
 def project_policy_permits(
     session: Session,
     actor_id: UUID,
@@ -803,8 +809,19 @@ def _persist_artifact_reference_trusted(
             # Lost the race and the winner is not readable yet: not a recoverable
             # duplicate-identity state.
             raise ConflictError("artifact reference conflicted with a concurrent create; retry")
+    # The bytes themselves are the immutable identity assertion. For an INTERNAL
+    # content-addressed artifact (`authority=revolab`, `native_id == checksum`) the
+    # content type is presentation metadata over bytes that are identical by
+    # construction, so a disagreement (e.g. the same bytes previously uploaded with a
+    # different browser-supplied media type) must not read as a contradictory
+    # immutable assertion. Checksum and size are still enforced. A PROVIDER-authority
+    # artifact keeps the strict comparison, because there the content type is
+    # provider-declared data.
+    content_type_assertion = content_type
+    if authority == INTERNAL_ARTIFACT_AUTHORITY and checksum is not None and native_id == checksum:
+        content_type_assertion = None
     provenance.assert_reference_compatible(
-        existing, checksum=checksum, size=size, content_type=content_type
+        existing, checksum=checksum, size=size, content_type=content_type_assertion
     )
     persistence.link(session, project_id, existing.artifact_id)
     if commit:
@@ -1324,7 +1341,7 @@ def create_internal_artifact(
         session,
         actor_id,
         project_id,
-        "revolab",
+        INTERNAL_ARTIFACT_AUTHORITY,
         result["checksum"],
         content_type=result["content_type"],
         size=result["size"],
@@ -1379,7 +1396,7 @@ def resolve_compute_input(
     artifact = session.get(ArtifactReference, binding.resource_id)
     if artifact is None:
         raise NotFoundError("artifact reference not found")
-    if artifact.authority == "revolab":
+    if artifact.authority == INTERNAL_ARTIFACT_AUTHORITY:
         return ResolvedInput(
             role=binding.role,
             filename=f"artifact-{artifact.native_id[:12]}.bin",

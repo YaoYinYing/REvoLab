@@ -763,3 +763,57 @@ def test_health_probe_before_start_is_unreachable() -> None:
 def test_health_probe_treats_an_empty_result_as_healthy() -> None:
     driver = _driver(_Router(search=lambda r: httpx.Response(204), graphql=lambda r: _gql()))
     assert driver.probe_health() is ProviderRuntimeHealth.READY
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 fixes
+# ---------------------------------------------------------------------------
+
+
+def test_search_fails_closed_on_a_non_experimental_entry() -> None:
+    """`results_content_type` does NOT exclude integrative entries (live-verified).
+
+    The experimental-archive constraint is therefore re-validated on the returned
+    METADATA, so an experimental-only query can never yield a candidate carrying
+    `authority="pdb"` for a computational or integrative entry.
+    """
+    for methodology in ("integrative", "computational", None):
+        router = _Router(
+            search=lambda r: _search("1ABC"),
+            graphql=lambda r, methodology=methodology: _gql(
+                _gql_entry(methodology=methodology)
+            ),
+        )
+        with pytest.raises(CapabilityError) as exc:
+            _capability(_driver(router)).search("kinase", 5, _lease())
+        assert exc.value.kind is CapabilityErrorKind.UNKNOWN
+
+
+def test_search_fails_closed_on_a_present_but_unparseable_method_list() -> None:
+    """An entry that reports experiments but yields no method is NOT "no method"."""
+    malformed = _gql_entry(methods=None, extra={"exptl": ["X-RAY DIFFRACTION"]})
+    router = _Router(search=lambda r: _search("1ABC"), graphql=lambda r: _gql(malformed))
+    with pytest.raises(CapabilityError) as exc:
+        _capability(_driver(router)).search("kinase", 5, _lease())
+    assert exc.value.kind is CapabilityErrorKind.UNKNOWN
+
+
+def test_search_treats_a_genuinely_empty_method_list_as_absent() -> None:
+    empty = _gql_entry(methods=None, extra={"exptl": []})
+    router = _Router(search=lambda r: _search("1ABC"), graphql=lambda r: _gql(empty))
+    result = _capability(_driver(router)).search("kinase", 5, _lease())
+    assert result.candidates[0].experimental_methods == ()
+
+
+def test_search_indexes_metadata_under_both_identifier_forms() -> None:
+    """A future extended-primary-id response must not become "no metadata".
+
+    The hit uses the classic id while the Data API confirms the documented extended
+    alias; the index is keyed by BOTH forms, so the lookup still resolves.
+    """
+    router = _Router(
+        search=lambda r: _search("1ABC"),
+        graphql=lambda r: _gql(_gql_entry("pdb_00001abc")),
+    )
+    result = _capability(_driver(router)).search("kinase", 5, _lease())
+    assert [candidate.native_id for candidate in result.candidates] == ["pdb_00001abc"]

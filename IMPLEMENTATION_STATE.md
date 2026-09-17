@@ -3202,9 +3202,9 @@ All commands were run from the repository root unless noted; the branch head is
 | --- | --- | --- |
 | Backend lint | `ruff check backend` | **All checks passed** |
 | Backend types | `mypy` (strict) | **no issues in 65 source files** |
-| Backend tests | `pytest` | **917 passed, 51 skipped** |
-| RCSB driver (deterministic HTTP) | `pytest backend/tests/test_rcsb_driver.py` | **80 passed** |
-| Structure service/API/Agent | `pytest backend/tests/test_structures.py backend/tests/test_structures_api.py backend/tests/test_structure_agent.py` | **69 passed** (44 + 15 + 10) |
+| Backend tests | `pytest` | **934 passed, 51 skipped** |
+| RCSB driver (deterministic HTTP) | `pytest backend/tests/test_rcsb_driver.py` | **84 passed** |
+| Structure service/API/Agent | `pytest backend/tests/test_structures.py backend/tests/test_structures_api.py backend/tests/test_structure_agent.py` | **79 passed** (54 + 15 + 10) |
 | SQLite migration drift | `cd backend && REVOLAB_DATABASE_URL=sqlite:////tmp/drift.db alembic upgrade head && alembic check` | **No new upgrade operations detected** |
 | PostgreSQL 16 migration drift | same, `REVOLAB_DATABASE_URL=postgresql+psycopg://…` | **No new upgrade operations detected** |
 | PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **51 passed** (11 Phase-15) |
@@ -3319,6 +3319,167 @@ Mutation-sensitive regressions added (each fails if the behavior is removed):
 36. the generated contract pins `structure_discovery`, the `StructureImportCreate`
     property set with `additionalProperties: false`, the `StructureImportRead` property
     set, and the coordinate-free `StructureCandidateRead` property set.
+
+Regressions added by the review-round fixes (all mutation-relevant):
+
+37. discovery re-validates the determination methodology on the returned METADATA and
+    fails closed on `integrative` / `computational` / absent, because
+    `results_content_type` does not exclude them (live-verified);
+38. a present but unparseable `exptl` collection fails closed, while a genuinely empty
+    one is treated as "no method reported";
+39. the Search/Data metadata index is keyed under BOTH identifier forms, so a
+    classic-id hit answered with an extended-form `rcsb_id` still resolves;
+40. the service re-applies the deterministic method rule (re-bound, case-insensitive
+    de-duplication, SORT, count bound) for BOTH the persisted payload and the candidate
+    projection, and fails closed on an absurd method list;
+41. `coordinate_format` must be the canonical PDBx/mmCIF discriminator before byte
+    custody, and the 128 MiB coordinate ceiling is re-applied in the application service;
+42. a lost `insert-if-absent` artifact race deletes its own unused registry row, proven
+    by a focused domain-level test AND by the PostgreSQL content-only race asserting the
+    `artifact_reference` registry population grows by exactly one (this is the
+    verification that exposed the dead `rowcount`-based branch);
+43. a content-addressed internal artifact reuses across a differing content type
+    (presentation metadata) while a provider-authority artifact keeps the strict
+    comparison;
+44. a `pdb`-authority resolver under a different `provider_key` still creates the `pdb`
+    identity with the resolver recorded only in `cache_metadata`, and a second `pdb`
+    claimant is refused;
+45. the fake structure provider refuses production, the real RCSB driver is installed
+    only when explicitly enabled (declaring `authorities == ("pdb",)`), and the fake
+    claims its own authority so it can never be mistaken for a real PDB entry;
+46. the browser slice proves a provider outage after import is non-destructive, and
+    asserts the coordinate artifact appears in Agent context ONLY as its bounded
+    identity card (an exact key set) with no payload and no coordinate content line.
+
+## Independent review (Phase 15)
+
+Three fresh, independent, STRICTLY READ-ONLY reviewers were run in parallel against
+commit `335b0ff` (PR #16) — A: structure / scientific-object / provenance architecture;
+B: provider / network / data-integrity / security; C: persistence / concurrency / API /
+frontend / verification — each allowed up to 10 minutes wall-clock with polling no more
+frequent than every 20 seconds. All three returned **APPROVE WITH FIXES** with **zero P0
+findings**; the integrator reconciled the reports, verified every finding against the
+actual code, and fixed every P1 and every material in-scope P2.
+
+### Verdicts
+
+| Reviewer | Verdict | P0 | P1 | P2 |
+| --- | --- | --- | --- | --- |
+| A — structure / provenance | APPROVE WITH FIXES | 0 | 0 | 6 |
+| B — provider / network / security | APPROVE WITH FIXES | 0 | 1 | 5 |
+| C — persistence / concurrency / API / frontend / verification | APPROVE WITH FIXES | 0 | 1 | 3 |
+
+### P1 findings and fixes
+
+- **B-P1-1 — discovery never re-validated the determination methodology, so a
+  non-experimental entry could become a candidate with `authority="pdb"`.** Reviewer B
+  live-probed the provider and showed the load-bearing premise was wrong:
+  `results_content_type: ["experimental"]` does **not** exclude integrative entries, so
+  the only real filter was the upstream honoring of our own `exact_match experimental`
+  predicate. Discovery therefore delegated a load-bearing invariant to the provider.
+  **Fixed** in `drivers/rcsb.py::search`, which now re-validates
+  `structure_determination_methodology == "experimental"` on the returned METADATA and
+  fails closed on any other value, with a parametrized regression over
+  `integrative`/`computational`/absent. The documented claim is now true rather than
+  assumed, and the live finding is recorded in `EXTERNAL_STRUCTURE_IMPORT.md` §10 and
+  the driver docstring.
+- **C-P1-1 — the documented "a lost race cleans up its own `GlobalResourceRegistry`
+  row" claim had no test that could fail, and the underlying behavior was in fact
+  broken on PostgreSQL.** The claim was made in ADR-0021 and in this file, but the
+  SQLite test short-circuited at the caller's read-then-insert and the PostgreSQL race
+  only counted the winner's row id. **Fixing the verification exposed a real defect:**
+  `CursorResult.rowcount` is `-1` under psycopg for `INSERT ... ON CONFLICT DO NOTHING`,
+  and `if not inserted:` treated `-1` as truthy — so the lost-race cleanup branch was
+  **dead on PostgreSQL** and every lost artifact race leaked an unused
+  `GlobalResourceRegistry` row. **Fixed** by deciding the race with
+  `statement.returning(ArtifactReference.artifact_id).scalar_one_or_none()` instead of
+  `rowcount` (unambiguous on PostgreSQL and SQLite 3.35+), and **verified by
+  strengthening the PostgreSQL content-only race to assert the total
+  `artifact_reference` registry population grows by exactly ONE**. Regressions: the
+  strengthened PostgreSQL race, a new focused SQLite
+  `test_a_lost_insert_if_absent_cleans_up_its_own_registry_row` that calls the domain
+  operation directly (reaching the cleanup branch), and a mutation check — reverting the
+  `RETURNING` decision to a non-`RETURNING` one fails the PostgreSQL race.
+
+### P2 findings and fixes
+
+- **A-P2-1 / B-P2-2 — the per-import request-count claim was wrong in four places**
+  (`EXTERNAL_STRUCTURE_IMPORT.md` §10.7, ADR-0021, the `rcsb.py` module docstring, and
+  the `config.py` comment). `resolve` makes exactly ONE batched Data API request plus ONE
+  static-file download. **Fixed** in all four to say so; the "two per search" claim was
+  already correct.
+- **A-P2-2 — the `pdbmirror` alternate-resolver claim was unsupported by any test.**
+  The only such regression used the fake's own `fakepdb` authority. **Fixed by making the
+  claim true rather than weakening it:** a new
+  `test_an_alternate_resolver_for_the_pdb_authority_still_creates_the_pdb_identity`
+  registers a `pdb`-authority double under `provider_key="pdbmirror"` and proves the
+  durable identity is `pdb` while `cache_metadata.resolver_provider` records the
+  resolver — exactly the future wwPDB/PDBe/PDBj scenario TODO §5 requires.
+- **A-P2-3 — `testing/fake_structure.py` named two regressions that did not exist.**
+  **Fixed by adding both** plus the opt-in install guard:
+  `test_bootstrap.py::test_fake_structure_provider_refuses_production`,
+  `test_rcsb_driver_is_installed_only_when_enabled` (asserting the real driver declares
+  `authorities == ("pdb",)` and that the fake never brings it along), and
+  `test_fake_structure_provider_claims_its_own_authority`; the docstring now cites the
+  tests that actually exist.
+- **A-P2-4 — the service did not re-apply the documented deterministic method
+  normalization.** `_normalized_method` and `_candidate_read` now re-bound, de-duplicate
+  case-insensitively, SORT, and bound the count (failing closed on an absurd list), so a
+  mis-wired driver cannot persist an order-dependent or over-long method string.
+  Regressions: a service-level sort/dedup test, an absurd-count failure test, and a
+  candidate-projection normalization test.
+- **A-P2-5 — `coordinate_format` was never validated before persistence.** A driver
+  returning `"pdb"` would have been stored under the canonical mmCIF content type.
+  **Fixed** in `_normalized_snapshot`, which now rejects any non-`mmcif` format, with a
+  regression.
+- **A-P2-6 — the content type was treated as part of the immutable identity assertion
+  for content-addressed internal artifacts**, so byte-identical content previously
+  stored under a different media type made a legitimate import fail with a
+  non-actionable conflict. **Fixed** by making the content-type comparison
+  presentation-only when `authority=revolab` AND `native_id == checksum` (checksum and
+  size are still enforced, and a provider-authority artifact keeps the strict
+  comparison), with a regression covering both halves.
+- **B-P2-3 — `_entry_methods` silently returned "no method" for a present but
+  unparseable `exptl` collection.** **Fixed** to distinguish present-but-unparseable
+  (fail closed) from genuinely empty (absent), with regressions for both.
+- **B-P2-4 — a latent Search/Data identifier-key mismatch.** The metadata index was
+  keyed by the provider-confirmed id while the lookup used the API-lookup alias, so a
+  future switch to extended primary ids would have turned a search hit into "no
+  resolvable metadata". **Fixed** by indexing under BOTH forms, with a regression where
+  the hit is classic and the confirmed id is the extended form.
+- **B-P2-5 — the 128 MiB coordinate ceiling was enforced only in the driver**, despite
+  the documentation stating the application service re-applies the canonical bounds.
+  **Fixed** by re-applying `MAX_STRUCTURE_COORDINATE_BYTES` in `_normalized_snapshot`,
+  with a bounded regression.
+- **B-P2-6 — the `application/octet-stream` premise was not reproducible for the exact
+  URL used.** **Fixed** by citing the specific RCSB page for that documented statement
+  and recording that the exact `.cif` URL live-answers `chemical/x-cif`; the conclusion
+  (never adopt the provider header as the scientific type) is unchanged and is now
+  better grounded.
+- **C-P2-2 — the SQLite rollback test did not acknowledge the possible orphan blob.**
+  **Fixed** by stating it explicitly and additionally asserting that no orphan
+  `GlobalResourceRegistry` row survives the rollback.
+- **C-P2-3 — the browser slice omitted TODO §80's "provider may then be disabled" step.**
+  **Fixed** by adding it to the main scenario: a subsequent provider outage blocks only
+  NEW discovery while the imported Structure, its coordinate bytes, and its Project
+  Search visibility all still work.
+- **C-P2-4 — two browser context assertions could not fail.** **Fixed** by replacing them
+  with assertions that can: the coordinate artifact's `references` entry must expose
+  exactly its bounded identity-card key set (adding a byte-bearing field fails), the
+  revision projection must expose no `payload`, and an interior content line of the
+  actually-imported mmCIF must be absent from the serialized context.
+
+No finding was dismissed as style-only; every reported item was either fixed or (for the
+two doc/verification-truth items) fixed by making the claim executable. Nothing was
+silently dropped.
+
+### Delta review
+
+Because the fixes materially change provider/network semantics (B-P1-1), the shared
+content-addressed concurrency path and its verification (C-P1-1), and the application
+service's normalization/validation surface (A-P2-4/5/6, B-P2-3/5), additional fresh
+read-only delta reviewers were run against the fixed head, within the 3–5 total bound
+required by TODO §91.
 
 ## Explicit deferrals (Phase 15)
 

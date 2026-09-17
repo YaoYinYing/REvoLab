@@ -67,9 +67,10 @@ class Settings(BaseSettings):
     # The public RCSB PDB Search/Data/file services are unauthenticated, no
     # numeric rate quota is published, and no numeric pacing constant is invented:
     # the driver makes exactly TWO bounded API requests per search (one Search API
-    # query plus one batched Data API metadata query) and TWO API requests plus one
-    # static-file coordinate download per import, well inside the documented "a
-    # handful of requests per second" guidance, with no retry and no pagination.
+    # query plus one batched Data API metadata query) and exactly ONE batched Data
+    # API request plus ONE static-file coordinate download per import, well inside
+    # the documented "a handful of requests per second" guidance, with no retry and
+    # no pagination.
     #
     # Like the NCBI/UniProt providers, the real remote driver is installed only
     # when the deployment explicitly enables it: a zero-config deployment keeps the

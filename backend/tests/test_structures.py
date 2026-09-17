@@ -22,6 +22,7 @@ from revolab import search as search_service
 from revolab import structures as structure_service
 from revolab.agent.builder import build_context
 from revolab.capabilities import (
+    MAX_STRUCTURE_METHODS,
     MAX_STRUCTURE_RESULT_LIMIT,
     CapabilityError,
     ResolvedStructureRecord,
@@ -155,7 +156,12 @@ def _edge_tuples(session) -> set[tuple[str, Any, Any]]:
 
 
 def _record(
-    native_id: str, *, size: int = 0, resolution: float | None = 1.5
+    native_id: str,
+    *,
+    size: int = 0,
+    resolution: float | None = 1.5,
+    methods: tuple[str, ...] = ("X-RAY DIFFRACTION",),
+    coordinate_format: str = "mmcif",
 ) -> ResolvedStructureRecord:
     """One synthetic provider record for the local test doubles."""
     coordinates = deterministic_coordinates(native_id)
@@ -165,10 +171,10 @@ def _record(
         provider_key=FAKE_STRUCTURE_PROVIDER_KEY,
         authority=FAKE_STRUCTURE_AUTHORITY,
         native_id=native_id,
-        coordinate_format="mmcif",
+        coordinate_format=coordinate_format,
         coordinate_bytes=coordinates,
         title=f"Synthetic {native_id}",
-        experimental_methods=("X-RAY DIFFRACTION",),
+        experimental_methods=methods,
         resolution_angstrom=resolution,
         entry_revision_major=1,
         entry_revision_minor=0,
@@ -231,7 +237,6 @@ class _StaticDriver:
     display_name = "Static structure provider"
     description = None
     required_credential_kinds: tuple[str, ...] = ()
-    authorities: tuple[str, ...] = (FAKE_STRUCTURE_AUTHORITY,)
 
     def __init__(
         self,
@@ -240,12 +245,18 @@ class _StaticDriver:
         name: str = FAKE_STRUCTURE_PROVIDER_KEY,
         substitute: str | None = None,
         alias: dict[str, str] | None = None,
+        authorities: tuple[str, ...] = (FAKE_STRUCTURE_AUTHORITY,),
+        authority: str | None = None,
     ) -> None:
         self.name = name
-        # A driver's capability always attributes records to its OWN provider key,
-        # exactly as the real driver constructs them.
+        self.authorities = authorities
+        target_authority = authority or authorities[0]
+        # A driver's capability always attributes records to its OWN provider key and
+        # durable authority, exactly as the real driver constructs them.
         owned = {
-            key: dataclasses.replace(record, provider_key=name)
+            key: dataclasses.replace(
+                record, provider_key=name, authority=target_authority
+            )
             for key, record in records.items()
         }
         self.capabilities = {
@@ -1108,3 +1119,257 @@ def test_an_incompatible_existing_artifact_identity_fails_closed(session, store)
             size=1,
             checksum=hashlib.sha256(payload).hexdigest(),
         )
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 fixes
+# ---------------------------------------------------------------------------
+
+
+def test_a_lost_insert_if_absent_cleans_up_its_own_registry_row(session, store):
+    """The lost-race cleanup branch is genuinely exercised (round-1 P1).
+
+    `create_internal_artifact` short-circuits on its own read-then-insert, so the
+    cleanup at the END of the atomic create path can only be reached by calling the
+    domain operation directly. Removing the cleanup leaves an orphan registry row and
+    fails this test.
+    """
+    from revolab.domain import provenance
+    from revolab.models import GlobalResourceRegistry
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    data = b"data_LOST\n#\n_entry.id LOST\n"
+    first = services.create_internal_artifact(
+        session, actor, project.id, store, data, content_type="chemical/x-cif"
+    )
+    before_registry = _count(session, GlobalResourceRegistry)
+    assert first.checksum is not None
+
+    loser = provenance.create_artifact_reference_row_if_absent(
+        session,
+        "revolab",
+        first.native_id,
+        content_type="chemical/x-cif",
+        size=first.size,
+        checksum=first.checksum,
+        version_id="",
+    )
+    assert loser is None
+    assert _count(session, ArtifactReference) == 1
+    assert _count(session, GlobalResourceRegistry) == before_registry
+
+
+def test_a_content_addressed_artifact_reuse_treats_content_type_as_presentation(session, store):
+    """Same content-addressed bytes under a different media type must not conflict.
+
+    The bytes are the immutable identity assertion; the content type is presentation
+    metadata over them (documented). A provider-authority artifact still keeps the
+    strict comparison, because there the content type IS provider-declared data.
+    """
+    actor = _actor(session)
+    project = _project(session, actor)
+    payload = b"data_TYPE\n#\n"
+    first = services.create_internal_artifact(
+        session, actor, project.id, store, payload, content_type="chemical/x-cif"
+    )
+    assert first.checksum is not None
+    reused = services._persist_artifact_reference_trusted(
+        session,
+        actor,
+        project.id,
+        "revolab",
+        first.native_id,
+        content_type="text/plain",
+        size=first.size,
+        checksum=first.checksum,
+    )
+    assert reused.artifact_id == first.artifact_id
+    assert reused.content_type == "chemical/x-cif"
+    assert _count(session, ArtifactReference) == 1
+
+    # A provider-authority artifact keeps the strict comparison.
+    services._persist_artifact_reference_trusted(
+        session,
+        actor,
+        project.id,
+        "rcsb",
+        "artifact-1",
+        content_type="chemical/x-cif",
+        size=1,
+        checksum="a" * 64,
+    )
+    with pytest.raises(ConflictError):
+        services._persist_artifact_reference_trusted(
+            session,
+            actor,
+            project.id,
+            "rcsb",
+            "artifact-1",
+            content_type="application/octet-stream",
+            size=1,
+            checksum="a" * 64,
+        )
+
+
+def test_a_mis_wired_driver_cannot_persist_a_non_mmcif_coordinate_format(session, store):
+    actor = _actor(session)
+    project = _project(session, actor)
+    before = _durable_state(session)
+    registry = _registry(_StaticDriver({"1ABC": _record("1ABC", coordinate_format="pdb")}))
+    with pytest.raises(ValidationError, match="canonical PDBx/mmCIF"):
+        _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    assert _durable_state(session) == before
+
+
+def test_a_mis_wired_driver_cannot_exceed_the_coordinate_ceiling(session, store, monkeypatch):
+    actor = _actor(session)
+    project = _project(session, actor)
+    before = _durable_state(session)
+    monkeypatch.setattr(structure_service, "MAX_STRUCTURE_COORDINATE_BYTES", 32)
+    registry = _registry(_StaticDriver({"1ABC": _record("1ABC", size=64)}))
+    with pytest.raises(ValidationError, match="exceed the supported size"):
+        _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    assert _durable_state(session) == before
+
+
+def test_the_service_re_applies_deterministic_method_normalization(session, store):
+    """A mis-wired driver cannot persist an unsorted or duplicated method string."""
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _registry(
+        _StaticDriver(
+            {
+                "1ABC": _record(
+                    "1ABC",
+                    methods=("X-RAY DIFFRACTION", "NEUTRON DIFFRACTION", "x-ray diffraction"),
+                )
+            }
+        )
+    )
+    result = _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    revision = session.get(ScientificObjectRevision, result.structure_revision_id)
+    assert revision is not None
+    assert revision.payload["method"] == "NEUTRON DIFFRACTION; X-RAY DIFFRACTION"
+
+
+def test_the_service_fails_closed_on_an_absurd_method_list(session, store):
+    actor = _actor(session)
+    project = _project(session, actor)
+    before = _durable_state(session)
+    registry = _registry(
+        _StaticDriver(
+            {
+                "1ABC": _record(
+                    "1ABC",
+                    methods=tuple(f"M{i}" for i in range(MAX_STRUCTURE_METHODS + 1)),
+                )
+            }
+        )
+    )
+    with pytest.raises(ValidationError, match="too many experimental methods"):
+        _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    assert _durable_state(session) == before
+
+
+def test_the_candidate_projection_re_applies_method_normalization(session, store):
+    """The candidate projection is bounded, de-duplicated and sorted too."""
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _registry(
+        _StaticDriver(
+            {
+                "1ABC": _record(
+                    "1ABC", methods=("z method", "A METHOD", "a method", "b method")
+                )
+            }
+        )
+    )
+    candidate = structure_service.discover_structures(
+        session, registry, InMemorySecretStore(), actor, project.id,
+        provider_key=FAKE_STRUCTURE_PROVIDER_KEY, query="x", limit=1,
+    ).candidates[0]
+    assert candidate.experimental_methods == ["A METHOD", "b method", "z method"]
+
+
+def test_an_alternate_resolver_for_the_pdb_authority_still_creates_the_pdb_identity(
+    session, store,
+):
+    """A future wwPDB/PDBe/PDBj resolver resolves the same `pdb:<entry>` identity.
+
+    The durable authority is `pdb`; the resolver key is recorded only as
+    `cache_metadata.resolver_provider`.
+    """
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _registry(
+        _StaticDriver(
+            {"4HHB": _record("4HHB")},
+            name="pdbmirror",
+            authorities=("pdb",),
+        )
+    )
+    result = structure_service.import_structure(
+        session,
+        registry,
+        InMemorySecretStore(),
+        store,
+        actor,
+        project.id,
+        provider_key="pdbmirror",
+        authority="pdb",
+        native_id="4HHB",
+    )
+    identity = session.scalar(
+        select(ExternalIdentity).where(ExternalIdentity.native_id == result.native_id)
+    )
+    assert identity is not None
+    assert identity.authority == "pdb"
+    assert identity.authority != "pdbmirror"
+    reference = session.get(ExternalReference, result.external_reference_id)
+    assert reference is not None and reference.cache_metadata is not None
+    assert reference.cache_metadata["resolver_provider"] == "pdbmirror"
+
+
+def test_the_real_pdb_authority_is_guarded_by_the_collision_check():
+    """The real `pdb` namespace can never be silently claimed twice.
+
+    The in-process fake claims its OWN `fakepdb` authority, so it coexists with a
+    `pdb` resolver under distinct namespaces; a SECOND `pdb` claimant is refused.
+    """
+    registry = DriverRegistry()
+    registry.register(FakeStructureDriver())
+    registry.register(_StaticDriver({"4HHB": _record("4HHB")}, name="pdbmirror", authorities=("pdb",)))
+    assert set(registry.names()) == {FAKE_STRUCTURE_PROVIDER_KEY, "pdbmirror"}
+    with pytest.raises(ValueError, match="already resolved by driver"):
+        registry.register(
+            _StaticDriver({"1CRN": _record("1CRN")}, name="pdbother", authorities=("pdb",))
+        )
+
+
+def test_the_sqlite_rollback_leaves_no_partial_db_state(session, store, monkeypatch):
+    """A staged-bundle failure leaves NO partial DB truth.
+
+    The ContentStore is NOT transactional, so an unreachable content-addressed blob
+    MAY survive the rollback. It is immutable, content-addressed, and not visible
+    Project truth, and a later identical import safely reuses it — the test above
+    proves no orphan registry ROW is left.
+    """
+    from revolab.models import GlobalResourceRegistry
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _structure_registry()
+    candidate = _discover(session, registry, actor, project).candidates[0]
+    before = _durable_state(session)
+    before_registry = _count(session, GlobalResourceRegistry)
+
+    def explode(*args: Any, **kwargs: Any):
+        raise RuntimeError("injected failure after the bundle was staged")
+
+    monkeypatch.setattr(services, "record_imported_as", explode)
+    with pytest.raises(RuntimeError, match="injected failure"):
+        _import(session, registry, actor, project, candidate.authority, candidate.native_id, store)
+    session.rollback()
+    assert _durable_state(session) == before
+    assert _count(session, GlobalResourceRegistry) == before_registry

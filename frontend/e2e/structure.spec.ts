@@ -288,12 +288,57 @@ test('structure discovery is ephemeral; explicit import takes coordinate custody
   const context = (await contextResponse.json()) as {
     series: { series_id: string }[]
     revisions: { revision_id: string }[]
+    references: { resource_id: string; [key: string]: unknown }[]
   }
   expect(context.series.map((ref) => ref.series_id)).toContain(structure.series_id)
-  // The bounded context names the Structure but NEVER carries coordinate bytes.
+
+  // The bounded context names the Structure, and the coordinate artifact appears
+  // ONLY as its bounded identity card (checksum/size/content type — never bytes).
+  // The exact key set is asserted, so adding a byte-bearing field to the reference
+  // projection FAILS here.
+  const artifactRef = context.references.find((ref) => ref.resource_id === artifactId)
+  expect(artifactRef).toBeDefined()
+  expect(Object.keys(artifactRef!).sort()).toEqual([
+    'authority',
+    'checksum',
+    'content_type',
+    'created_at',
+    'native_id',
+    'originating_run_resource_id',
+    'resource_id',
+    'resource_kind',
+    'revoked_at',
+    'size',
+    'task_type',
+    'title',
+    'version_id',
+  ])
+  // The revision projection omits payloads entirely.
+  for (const revision of context.revisions) {
+    expect(Object.keys(revision)).not.toContain('payload')
+  }
+  // No coordinate CONTENT ever enters a turn: an interior line of the actual
+  // imported mmCIF must be absent from the serialized context.
   const contextText = JSON.stringify(context)
-  expect(contextText).not.toContain('data_FAKE')
+  expect(contextText).not.toContain('_struct.title Synthetic fixture')
   expect(contextText).not.toContain('_atom_site')
+
+  // --- Provider outage is non-destructive to ALREADY-IMPORTED truth: a provider
+  // failure blocks only NEW discovery, never the imported Structure or its
+  // REvoLab-owned coordinate bytes (TODO section 80: "provider may then be
+  // disabled").
+  await openDiscoverStructures(page, project)
+  await page.getByLabel('Structure search query').fill(`unavailable ${tag}`)
+  await page.getByRole('search').getByRole('button', { name: 'Search' }).click()
+  await expect(page.getByText(/temporarily unavailable|unavailable/i).first()).toBeVisible()
+  expect(await projectObjects(request, actor, project)).toHaveLength(1)
+  const offlineContent = await request.get(
+    `${backendUrl}/api/projects/${project}/artifacts/${artifactId}/content`,
+    { headers: { 'X-Actor-Id': actor } },
+  )
+  expect(offlineContent.ok()).toBeTruthy()
+  expect((await offlineContent.body()).subarray(0, 5).toString()).toBe('data_')
+  expect(await searchHits(request, actor, project, candidate.nativeId)).not.toHaveLength(0)
 })
 
 test('a viewer may discover structures but has no import control', async ({ browser, request }) => {

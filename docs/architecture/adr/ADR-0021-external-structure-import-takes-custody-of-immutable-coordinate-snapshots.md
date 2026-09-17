@@ -219,8 +219,8 @@ truth.
 
 The canonical media type is a REvoLab assertion, not a copied transport header: the
 RCSB file-download documentation says the generic "download" URL sets
-`Content-Type: application/octet-stream`, which describes a byte stream and carries no
-scientific meaning. `chemical/x-cif` is the de-facto community media type for
+`Content-Type: application/octet-stream` (the exact `.cif` URL actually answers
+`chemical/x-cif`), and either value describes transport, not science. `chemical/x-cif` is the de-facto community media type for
 CIF-family files (and is what the RCSB file service actually serves). A file
 extension or path is never durable identity.
 
@@ -359,8 +359,9 @@ coordinate bodies at 128 MiB while streaming; parameters encoded and GraphQL ids
 bound as VARIABLES by the HTTP client. The official documentation publishes no
 numeric quota — only *"we recommend starting with a handful of requests per second"*
 and a `429` on excess — so exactly two bounded API requests are made per search and
-three bounded requests per import, with no retry, pagination, prefetch, or crawler,
-and `429`/`5xx` become a typed retryable failure.
+one batched Data API request plus one static-file coordinate download per
+import/resolve, with no retry, pagination, prefetch, or crawler, and `429`/`5xx`
+become a typed retryable failure.
 
 ### The Agent may search, but can never import or take byte custody
 
