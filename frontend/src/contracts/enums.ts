@@ -136,3 +136,10 @@ export const EVIDENCE_KIND_LITERATURE = pick(EVIDENCE_KINDS, 'literature')
 // `protein`/`sequence` object types: the Objects workspace renders `object_type`
 // generically from the wire value, so such an alias would be dead surface.
 export const CAPABILITY_KIND_PROTEIN_DISCOVERY = pick(CAPABILITY_KINDS, 'protein_discovery')
+
+// External structure aliases (Phase 15): the new capability kind comes from the
+// generated contract. Provider selection is discovered from the Provider Catalog by
+// CAPABILITY KIND, never by branching on a provider key. No alias is added for the
+// `structure` object type: the Objects workspace renders `object_type` generically
+// from the wire value, so such an alias would be dead surface.
+export const CAPABILITY_KIND_STRUCTURE_DISCOVERY = pick(CAPABILITY_KINDS, 'structure_discovery')

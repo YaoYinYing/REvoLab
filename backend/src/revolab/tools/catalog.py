@@ -4,8 +4,9 @@ One Actor in one Project resolves exactly one ToolCatalog, consumed by both the
 human workspace and the Agent (TODO.md section 16). Local tools are the closed
 `LocalToolRegistry`; remote tools are the existing Provider capabilities
 projected through the non-secret Provider Catalog (REvoCompute compute +
-artifact resolution, provider literature discovery since Phase 13, and provider
-protein discovery since Phase 14). Every registered remote read-only read is
+artifact resolution, provider literature discovery since Phase 13, provider
+protein discovery since Phase 14, and provider structure discovery since Phase 15).
+Every registered remote read-only read is
 Agent-executable; every other remote tool fails closed. Unavailable provider
 capabilities are omitted entirely; local tools are always listed with their
 current availability. This is a read-only projection: it never invokes anything.
@@ -43,6 +44,8 @@ from revolab.schemas import (
     LiteratureSearchToolInput,
     ProteinDiscoveryResultsRead,
     ProteinSearchToolInput,
+    StructureDiscoveryResultsRead,
+    StructureSearchToolInput,
     ToolCatalogRead,
     ToolDescriptorRead,
 )
@@ -264,6 +267,32 @@ def _provider_tools(
                         source=ToolSource.PROVIDER,
                         provider_key=provider_key,
                         capability_kind=CapabilityKind.PROTEIN_DISCOVERY,
+                    )
+                )
+            elif kind is CapabilityKind.STRUCTURE_DISCOVERY:
+                tools.append(
+                    _descriptor(
+                        id=f"{provider_key}{remote_reads.STRUCTURE_SEARCH_SUFFIX}",
+                        name=f"{display_name}: search structures",
+                        description=(
+                            "Search external PDB archive structures through the provider "
+                            "and return bounded, untrusted discovery candidates (no "
+                            "coordinates). Read-only: it persists nothing, downloads no "
+                            "coordinate bytes, creates no ExternalIdentity/ExternalReference/"
+                            "ArtifactReference/ScientificObject, and cannot import — an "
+                            "explicit human Import is required to create Project context "
+                            "and take byte custody."
+                        ),
+                        autonomy=AgentToolAutonomy.AUTOMATIC,
+                        execution_class=ToolExecutionClass.REMOTE,
+                        side_effect_class=ToolSideEffectClass.READ_ONLY,
+                        available=True,
+                        availability_reason=None,
+                        input_schema=_schema(StructureSearchToolInput),
+                        output_schema=_schema(StructureDiscoveryResultsRead),
+                        source=ToolSource.PROVIDER,
+                        provider_key=provider_key,
+                        capability_kind=CapabilityKind.STRUCTURE_DISCOVERY,
                     )
                 )
     return tools

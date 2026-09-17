@@ -11,10 +11,13 @@ re-derives mutation authority.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from revolab.domain import persistence, scientific_object
@@ -35,6 +38,7 @@ from revolab.models import (
     Evidence,
     ExternalReference,
     GlobalProvenanceEdge,
+    GlobalResourceRegistry,
     LiteratureReference,
     RunReference,
     ScientificObjectRevision,
@@ -108,6 +112,73 @@ def create_artifact_reference_row(
     session.add(row)
     session.flush()
     return row
+
+
+def create_artifact_reference_row_if_absent(
+    session: Session,
+    authority: str,
+    native_id: str,
+    *,
+    content_type: str | None,
+    size: int | None,
+    checksum: str | None,
+    version_id: str = "",
+) -> ArtifactReference | None:
+    """Atomically INSERT the artifact identity row, or return None if it exists.
+
+    A plain read-then-insert is not race-safe: two concurrent creators of the SAME
+    `(authority, native_id, version_id)` can both observe "not found". Catching the
+    resulting `IntegrityError` is NOT a portable recovery either — it aborts the
+    whole PostgreSQL transaction, which would destroy unrelated work for a caller
+    that composed the insert with `commit=False` (the Local Tool Runtime's derived
+    result, or a scientific import bundle), and the `Session.begin_nested()`
+    savepoint shim is not reliable on every substrate.
+
+    The insert is therefore expressed as ONE dialect-level "insert if absent"
+    statement, so a concurrent creator can never fail here and the caller's
+    transaction stays intact and uncommitted. The winner's row is left exactly as
+    it was: this never overwrites an existing immutable assertion.
+    """
+    resource_id = persistence.new_id()
+    registry = GlobalResourceRegistry(
+        resource_id=resource_id, resource_kind=ResourceKind.ARTIFACT_REFERENCE.value
+    )
+    session.add(registry)
+    session.flush()
+    values: dict[str, Any] = {
+        "artifact_id": resource_id,
+        "authority": authority,
+        "native_id": native_id,
+        "content_type": content_type,
+        "size": size,
+        "checksum": checksum,
+        "version_id": version_id,
+    }
+    identity_columns = ["authority", "native_id", "version_id"]
+    dialect = session.get_bind().dialect.name
+    statement: Any
+    if dialect == "postgresql":
+        statement = (
+            pg_insert(ArtifactReference)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=identity_columns)
+        )
+    elif dialect == "sqlite":
+        statement = (
+            sqlite_insert(ArtifactReference)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=identity_columns)
+        )
+    else:  # pragma: no cover - an unsupported substrate fails closed
+        raise ValidationError(f"unsupported database dialect {dialect!r}")
+    inserted = cast(CursorResult[Any], session.execute(statement)).rowcount
+    if not inserted:
+        # Our own unused registry row must not survive a lost race.
+        session.delete(registry)
+        session.flush()
+        return None
+    session.flush()
+    return session.get(ArtifactReference, resource_id)
 
 
 def create_literature_reference_row(

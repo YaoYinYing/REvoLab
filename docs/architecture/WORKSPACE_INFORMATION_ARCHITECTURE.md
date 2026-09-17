@@ -104,6 +104,36 @@ code is the legal attribution of the data source, which is presentation, not
 capability semantics. Normative semantics:
 `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
 
+**Objects / Discover structures (Phase 15, implemented):** the same `Objects` workspace
+gains a third compact panel — still not a new top-level entry and still not a generic
+external-database dashboard:
+
+```text
+Objects
+├ Project objects      what REvoLab already knows (create + collection)
+├ Discover proteins    external protein discovery + explicit import
+└ Discover structures  external PDB structure discovery + explicit import
+```
+
+The provider is chosen from the Provider Catalog filtered by the backend-owned
+`structure_discovery` capability kind (never by a hard-coded provider key); a bounded
+query returns external candidates labelled `external · not yet in Project`, each with
+PDB ID, title, experimental method, resolution, and release date. Discovery downloads
+no coordinates, so it is cheap and ephemeral. An explicit `Import to Project`
+(owner/member only) re-resolves the identity server-side, downloads the bounded
+canonical PDBx/mmCIF snapshot, takes **immutable ContentStore byte custody**, and
+creates the canonical **Structure** ScientificObject plus its identity/provenance
+graph; the surface then shows `Imported to Project`, `Open Structure`, and
+`Coordinate artifact available`. The **Structure detail derives the coordinate
+artifact by provenance traversal** (the `imported_as` edge from the artifact to the
+revision) and reads its checksum/size from the existing resource surface — there is no
+second Structure detail, no persisted `coordinates_ref` for UI convenience, and no raw
+coordinate text or 3D viewer in this phase. Import alone never creates Evidence, and
+the imported Structure becomes visible to `Search` with no index. A viewer sees the
+discovery surface but no import control. The only provider-specific code is the legal
+attribution of the data source, which is presentation, not capability semantics.
+Normative semantics: `docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md` (ADR-0021).
+
 ## Key pages (what each answers scientifically)
 
 - **Project Overview** — "What is this project's current state, and what should I do

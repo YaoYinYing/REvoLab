@@ -5,6 +5,7 @@ import {
   type ProjectApi,
   type ProteinDiscoveryQuery,
   type SearchQuery,
+  type StructureDiscoveryQuery,
 } from './backend'
 import { apiErrorMessage } from './client'
 import type {
@@ -30,6 +31,7 @@ import type {
   ProviderRead,
   ReferenceRead,
   ResourceKind,
+  StructureDiscoveryResultsRead,
   ToolCatalogRead,
 } from './types'
 import { useAsync, type AsyncState } from '../hooks/useAsync'
@@ -301,6 +303,34 @@ export function useProteinDiscovery(
             .then((res) =>
               value<ProteinDiscoveryResultsRead>(
                 res as ApiResult<ProteinDiscoveryResultsRead>,
+              ),
+            )
+        : Promise.resolve(null),
+    [actorId, projectId, requestKey],
+  )
+}
+
+/**
+ * Bounded read-only external PDB structure discovery (Phase 15). `request === null`
+ * means "nothing submitted yet" — discovery is an explicit user action, and a page
+ * reload legitimately requires searching again (candidates are never cached). The
+ * result is EPHEMERAL external data, never Project context, and it carries no
+ * coordinate bytes.
+ */
+export function useStructureDiscovery(
+  actorId: string | null,
+  projectId: string | null,
+  request: StructureDiscoveryQuery | null,
+): AsyncState<StructureDiscoveryResultsRead | null> {
+  const requestKey = JSON.stringify(request ?? {})
+  return useAsync(
+    () =>
+      actorId && projectId && request
+        ? projectApi(actorId)
+            .discoverStructures(projectId, request)
+            .then((res) =>
+              value<StructureDiscoveryResultsRead>(
+                res as ApiResult<StructureDiscoveryResultsRead>,
               ),
             )
         : Promise.resolve(null),

@@ -157,6 +157,29 @@ owner/member may import. The real UniProt driver is installed only when the
 deployment opts in (`REVOLAB_UNIPROT_DISCOVERY_ENABLED`), exactly like NCBI. Normative
 semantics: `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
 
+`StructureDiscoveryCapability` was added by Phase 15 and is realized by the RCSB PDB
+driver:
+
+```python
+class StructureDiscoveryCapability(Capability, Protocol):   # RCSB PDB (read-only)
+    def search(self, query, limit, credentials: CredentialLease) -> StructureSearchResult: ...
+    def resolve(self, authority, native_id, credentials: CredentialLease) -> ResolvedStructureRecord: ...
+```
+
+`STRUCTURE_DISCOVERY` is deliberately narrow and read-only. `search` returns EPHEMERAL
+provider-neutral candidates (bounded presentation fields, and deliberately **no
+coordinate bytes**); `resolve` re-reads ONE archive entry by its durable `(authority,
+native_id)` identity AND returns that entry's canonical PDBx/mmCIF bytes, because an
+explicit import must take custody of exactly what the CURRENT provider served.
+Downloading coordinates is a READ, not a write: neither method persists anything, and
+byte custody happens only in the explicit human Import. A candidate is never a
+ScientificObject, an `ExternalIdentity`, an `ArtifactReference`, a `SearchHit`,
+Evidence, or Project truth. It is registered in `READ_ONLY_CAPABILITY_KINDS`, so any
+readable membership may discover while only owner/member may import. The real RCSB
+driver is installed only when the deployment opts in
+(`REVOLAB_RCSB_DISCOVERY_ENABLED`), exactly like NCBI/UniProt. Normative semantics:
+`docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md` (ADR-0021).
+
 ## Schema-as-data discovery
 
 - **Per-capability JSON Schema as data, returned verbatim.** Every capability

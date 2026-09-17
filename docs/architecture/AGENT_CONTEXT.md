@@ -121,6 +121,25 @@ Protein/Sequence enters a later turn only through the EXISTING explicit
 payloads, a large imported Sequence can never dump its content into a turn. Normative
 detail: `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
 
+**External structure discovery (Phase 15).** The Agent also has a read-only
+`{provider}.structure.search` Tool (`automatic`/`remote`/`read_only`) that discovers
+PDB archive entries REvoLab does not yet know about. It calls the SAME application
+discovery service the human Objects workspace uses, returns bounded EPHEMERAL
+`StructureCandidate`s (bounded presentation fields, and deliberately **no coordinate
+bytes**), and performs zero persistence: it never creates an `ExternalIdentity`,
+`ExternalReference`, `ArtifactReference`, ScientificObject, Evidence, Decision, or
+`ActionRequest`, and it never enlarges what this turn may read. It also downloads **no
+coordinates** — byte custody is exclusively the explicit human Import. Candidate text
+is untrusted external data: hostile content can change neither authority nor the
+ToolCatalog, and the Tool input has no URL/host/GraphQL/import/coordinate field. The
+Agent has **no** import Tool in Phase 15: importing is an explicit human action, and
+`ActionRequest` is deliberately not generalized for it. An imported Structure enters a
+later turn only through the EXISTING explicit `ContextSelection` → `ContextBuilder`
+flow, and because `RevisionRefRead` omits payloads, a Structure contributes bounded
+metadata only — **coordinate bytes are NEVER injected into a turn**, they remain
+ContentStore artifact bytes reachable through the canonical artifact boundaries.
+Normative detail: `docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md` (ADR-0021).
+
 ## Representing objects / evidence / decisions to the Agent
 
 As **typed, addressable references**, not prose dumps, and **not a third domain model**:

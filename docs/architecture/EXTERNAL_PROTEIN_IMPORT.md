@@ -1,10 +1,11 @@
 # External Protein Discovery & Scientific Object Import
 
-> **Status: Proposed — pending human acceptance** (Phase 14; normative owner of the
+> **Status: Accepted** (Phase 14; human-accepted during PR #15 review; squash-merged
+> into `main` as `93e2b221484446de5ca63db318a8099cc8ca799e`; normative owner of the
 > external-protein discovery/import sub-boundary). Related ADR:
 > `adr/ADR-0020-external-protein-resolution-imports-immutable-snapshots.md`
-> (**Proposed — pending human acceptance**). Both are promoted only by explicit human
-> acceptance at PR review; a green test suite does not promote them.
+> (**Accepted**). The PR #15 human review and merge is the explicit acceptance event;
+> a green test suite does not promote either.
 >
 > This document is normative for external protein discovery and import. It is an
 > **application sub-boundary consumed by Presentation and Agent Context** — the same

@@ -497,3 +497,155 @@ class ProteinDiscoveryCapability(Protocol):
     def resolve(
         self, authority: str, native_id: str, credentials: CredentialLease
     ) -> ResolvedProteinRecord: ...
+
+
+# ---------------------------------------------------------------------------
+# Structure discovery capability (Phase 15)
+#
+# The provider-neutral boundary for "discover PDB archive structures REvoLab does
+# not yet know, and take custody of ONE immutable PDBx/mmCIF coordinate snapshot".
+# A provider realizing this protocol returns EPHEMERAL candidates and, for an
+# explicit import, a CURRENTLY RE-RESOLVED record whose coordinate bytes are the
+# exact archive snapshot the import will own. Provider vocabulary (the RCSB Search
+# API JSON query DSL, the Data API GraphQL schema, RCSB attribute paths, PDB
+# identifier grammar, file-download routes) stays inside the driver.
+#
+# `search` and `resolve` are both read-only and persist NOTHING: taking byte
+# custody is an explicit human Import step performed by the application service,
+# never by the capability.
+# ---------------------------------------------------------------------------
+
+# Provider-neutral ceilings for one structure discovery call. They are the SINGLE
+# canonical values: the driver enforces them at the wire boundary and the
+# application service re-applies them to the projection, so a misbehaving driver
+# cannot widen the Agent/frontend surface.
+MAX_STRUCTURE_QUERY_CHARS = 300
+DEFAULT_STRUCTURE_RESULT_LIMIT = 10
+MAX_STRUCTURE_RESULT_LIMIT = 20
+MAX_STRUCTURE_TITLE_CHARS = 500
+MAX_STRUCTURE_METHOD_CHARS = 200
+# A deposited entry can legitimately report more than one experimental method
+# (e.g. X-ray + neutron). The set is bounded so an absurd provider body cannot
+# inflate the normalized payload.
+MAX_STRUCTURE_METHODS = 8
+MAX_STRUCTURE_REVISION_TEXT_CHARS = 100
+
+# Durable external identity bounds, mirroring the persisted columns
+# (`external_identities.authority` varchar(100), `.native_id` varchar(300)).
+MAX_STRUCTURE_AUTHORITY_CHARS = 100
+MAX_STRUCTURE_NATIVE_ID_CHARS = 300
+
+# The ONE canonical semantic media type REvoLab records for an imported PDBx/mmCIF
+# coordinate snapshot. It is a REvoLab assertion, NOT a copy of the transport
+# header: the RCSB file-download documentation states that the generic "download"
+# short-style URL sets `Content-Type: application/octet-stream`, which describes a
+# byte stream and carries no scientific meaning. `chemical/x-cif` is the de-facto
+# community media type for CIF-family files (and is the type the RCSB file service
+# itself serves for `.cif`); the `x-` prefix marks it as a non-IANA convention, and
+# PDBx/mmCIF has no IANA-registered type. The content type is presentation metadata
+# over the bytes: durable byte identity is the checksum, and scientific origin is
+# the `pdb:<entry>` ExternalIdentity + `imported_as` provenance.
+STRUCTURE_COORDINATE_CONTENT_TYPE = "chemical/x-cif"
+
+# The canonical coordinate-format discriminator on a ResolvedStructureRecord.
+# Phase 15 imports PDBx/mmCIF only; legacy `.pdb` and BCIF are never imported.
+STRUCTURE_COORDINATE_FORMAT = "mmcif"
+
+# The operational/persistence ceiling for ONE imported canonical PDBx/mmCIF
+# coordinate snapshot (128 MiB). Observed archive entry files are well under a
+# megabyte for ordinary proteins and tens of MiB for the largest ribosomal/viral
+# assemblies, so this is comfortably above the largest deposited entry coordinate
+# file while bounding the memory and time a single import can consume. A structure
+# larger than this fails EXPLICITLY; coordinates are never truncated.
+MAX_STRUCTURE_COORDINATE_BYTES = 134_217_728  # 128 MiB
+
+
+@dataclass(frozen=True)
+class StructureCandidate:
+    """One EPHEMERAL external structure discovery candidate (Phase 15).
+
+    This is provider-neutral presentation data returned by a read-only external
+    lookup. It is deliberately NOT a ScientificObject, `ExternalIdentity`,
+    `ExternalReference`, `ArtifactReference`, `Evidence`, `SearchHit`, or Project
+    truth, and searching never persists it. It carries NO coordinate bytes. All
+    text fields are untrusted external data bounded by the driver.
+
+    `authority` is the DURABLE identity namespace (`pdb`), never the
+    resolver/provider key: another resolver may resolve the same
+    `(authority, native_id)` identity without changing any stored reference.
+    """
+
+    provider_key: str
+    authority: str
+    native_id: str
+    title: str | None = None
+    experimental_methods: tuple[str, ...] = ()
+    resolution_angstrom: float | None = None
+    release_date: str | None = None
+    polymer_entity_count: int | None = None
+
+
+@dataclass(frozen=True)
+class StructureSearchResult:
+    """The bounded result of one external structure discovery search (ephemeral)."""
+
+    provider_key: str
+    candidates: tuple[StructureCandidate, ...]
+
+
+@dataclass(frozen=True)
+class ResolvedStructureRecord:
+    """The CURRENT provider record an explicit import re-resolves (Phase 15).
+
+    This is the canonical, provider-neutral scientific snapshot input: everything
+    needed to build ONE `Structure` ScientificObject plus its owned coordinate
+    artifact, and nothing else. It is NOT durable truth by itself — the
+    application service validates it, takes ContentStore custody of
+    `coordinate_bytes`, and turns it into an immutable revision, an
+    `ExternalReference` snapshot, an internal `ArtifactReference`, and typed
+    provenance edges.
+
+    `coordinate_bytes` is the EXACT canonical PDBx/mmCIF archive snapshot for this
+    entry. It is hidden from `repr` so it can never leak through a log line, and it
+    is bounded by `MAX_STRUCTURE_COORDINATE_BYTES` at the wire boundary.
+    """
+
+    provider_key: str
+    authority: str
+    native_id: str
+    coordinate_format: str
+    coordinate_bytes: bytes = field(repr=False)
+    title: str | None = None
+    experimental_methods: tuple[str, ...] = ()
+    resolution_angstrom: float | None = None
+    entry_revision_major: int | None = None
+    entry_revision_minor: int | None = None
+    entry_revision_date: str | None = None
+
+
+class StructureDiscoveryCapability(Protocol):
+    """The executable external-structure discovery + resolution boundary.
+
+    `search` is a bounded read-only lookup by opaque provider search text;
+    `resolve` re-reads ONE archive entry by its durable `(authority, native_id)`
+    identity AND returns that entry's canonical PDBx/mmCIF coordinate bytes, so an
+    explicit import never trusts client-supplied scientific metadata or coordinate
+    content. Neither method persists anything, and neither accepts a URL, host,
+    scheme, port, proxy, or HTTP method.
+
+    Phase 15 resolves EXPERIMENTAL PDB archive entries only: a Computed Structure
+    Model (CSM) identifier, an entry whose determination methodology is not
+    `experimental`, or an unknown identifier fails closed as a typed capability
+    error rather than being imported.
+    """
+
+    provider_key: str
+    kind: CapabilityKind
+
+    def search(
+        self, query: str, limit: int, credentials: CredentialLease
+    ) -> StructureSearchResult: ...
+
+    def resolve(
+        self, authority: str, native_id: str, credentials: CredentialLease
+    ) -> ResolvedStructureRecord: ...

@@ -99,6 +99,7 @@ READ_ONLY_CAPABILITY_KINDS = frozenset(
         CapabilityKind.ARTIFACT_RESOLUTION,
         CapabilityKind.LITERATURE_DISCOVERY,
         CapabilityKind.PROTEIN_DISCOVERY,
+        CapabilityKind.STRUCTURE_DISCOVERY,
     }
 )
 
@@ -770,29 +771,46 @@ def _persist_artifact_reference_trusted(
     reached from a client-controlled identity input.
 
     `commit=False` leaves the link/stewardship uncommitted so a caller in the
-    same process (the Local Tool Runtime) can record the ToolInvocation row in
-    the SAME transaction, then commit once."""
+    same process (the Local Tool Runtime, or the Phase-15 scientific import
+    bundle) can record more rows in the SAME transaction, then commit once.
+
+    Concurrency: this is read-then-insert, so two concurrent creators of the SAME
+    `(authority, native_id, version_id)` can both observe "not found". The create
+    is therefore delegated to the ONE atomic dialect-level insert-if-absent
+    (`provenance.create_artifact_reference_row_if_absent`), so a true PostgreSQL
+    concurrent content-addressed import converges on ONE `ArtifactReference`
+    instead of leaking a raw `IntegrityError` — and, crucially, the loser's
+    transaction is never aborted, which keeps the `commit=False` composition
+    contract intact. Stewardship is never transferred to the loser: the reuse path
+    only links.
+    """
     mutation_capable_membership(session, actor_id, project_id)
     existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
-    if existing is not None:
-        provenance.assert_reference_compatible(
-            existing, checksum=checksum, size=size, content_type=content_type
+    if existing is None:
+        created = provenance.create_artifact_reference_row_if_absent(
+            session,
+            authority,
+            native_id,
+            content_type=content_type,
+            size=size,
+            checksum=checksum,
+            version_id=version_id,
         )
-        persistence.link(session, project_id, existing.artifact_id)
-        if commit:
-            session.commit()
-            session.refresh(existing)
-        return existing
-    row = provenance.create_artifact_reference_row(
-        session,
-        authority,
-        native_id,
-        content_type=content_type,
-        size=size,
-        checksum=checksum,
-        version_id=version_id,
+        if created is not None:
+            return _finalize_reference(session, project_id, created.artifact_id, created, commit=commit)
+        existing = provenance.find_artifact_reference(session, authority, native_id, version_id)
+        if existing is None:
+            # Lost the race and the winner is not readable yet: not a recoverable
+            # duplicate-identity state.
+            raise ConflictError("artifact reference conflicted with a concurrent create; retry")
+    provenance.assert_reference_compatible(
+        existing, checksum=checksum, size=size, content_type=content_type
     )
-    return _finalize_reference(session, project_id, row.artifact_id, row, commit=commit)
+    persistence.link(session, project_id, existing.artifact_id)
+    if commit:
+        session.commit()
+        session.refresh(existing)
+    return existing
 
 
 def create_run_reference(

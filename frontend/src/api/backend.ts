@@ -48,6 +48,8 @@ type LiteratureImportCreate =
   paths['/api/projects/{project_id}/literature/import']['post']['requestBody']['content']['application/json']
 type ProteinImportCreate =
   paths['/api/projects/{project_id}/proteins/import']['post']['requestBody']['content']['application/json']
+type StructureImportCreate =
+  paths['/api/projects/{project_id}/structures/import']['post']['requestBody']['content']['application/json']
 
 /**
  * The typed wire query of the Project search endpoint. `target_kinds` is derived
@@ -79,6 +81,7 @@ export type {
   ProjectCreate,
   ProjectPatch,
   ResourceShareCreate,
+  StructureImportCreate,
   ToolInvocationCreate,
 }
 
@@ -96,6 +99,14 @@ export type LiteratureDiscoveryQuery = NonNullable<
  */
 export type ProteinDiscoveryQuery = NonNullable<
   paths['/api/projects/{project_id}/proteins/discover']['get']['parameters']['query']
+>
+
+/**
+ * The typed wire query of the external structure discovery endpoint. `query` is
+ * opaque provider search text; Core never parses the RCSB Search API query language.
+ */
+export type StructureDiscoveryQuery = NonNullable<
+  paths['/api/projects/{project_id}/structures/discover']['get']['parameters']['query']
 >
 
 /**
@@ -291,6 +302,32 @@ export function projectApi(actorId: string) {
      */
     importProtein: (projectId: string, body: ProteinImportCreate) =>
       api.POST('/api/projects/{project_id}/proteins/import', {
+        headers,
+        params: { path: { project_id: projectId } },
+        body,
+      }),
+
+    /**
+     * Bounded read-only external PDB structure discovery (Phase 15). Returns
+     * EPHEMERAL candidates — never Project truth, never a `SearchHit`, and never
+     * any coordinate bytes. It persists nothing and downloads nothing, so the
+     * caller must not treat the result as durable.
+     */
+    discoverStructures: (projectId: string, query: StructureDiscoveryQuery) =>
+      api.GET('/api/projects/{project_id}/structures/discover', {
+        headers,
+        params: { path: { project_id: projectId }, query },
+      }),
+
+    /**
+     * Explicit human import of ONE PDB archive entry by stable identity. The server
+     * re-resolves it at the current provider, downloads the canonical PDBx/mmCIF
+     * snapshot under a hard bound, takes immutable ContentStore custody of the
+     * bytes, and builds the canonical Structure itself; the browser never supplies
+     * the title, method, resolution, coordinates, or checksum.
+     */
+    importStructure: (projectId: string, body: StructureImportCreate) =>
+      api.POST('/api/projects/{project_id}/structures/import', {
         headers,
         params: { path: { project_id: projectId } },
         body,

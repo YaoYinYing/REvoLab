@@ -150,6 +150,20 @@ mutable draft state, not graph edges yet).
   ScientificObjectRevision` — an external output artifact or an external lookup
   identity is imported as a specific immutable REvoLab revision (source kind stored on
   the edge).
+  Worked example (Phase 15): one explicit PDB structure import creates **two**
+  `imported_as` edges onto the SAME `StructureRevision`, because they assert two
+  different truths:
+
+  ```text
+  ExternalReference(pdb snapshot)                               --imported_as--> StructureRevision
+  ArtifactReference(authority=revolab, content-addressed mmCIF) --imported_as--> same StructureRevision
+  ```
+
+  The `ExternalReference` is the scientific external source; the `ArtifactReference`
+  is the exact byte content (REvoLab byte custody, never scientific origin). Both
+  endpoint kinds were already legal for #7, so no `RelationType` and no
+  `_GLOBAL_EDGE_SHAPE` change is needed. Do not invent `has_coordinates`, `from_pdb`,
+  `coordinate_file_of`, or `downloaded_from`.
 - **`generated_by` is DERIVED, not persisted (round 5).** The reverse view "which run
   generated this imported revision" is the composite traversal — it is not a stored
   `RelationType` and cannot drift out of sync with the two stored edges:

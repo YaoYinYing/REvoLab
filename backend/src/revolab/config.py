@@ -63,6 +63,28 @@ class Settings(BaseSettings):
     # registry refuses a second resolver claiming `uniprot`, and this fake is refused
     # outright when `environment == "production"`.
     e2e_fake_protein: bool = False
+    # --- Phase-15 RCSB PDB structure-discovery provider (server-owned) ---
+    # The public RCSB PDB Search/Data/file services are unauthenticated, no
+    # numeric rate quota is published, and no numeric pacing constant is invented:
+    # the driver makes exactly TWO bounded API requests per search (one Search API
+    # query plus one batched Data API metadata query) and TWO API requests plus one
+    # static-file coordinate download per import, well inside the documented "a
+    # handful of requests per second" guidance, with no retry and no pagination.
+    #
+    # Like the NCBI/UniProt providers, the real remote driver is installed only
+    # when the deployment explicitly enables it: a zero-config deployment keeps the
+    # Provider Catalog the honest empty set, and CI/browser slices never perform a
+    # live RCSB request (they use the in-process fake below).
+    rcsb_discovery_enabled: bool = False
+    rcsb_timeout_seconds: float = 15.0
+    # Opt-in in-process fake STRUCTURE provider for application/browser slices.
+    # Default OFF in production; it realizes the SAME capability boundary through
+    # the SAME Driver/Capability registry as the real driver and claims its OWN
+    # `fakepdb` authority, so a synthetic fixture identity can never be mistaken for
+    # a real `pdb` entry. The real `pdb` namespace stays guarded: the registry
+    # refuses a second resolver claiming `pdb`, and this fake is refused outright
+    # when `environment == "production"`.
+    e2e_fake_structure: bool = False
     # Explicit runtime root for the canonical skill tree. Defaults to the repo
     # `.agents/skills/` during development; a packaged deployment MUST set this
     # to a shipped skill root (the repo-relative path is not part of the wheel).

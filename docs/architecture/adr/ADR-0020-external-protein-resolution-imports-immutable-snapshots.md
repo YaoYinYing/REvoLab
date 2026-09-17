@@ -1,8 +1,9 @@
 # ADR-0020: External Protein Resolution Imports Immutable Scientific Snapshots
 
-> **Status: Proposed — pending human acceptance.**
-> Accepted only by explicit human acceptance at PR review; a green test suite does
-> not promote this ADR's status.
+> **Status: Accepted** (Phase 14; human-accepted during PR #15 review; squash-merged
+> into `main` as `93e2b221484446de5ca63db318a8099cc8ca799e`). The PR #15 human review
+> and merge is the explicit acceptance event; a green test suite never promotes an
+> ADR's status.
 
 ## Context
 

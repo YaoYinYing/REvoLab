@@ -138,6 +138,22 @@ There is deliberately **no** `{provider}.protein.import` Tool, and `ActionReques
 not generalized to carry one: creating ScientificObjects from an external record
 remains an explicit human Import.
 
+Phase 15 likewise adds no new LOCAL tool and exactly one more REMOTE read-only tool:
+
+```text
+{provider}.structure.search      external PDB structure discovery (remote, read_only,
+                                 automatic; input {query, limit} — no url/host/graphql/
+                                 import/coordinate field)
+```
+
+`StructureDiscoveryCapability.resolve` does return coordinate bytes, but the Tool is
+bound to `search` only, which downloads **nothing**: taking byte custody is an
+explicit human Import, and there is deliberately **no** `{provider}.structure.import`
+Tool. `ActionRequest` is again not generalized. The shared catalog remains the ONE
+tool-definition surface, so both the human discovery panel and the Agent see the same
+descriptor and the same bounded input schema. Normative semantics:
+`docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md` (ADR-0021).
+
 `project.search` is the only Phase-12 addition. It is `automatic` / `local` /
 `read_only` and calls the SAME authorization-aware search application service the
 human workspace uses (never an Agent-only search engine). Its input is a bounded

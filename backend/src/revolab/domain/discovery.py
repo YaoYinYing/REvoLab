@@ -29,6 +29,9 @@ from revolab.capabilities import (
     ProteinDiscoveryCapability,
     ProteinSearchResult,
     ResolvedProteinRecord,
+    ResolvedStructureRecord,
+    StructureDiscoveryCapability,
+    StructureSearchResult,
 )
 from revolab.credentials import CredentialLease
 from revolab.domain.compute import prepared_capability
@@ -190,6 +193,87 @@ def resolve_protein(
 __all__ = [
     "resolve_literature",
     "resolve_protein",
+    "resolve_structure",
     "search_literature",
     "search_proteins",
+    "search_structures",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Structure discovery capability invocation (Phase 15)
+# ---------------------------------------------------------------------------
+
+
+def _structure_capability(
+    *,
+    session: Session,
+    registry: DriverRegistry,
+    store: SecretStore,
+    actor_id: UUID,
+    provider_key: str,
+    permitted: bool,
+) -> tuple[StructureDiscoveryCapability, CredentialLease]:
+    capability, lease = prepared_capability(
+        session=session,
+        registry=registry,
+        store=store,
+        actor_id=actor_id,
+        provider_key=provider_key,
+        kind=CapabilityKind.STRUCTURE_DISCOVERY,
+        permitted=permitted,
+    )
+    return cast(StructureDiscoveryCapability, capability), lease
+
+
+def search_structures(
+    session: Session,
+    registry: DriverRegistry,
+    store: SecretStore,
+    actor_id: UUID,
+    provider_key: str,
+    query: str,
+    limit: int,
+    *,
+    permitted: bool,
+) -> StructureSearchResult:
+    """One bounded read-only external PDB archive search (no persistence)."""
+    capability, lease = _structure_capability(
+        session=session,
+        registry=registry,
+        store=store,
+        actor_id=actor_id,
+        provider_key=provider_key,
+        permitted=permitted,
+    )
+    return capability.search(query, limit, lease)
+
+
+def resolve_structure(
+    session: Session,
+    registry: DriverRegistry,
+    store: SecretStore,
+    actor_id: UUID,
+    provider_key: str,
+    authority: str,
+    native_id: str,
+    *,
+    permitted: bool,
+) -> ResolvedStructureRecord:
+    """Re-read ONE archive entry (metadata + canonical PDBx/mmCIF bytes).
+
+    This is the CURRENT provider re-resolution an explicit import performs before
+    any durable write; it never trusts client-supplied scientific metadata or
+    coordinate content. It is read-only: no durable write happens here, and the
+    returned bytes only enter REvoLab custody when the application service
+    deliberately stores them.
+    """
+    capability, lease = _structure_capability(
+        session=session,
+        registry=registry,
+        store=store,
+        actor_id=actor_id,
+        provider_key=provider_key,
+        permitted=permitted,
+    )
+    return capability.resolve(authority, native_id, lease)
