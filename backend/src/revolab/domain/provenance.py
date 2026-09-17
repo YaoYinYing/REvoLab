@@ -170,11 +170,15 @@ def create_artifact_reference_row_if_absent(
         )
     else:  # pragma: no cover - an unsupported substrate fails closed
         raise ValidationError(f"unsupported database dialect {dialect!r}")
-    # `RETURNING` (not `rowcount`) decides whether we won: psycopg reports
-    # `rowcount == -1` for this statement form, so a `rowcount`-based check silently
-    # skipped the lost-race cleanup on PostgreSQL and leaked an unused
-    # `GlobalResourceRegistry` row per lost race. `RETURNING` is unambiguous on both
-    # substrates (SQLite 3.35+), and a lost race yields no row.
+    # `RETURNING` (not `rowcount`) decides whether we won: SQLAlchemy 2.0's
+    # `CursorResult.rowcount` is `-1` on PostgreSQL for this
+    # `pg_insert(...).on_conflict_do_nothing()` form (SQLite reports `0`), and a
+    # `-1` is truthy, so a `rowcount`-based check silently skipped the lost-race
+    # cleanup on PostgreSQL and leaked an unused `GlobalResourceRegistry` row per lost
+    # race. `RETURNING` is unambiguous on both substrates and a lost race yields no
+    # row. NOTE: this requires SQLite 3.35+ (`RETURNING` with `ON CONFLICT DO
+    # NOTHING`); the development/test substrate is 3.53 and Python 3.12+ bundles a
+    # recent SQLite.
     inserted_id = session.execute(
         statement.returning(ArtifactReference.artifact_id)
     ).scalar_one_or_none()

@@ -453,6 +453,34 @@ def _normalized_method(methods: tuple[str, ...]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _assert_coordinate_artifact_type_is_reusable(
+    session: Session, coordinate_checksum: str
+) -> None:
+    """Fail closed BEFORE any durable write when the bytes exist under a wrong type.
+
+    Phase 15 records exactly ONE canonical semantic media type for an imported
+    coordinate snapshot. If the byte-identical content-addressed artifact already
+    exists — for example because the same bytes were uploaded earlier through the
+    generic artifact surface with a browser-supplied or absent media type — then
+    reusing it would persist a Structure whose coordinate artifact is mislabeled, and
+    because the reuse validator (`_load_bundle`) requires the canonical type, that very
+    bundle could then never be re-imported. The create path and the reuse validator must
+    agree, so this refuses with an actionable message before the FIRST durable write
+    (and before any ContentStore write, so no blob is orphaned either).
+    """
+    existing = provenance.find_artifact_reference(
+        session, INTERNAL_ARTIFACT_AUTHORITY, coordinate_checksum, ""
+    )
+    if existing is None:
+        return
+    if existing.content_type != STRUCTURE_COORDINATE_CONTENT_TYPE:
+        raise ConflictError(
+            "REvoLab already stores these exact bytes under a different media type "
+            f"({existing.content_type!r}); the imported coordinate snapshot must carry "
+            f"{STRUCTURE_COORDINATE_CONTENT_TYPE!r}"
+        )
+
+
 def _persist_bundle(
     session: Session,
     content_store: ContentStore,
@@ -539,6 +567,9 @@ def _create_bundle(
     `uq_external_identity_authority_native`, so it is the concurrency linearization
     point for a first import.
     """
+    # Byte custody happens BEFORE the first durable write here only in the sense that
+    # the pre-existing-artifact check below can fail with no database row at all.
+    _assert_coordinate_artifact_type_is_reusable(session, snapshot.coordinate_checksum)
     identity = scientific_object.create_external_identity(
         session, authority, native_id, kind=STRUCTURE_IDENTITY_KIND
     )
@@ -556,6 +587,16 @@ def _create_bundle(
     )
     if artifact.checksum != snapshot.coordinate_checksum:
         raise ConflictError("coordinate artifact checksum disagrees with the imported bytes")
+    if artifact.content_type != STRUCTURE_COORDINATE_CONTENT_TYPE:
+        # Agent-round delta finding: the shared `assert_reference_compatible` treats a
+        # `None` content type as "no assertion", so a REUSED content-addressed artifact
+        # could carry no media type at all. This is the airtight backstop that keeps the
+        # create path and the reuse validator (`_load_bundle`) in agreement, so a bundle
+        # can never be created in a shape that a later re-import must reject.
+        raise ConflictError(
+            "the coordinate bytes are already stored without the canonical PDBx/mmCIF "
+            "media type; the imported coordinate snapshot must carry it"
+        )
     reference = provenance.create_external_reference_row(
         session,
         identity.external_identity_id,

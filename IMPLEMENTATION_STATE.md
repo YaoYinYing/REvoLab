@@ -3202,9 +3202,9 @@ All commands were run from the repository root unless noted; the branch head is
 | --- | --- | --- |
 | Backend lint | `ruff check backend` | **All checks passed** |
 | Backend types | `mypy` (strict) | **no issues in 65 source files** |
-| Backend tests | `pytest` | **934 passed, 51 skipped** |
-| RCSB driver (deterministic HTTP) | `pytest backend/tests/test_rcsb_driver.py` | **84 passed** |
-| Structure service/API/Agent | `pytest backend/tests/test_structures.py backend/tests/test_structures_api.py backend/tests/test_structure_agent.py` | **79 passed** (54 + 15 + 10) |
+| Backend tests | `pytest` | **938 passed, 51 skipped** |
+| RCSB driver (deterministic HTTP) | `pytest backend/tests/test_rcsb_driver.py` | **85 passed** |
+| Structure service/API/Agent | `pytest backend/tests/test_structures.py backend/tests/test_structures_api.py backend/tests/test_structure_agent.py` | **82 passed** (57 + 15 + 10) |
 | SQLite migration drift | `cd backend && REVOLAB_DATABASE_URL=sqlite:////tmp/drift.db alembic upgrade head && alembic check` | **No new upgrade operations detected** |
 | PostgreSQL 16 migration drift | same, `REVOLAB_DATABASE_URL=postgresql+psycopg://…` | **No new upgrade operations detected** |
 | PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **51 passed** (11 Phase-15) |
@@ -3351,6 +3351,16 @@ Regressions added by the review-round fixes (all mutation-relevant):
     asserts the coordinate artifact appears in Agent context ONLY as its bounded
     identity card (an exact key set) with no payload and no coordinate content line.
 
+Regressions added by the round-2 (delta) fixes:
+
+47. a non-experimental search hit is EXCLUDED like a CSM hit, and the experimental hits
+    of a MIXED result set survive (one stray hit cannot hide legitimate results);
+48. an import REUSES a pre-existing canonical content-addressed artifact and remains
+    idempotent, while a byte-identical artifact stored under a DIFFERENT or ABSENT media
+    type fails closed BEFORE any durable write (no bundle, no orphan registry row, no
+    identity), and the shared compatibility rule stays strict for content-addressed
+    artifacts (`native_id == checksum`).
+
 ## Independent review (Phase 15)
 
 Three fresh, independent, STRICTLY READ-ONLY reviewers were run in parallel against
@@ -3379,10 +3389,13 @@ actual code, and fixed every P1 and every material in-scope P2.
   predicate. Discovery therefore delegated a load-bearing invariant to the provider.
   **Fixed** in `drivers/rcsb.py::search`, which now re-validates
   `structure_determination_methodology == "experimental"` on the returned METADATA and
-  fails closed on any other value, with a parametrized regression over
-  `integrative`/`computational`/absent. The documented claim is now true rather than
-  assumed, and the live finding is recorded in `EXTERNAL_STRUCTURE_IMPORT.md` §10 and
-  the driver docstring.
+  **excludes** any non-experimental entry exactly like a Computed Structure Model hit
+  (the round-1 draft failed the whole search closed; a delta reviewer showed that would
+  make one stray integrative hit hide every legitimate hit, so the reaction was made
+  consistent with the existing CSM exclusion). Parametrized regressions cover
+  `integrative`/`computational`/absent plus a MIXED result set where the experimental
+  hits survive. The documented claim is now true rather than assumed, and the live
+  finding is recorded in `EXTERNAL_STRUCTURE_IMPORT.md` §10 and the driver docstring.
 - **C-P1-1 — the documented "a lost race cleans up its own `GlobalResourceRegistry`
   row" claim had no test that could fail, and the underlying behavior was in fact
   broken on PostgreSQL.** The claim was made in ADR-0021 and in this file, but the
@@ -3435,10 +3448,11 @@ actual code, and fixed every P1 and every material in-scope P2.
 - **A-P2-6 — the content type was treated as part of the immutable identity assertion
   for content-addressed internal artifacts**, so byte-identical content previously
   stored under a different media type made a legitimate import fail with a
-  non-actionable conflict. **Fixed** by making the content-type comparison
-  presentation-only when `authority=revolab` AND `native_id == checksum` (checksum and
-  size are still enforced, and a provider-authority artifact keeps the strict
-  comparison), with a regression covering both halves.
+  non-actionable conflict. The first fix relaxed the shared helper; a **delta reviewer
+  then proved that created a P0** (see "Delta review" below), so the relaxation was
+  **reverted** and the requirement is now enforced at the Phase-15 boundary BEFORE any
+  durable write, with an actionable message. The shared rule stays strict for every
+  caller.
 - **B-P2-3 — `_entry_methods` silently returned "no method" for a present but
   unparseable `exptl` collection.** **Fixed** to distinguish present-but-unparseable
   (fail closed) from genuinely empty (absent), with regressions for both.
@@ -3477,9 +3491,63 @@ silently dropped.
 
 Because the fixes materially change provider/network semantics (B-P1-1), the shared
 content-addressed concurrency path and its verification (C-P1-1), and the application
-service's normalization/validation surface (A-P2-4/5/6, B-P2-3/5), additional fresh
-read-only delta reviewers were run against the fixed head, within the 3–5 total bound
-required by TODO §91.
+service's normalization/validation surface (A-P2-4/5/6, B-P2-3/5), **two additional
+fresh read-only delta reviewers** were run against the fixed head `f38b507` with the
+same 10-minute / ≥20-second rule — total final-review subagents **5**, the maximum
+allowed by TODO §91.
+
+| Delta reviewer | Lens | Verdict | New P0 | New P1 | New P2 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | fix correctness / mutation verification | FIXED | 0 | 0 | 5 |
+| 2 | concurrency / data integrity / provider safety | PARTIALLY FIXED | 1 | 1 | 3 |
+
+Delta reviewer 1 independently reproduced every fix and mutation-killed each new test,
+and delta reviewer 2 independently reproduced the `rowcount == -1` diagnosis against
+real PostgreSQL (two PG threads, barrier past the lookup: exactly one winner, one `None`
+loser, `errors == {}`, registry delta exactly +1, and the loser's transaction still
+usable). Delta reviewer 2 then found a defect that reviewer 1 had verified only at unit
+scope.
+
+- **Delta-2 P0 — the A-P2-6 relaxation produced durable inconsistent truth and permanent
+  non-idempotency.** Relaxing the *shared* content-type comparison on the create path
+  while `_load_bundle` still required the canonical type meant that byte-identical
+  content already stored under a different media type was REUSED, persisting a Structure
+  whose coordinate artifact was mislabeled — after which that same bundle could never be
+  re-imported or cross-Project reused. The integrator independently reproduced it **and
+  found a second variant the reviewer had not reported**: a `NULL` stored content type
+  also slipped through, because `assert_reference_compatible` treats `None` as "no
+  assertion". **Fixed** by (a) reverting the shared-invariant relaxation so
+  `_persist_artifact_reference_trusted` keeps its strict content-type rule for every
+  caller, and (b) adding `structures._assert_coordinate_artifact_type_is_reusable`, which
+  runs BEFORE the first durable write and before any ContentStore write and refuses the
+  reuse with a typed conflict naming the stored type. Create and reuse now agree by
+  construction. Regressions: an end-to-end reuse-and-re-import idempotency test, a
+  parametrized fail-closed test for a differing **and an absent** media type (asserting
+  no durable bundle, no orphan registry row, no identity), and a unit pin for the shared
+  rule with `native_id == checksum`. Mutation-verified: disabling the guard fails both
+  parametrized cases.
+- **Delta-2 P1 / Delta-1 P2-3 — a test that masked the P0.** The original content-type
+  regression called the private helper directly and never re-imported, so it passed while
+  the invariant was broken. **Fixed** by replacing it with the end-to-end tests above.
+- **Delta-2 P2-1 / Delta-1 P2-5 — asymmetric exclusion.** One non-experimental hit
+  aborted the entire search while CSM hits were dropped. **Fixed** by dropping the
+  non-experimental hit too (see B-P1-1), with a mixed-result-set regression.
+- **Delta-1 P2-1 — the live `integrative` finding was not actually recorded in §10** while
+  the state file claimed it was. **Fixed** by recording it in `EXTERNAL_STRUCTURE_IMPORT.md`
+  §10 and ADR-0021, so the claim is now true.
+- **Delta-1 P2-2 / Delta-2 P2-2 — the `rowcount == -1` attribution was imprecise** (it is
+  SQLAlchemy's `CursorResult`, not raw psycopg) and the new `RETURNING` statement
+  introduces an undeclared SQLite ≥ 3.35 requirement. **Fixed** by rewording the comment
+  precisely and documenting the substrate requirement in the same place.
+- **Delta-1 P2-4 — the browser identity-card assertion was overly brittle.** **Fixed** by
+  asserting the required identity-card keys are present and that no byte-bearing field
+  exists, instead of an exact key set.
+- **Delta-2 P2-3 — `api.py` still hardcoded `"revolab"`** while the byte-custody authority
+  had been single-sourced. **Fixed** by using `services.INTERNAL_ARTIFACT_AUTHORITY` at
+  both sites.
+
+After the round-2 fixes every machine gate was re-run green (see the table above), and
+the PR body records the final reconciliation. No unresolved P0/P1 remains.
 
 ## Explicit deferrals (Phase 15)
 

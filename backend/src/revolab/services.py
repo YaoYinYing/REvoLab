@@ -809,19 +809,14 @@ def _persist_artifact_reference_trusted(
             # Lost the race and the winner is not readable yet: not a recoverable
             # duplicate-identity state.
             raise ConflictError("artifact reference conflicted with a concurrent create; retry")
-    # The bytes themselves are the immutable identity assertion. For an INTERNAL
-    # content-addressed artifact (`authority=revolab`, `native_id == checksum`) the
-    # content type is presentation metadata over bytes that are identical by
-    # construction, so a disagreement (e.g. the same bytes previously uploaded with a
-    # different browser-supplied media type) must not read as a contradictory
-    # immutable assertion. Checksum and size are still enforced. A PROVIDER-authority
-    # artifact keeps the strict comparison, because there the content type is
-    # provider-declared data.
-    content_type_assertion = content_type
-    if authority == INTERNAL_ARTIFACT_AUTHORITY and checksum is not None and native_id == checksum:
-        content_type_assertion = None
+    # The bytes themselves are the immutable identity assertion, so checksum and size
+    # are always compared. The content type is compared too, and this shared rule is
+    # deliberately NOT relaxed: `assert_reference_compatible` treats a `None` value as
+    # "no assertion", so a caller that REQUIRES a specific media type (Phase 15's
+    # canonical PDBx/mmCIF coordinate snapshot) enforces it at its own boundary before
+    # any write, rather than weakening this rule for every caller.
     provenance.assert_reference_compatible(
-        existing, checksum=checksum, size=size, content_type=content_type_assertion
+        existing, checksum=checksum, size=size, content_type=content_type
     )
     persistence.link(session, project_id, existing.artifact_id)
     if commit:

@@ -770,12 +770,13 @@ def test_health_probe_treats_an_empty_result_as_healthy() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_search_fails_closed_on_a_non_experimental_entry() -> None:
+def test_search_excludes_a_non_experimental_entry() -> None:
     """`results_content_type` does NOT exclude integrative entries (live-verified).
 
     The experimental-archive constraint is therefore re-validated on the returned
-    METADATA, so an experimental-only query can never yield a candidate carrying
-    `authority="pdb"` for a computational or integrative entry.
+    METADATA and a non-experimental entry is EXCLUDED exactly like a Computed Structure
+    Model hit, so no candidate can carry `authority="pdb"` for a
+    computational/integrative entry.
     """
     for methodology in ("integrative", "computational", None):
         router = _Router(
@@ -784,9 +785,22 @@ def test_search_fails_closed_on_a_non_experimental_entry() -> None:
                 _gql_entry(methodology=methodology)
             ),
         )
-        with pytest.raises(CapabilityError) as exc:
-            _capability(_driver(router)).search("kinase", 5, _lease())
-        assert exc.value.kind is CapabilityErrorKind.UNKNOWN
+        result = _capability(_driver(router)).search("kinase", 5, _lease())
+        assert result.candidates == ()
+
+
+def test_search_keeps_the_experimental_hits_of_a_mixed_result_set() -> None:
+    """One stray non-experimental hit must not make legitimate hits undiscoverable."""
+    router = _Router(
+        search=lambda r: _search("8ZZ1", "1ABC", "MA_3J3Q"),
+        graphql=lambda r: _gql(
+            _gql_entry("8ZZ1", methodology="integrative"),
+            _gql_entry("1ABC"),
+        ),
+    )
+    result = _capability(_driver(router)).search("kinase", 5, _lease())
+    assert [candidate.native_id for candidate in result.candidates] == ["1ABC"]
+    assert all(candidate.authority == "pdb" for candidate in result.candidates)
 
 
 def test_search_fails_closed_on_a_present_but_unparseable_method_list() -> None:

@@ -1160,55 +1160,92 @@ def test_a_lost_insert_if_absent_cleans_up_its_own_registry_row(session, store):
     assert _count(session, GlobalResourceRegistry) == before_registry
 
 
-def test_a_content_addressed_artifact_reuse_treats_content_type_as_presentation(session, store):
-    """Same content-addressed bytes under a different media type must not conflict.
+def _preexisting_coordinate_artifact(session, store, actor, project, native_id, content_type):
+    """A byte-identical internal artifact, as if the bytes were stored earlier.
 
-    The bytes are the immutable identity assertion; the content type is presentation
-    metadata over them (documented). A provider-authority artifact still keeps the
-    strict comparison, because there the content type IS provider-declared data.
+    This models the reachable case where the exact archive bytes already exist in
+    ContentStore under a media type the generic artifact surface accepted (a
+    browser-supplied or absent `content_type`).
+    """
+    return services.create_internal_artifact(
+        session,
+        actor,
+        project.id,
+        store,
+        deterministic_coordinates(native_id),
+        content_type=content_type,
+    )
+
+
+def test_an_import_reuses_a_preexisting_canonical_coordinate_artifact(session, store):
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _registry(_StaticDriver({"1ABC": _record("1ABC")}))
+    pre = _preexisting_coordinate_artifact(
+        session, store, actor, project, "1ABC", "chemical/x-cif"
+    )
+    first = _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    assert first.coordinate_artifact_id == pre.artifact_id
+    assert _count(session, ArtifactReference) == 1
+    # Idempotent re-import of a bundle that reused a canonical artifact.
+    second = _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    assert second == first
+
+
+@pytest.mark.parametrize("pre_type", ["text/plain", None])
+def test_an_import_fails_closed_when_the_bytes_have_a_different_or_absent_media_type(
+    session, store, pre_type
+):
+    """Create and reuse must agree on the canonical type (round-2 P0).
+
+    A byte-identical artifact stored under a different or ABSENT media type must refuse
+    the import BEFORE any durable write, instead of persisting a mislabeled Structure
+    that the reuse validator could then never accept again.
+    """
+    from revolab.models import GlobalResourceRegistry
+
+    actor = _actor(session)
+    project = _project(session, actor)
+    pre = _preexisting_coordinate_artifact(session, store, actor, project, "1ABC", pre_type)
+    before = _durable_state(session)
+    before_registry = _count(session, GlobalResourceRegistry)
+    registry = _registry(_StaticDriver({"1ABC": _record("1ABC")}))
+
+    with pytest.raises(ConflictError, match="different media type"):
+        _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+
+    # No durable bundle, no orphan registry row, and NO identity was ever asserted.
+    assert _durable_state(session) == before
+    assert _count(session, GlobalResourceRegistry) == before_registry
+    assert _count(session, ExternalIdentity) == 0
+    stored = session.get(ArtifactReference, pre.artifact_id)
+    assert stored is not None and stored.content_type == pre_type
+
+
+def test_the_shared_artifact_compatibility_rule_is_not_relaxed(session, store):
+    """The SHARED rule stays strict for content-addressed internal artifacts too.
+
+    Phase 15 enforces its canonical media type at its own boundary rather than
+    weakening the rule for every caller. `native_id == checksum` here, so this pins the
+    content-addressed case explicitly.
     """
     actor = _actor(session)
     project = _project(session, actor)
-    payload = b"data_TYPE\n#\n"
+    payload = b"data_STRICT\n#\n"
     first = services.create_internal_artifact(
         session, actor, project.id, store, payload, content_type="chemical/x-cif"
     )
-    assert first.checksum is not None
-    reused = services._persist_artifact_reference_trusted(
-        session,
-        actor,
-        project.id,
-        "revolab",
-        first.native_id,
-        content_type="text/plain",
-        size=first.size,
-        checksum=first.checksum,
-    )
-    assert reused.artifact_id == first.artifact_id
-    assert reused.content_type == "chemical/x-cif"
-    assert _count(session, ArtifactReference) == 1
-
-    # A provider-authority artifact keeps the strict comparison.
-    services._persist_artifact_reference_trusted(
-        session,
-        actor,
-        project.id,
-        "rcsb",
-        "artifact-1",
-        content_type="chemical/x-cif",
-        size=1,
-        checksum="a" * 64,
-    )
+    assert first.checksum is not None and first.native_id == first.checksum
     with pytest.raises(ConflictError):
         services._persist_artifact_reference_trusted(
             session,
             actor,
             project.id,
-            "rcsb",
-            "artifact-1",
-            content_type="application/octet-stream",
-            size=1,
-            checksum="a" * 64,
+            services.INTERNAL_ARTIFACT_AUTHORITY,
+            first.native_id,
+            content_type="text/plain",
+            size=first.size,
+            checksum=first.checksum,
         )
 
 

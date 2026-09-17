@@ -1099,7 +1099,7 @@ def resolve_artifact_content(
     services.readable_membership(session, actor_id, project_id)
     services._require_visible(session, project_id, artifact_id)
     artifact = session.get(ArtifactReference, artifact_id)
-    if artifact is None or artifact.authority != "revolab":
+    if artifact is None or artifact.authority != services.INTERNAL_ARTIFACT_AUTHORITY:
         raise HTTPException(status_code=404, detail="artifact is not an internal revolab artifact")
     data = _content_store().get(artifact.native_id)
     return StreamingResponse(
@@ -2182,7 +2182,7 @@ def resolve_compute_artifact(
     ingestion: nothing is copied into REvoLab ContentStore here."""
     services.readable_membership(session, actor_id, project_id)
     artifact = _require_artifact(session, project_id, artifact_id)
-    if artifact.authority == "revolab":
+    if artifact.authority == services.INTERNAL_ARTIFACT_AUTHORITY:
         raise HTTPException(status_code=404, detail="use the internal artifact content endpoint")
     provider_key = registry.driver_for_authority(artifact.authority)
     if provider_key is None:

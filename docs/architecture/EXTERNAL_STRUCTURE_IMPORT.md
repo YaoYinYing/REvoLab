@@ -387,6 +387,17 @@ bytes: durable byte identity is the checksum, and scientific origin is the
 `pdb:<entry>` identity plus `imported_as` provenance. A file extension or path is
 never durable identity.
 
+**Create and reuse must agree on that type (load-bearing).** An imported Structure's
+coordinate artifact ALWAYS carries the canonical type, on both the create path and the
+reuse path. Byte-identical content can already exist in ContentStore — for example the
+same bytes uploaded first through the generic artifact surface with a browser-supplied
+or absent media type — and the shared internal-artifact compatibility rule treats a
+`NULL` media type as "no assertion". Phase 15 therefore refuses that reuse **before the
+first durable write** with a typed conflict naming the stored type, rather than
+persisting a mislabeled artifact that the reuse validator would then reject forever.
+The shared `assert_reference_compatible` rule is deliberately NOT relaxed for this: a
+caller that requires a specific media type enforces it at its own boundary.
+
 ---
 
 ## 9. Which provenance edges are created?
@@ -455,6 +466,13 @@ POST https://search.rcsb.org/rcsbsearch/v2/query
   requests at most `MAX_STRUCTURE_RESULT_LIMIT` (20) and never paginates.
 * `request_options.results_content_type` selects `experimental` vs `computational`
   (its documented default is already `["experimental"]`; it is set explicitly).
+  **Live-verified 2026-09-17: that parameter does NOT exclude `integrative` (IHM)
+  entries**, so the recorded `exact_match experimental` predicate is the only real
+  constraint. The driver therefore re-validates the returned METADATA and EXCLUDES any
+  non-experimental entry, exactly like a Computed Structure Model hit — one stray
+  non-experimental result can never make every legitimate hit undiscoverable, and a
+  candidate can never carry `authority="pdb"` for a computational/integrative entry.
+  Resolution independently fails closed on a non-experimental entry.
 * Response: `{query_id, result_type, total_count, result_set:[{identifier, score}]}`;
   `compact` verbosity returns bare strings instead. The driver accepts both shapes.
 * **A no-hit search answers HTTP 204 with an EMPTY body**, which is a successful

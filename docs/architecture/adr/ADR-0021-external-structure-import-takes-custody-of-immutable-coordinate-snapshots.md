@@ -220,7 +220,15 @@ truth.
 The canonical media type is a REvoLab assertion, not a copied transport header: the
 RCSB file-download documentation says the generic "download" URL sets
 `Content-Type: application/octet-stream` (the exact `.cif` URL actually answers
-`chemical/x-cif`), and either value describes transport, not science. `chemical/x-cif` is the de-facto community media type for
+`chemical/x-cif`), and either value describes transport, not science.
+
+An imported Structure's coordinate artifact ALWAYS carries this canonical type, and the
+create path and the reuse validator agree on it. Because the shared
+`assert_reference_compatible` rule treats a `NULL` media type as "no assertion",
+byte-identical content already stored with a browser-supplied or absent media type is
+refused BEFORE the first durable write with a typed conflict, rather than persisting a
+mislabeled artifact that no later re-import could accept. The shared rule is deliberately
+not relaxed for this. `chemical/x-cif` is the de-facto community media type for
 CIF-family files (and is what the RCSB file service actually serves). A file
 extension or path is never durable identity.
 

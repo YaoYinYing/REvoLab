@@ -47,7 +47,8 @@ official hosts.
   is keyed by BOTH forms, so a future switch to extended primary ids cannot silently
   break discovery. `results_content_type` does NOT exclude integrative entries
   (live-verified), so discovery re-validates the determination methodology on the
-  returned METADATA and fails closed on any non-experimental entry.
+  returned METADATA and EXCLUDES any non-experimental entry, exactly like a Computed
+  Structure Model hit.
 * Computed Structure Models are identified by an `AF_`/`MA_` id prefix AND by
   `rcsb_entry_info.structure_determination_methodology == "computational"`. Phase 15
   excludes them from discovery and rejects them at resolution, so a computed model
@@ -418,15 +419,15 @@ class RcsbStructureDiscoveryCapability:
             # never delegated to the upstream query. `results_content_type` does NOT
             # exclude integrative entries (live-verified 2026-09-17), so a
             # non-experimental entry here means the provider returned something an
-            # experimental-only query structurally cannot contain — and a candidate
-            # must never carry `authority="pdb"` for a computational or integrative
-            # entry. Fail closed rather than forward it.
+            # experimental-only query must not yield. It is EXCLUDED exactly like a
+            # Computed Structure Model hit — a scoped-out result class is dropped, so
+            # one stray non-experimental hit can never make every legitimate hit in the
+            # same result set undiscoverable, and a candidate can never carry
+            # `authority="pdb"` for a computational or integrative entry. (Resolution
+            # still fails closed on a non-experimental entry, so durable truth is
+            # protected independently of discovery.)
             if _entry_methodology(entry) != _EXPERIMENTAL_METHODOLOGY:
-                raise self._error(
-                    CapabilityErrorKind.UNKNOWN,
-                    "provider search returned a non-experimental entry for an "
-                    "experimental-only query",
-                )
+                continue
             methods = _entry_methods(entry)
             if methods is None:
                 raise self._error(
