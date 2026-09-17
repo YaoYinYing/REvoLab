@@ -204,3 +204,22 @@ export type ProteinImportCreate =
 
 export type ProteinImportRead =
   paths['/api/projects/{project_id}/proteins/import']['post']['responses']['201']['content']['application/json']
+
+// Phase-15 external structure discovery + explicit import. A candidate is
+// EPHEMERAL external data (never a SearchHit, never Project truth, and it carries
+// no coordinate bytes); the import result names the canonical Structure, its owned
+// coordinate artifact, and the snapshot external reference, and never echoes the
+// normalized snapshot or the coordinates.
+export type StructureCandidateRead = components['schemas']['StructureCandidateRead']
+
+export type StructureDiscoveryResultsRead =
+  paths['/api/projects/{project_id}/structures/discover']['get']['responses']['200']['content']['application/json']
+
+export type StructureDiscoveryQuery =
+  paths['/api/projects/{project_id}/structures/discover']['get']['parameters']['query']
+
+export type StructureImportCreate =
+  paths['/api/projects/{project_id}/structures/import']['post']['requestBody']['content']['application/json']
+
+export type StructureImportRead =
+  paths['/api/projects/{project_id}/structures/import']['post']['responses']['201']['content']['application/json']

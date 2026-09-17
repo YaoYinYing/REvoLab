@@ -2961,3 +2961,783 @@ def test_phase14_postgres_project_search_and_context_integration(
         ContextSelectionCreate(series_ids=[result.protein_series_id]),
     )
     assert result.protein_series_id in {ref.series_id for ref in context.series}
+
+
+# ---------------------------------------------------------------------------
+# Phase 15 — RCSB PDB structure discovery / immutable coordinate import
+#
+# PostgreSQL is the concurrency truth: the ExternalIdentity unique constraint is
+# the scientific-identity linearization point, and the internal content-addressed
+# ArtifactReference has its OWN unique identity, which the shared get-or-create
+# must win/lose atomically WITHOUT aborting the loser's transaction.
+# ---------------------------------------------------------------------------
+
+
+def _structure_registry(*, healthy: bool = True):
+    from revolab.testing.fake_structure import FakeStructureDriver
+
+    registry = DriverRegistry()
+    registry.register(FakeStructureDriver(healthy=healthy))
+    registry.start_all(DriverContext(environment="test", settings=MappingProxyType({})))
+    return registry
+
+
+def _seed_structure(registry, native_id, *, coordinate_seed=None, resolution=1.5):
+    """Register one exact record in the in-process fake provider's state.
+
+    `coordinate_seed` allows two DIFFERENT durable identities to carry byte-identical
+    coordinates, which is what forces the internal-artifact race.
+    """
+    from revolab.capabilities import ResolvedStructureRecord
+    from revolab.testing.fake_structure import (
+        FAKE_STRUCTURE_AUTHORITY,
+        FAKE_STRUCTURE_PROVIDER_KEY,
+        deterministic_coordinates,
+    )
+
+    handle = registry.get(FAKE_STRUCTURE_PROVIDER_KEY)
+    record = ResolvedStructureRecord(
+        provider_key=FAKE_STRUCTURE_PROVIDER_KEY,
+        authority=FAKE_STRUCTURE_AUTHORITY,
+        native_id=native_id,
+        coordinate_format="mmcif",
+        coordinate_bytes=deterministic_coordinates(coordinate_seed or native_id),
+        title=f"Seeded structure {native_id}",
+        experimental_methods=("X-RAY DIFFRACTION",),
+        resolution_angstrom=resolution,
+        entry_revision_major=1,
+        entry_revision_minor=0,
+        entry_revision_date="2026-01-01T00:00:00Z",
+    )
+    handle.driver.state.seed(record)
+    return record
+
+
+def _import_structure(session, registry, content_store, actor, project_id, native_id):
+    from revolab import structures as structure_service
+    from revolab.testing.fake_structure import (
+        FAKE_STRUCTURE_AUTHORITY,
+        FAKE_STRUCTURE_PROVIDER_KEY,
+    )
+
+    return structure_service.import_structure(
+        session,
+        registry,
+        InMemorySecretStore(),
+        content_store,
+        actor,
+        project_id,
+        provider_key=FAKE_STRUCTURE_PROVIDER_KEY,
+        authority=FAKE_STRUCTURE_AUTHORITY,
+        native_id=native_id,
+    )
+
+
+def _structure_bundle_counts(session: Session) -> tuple[int, ...]:
+    from revolab.models import (
+        ArtifactReference,
+        ExternalIdentity,
+        ExternalReference,
+        GlobalProvenanceEdge,
+        ProjectResourceLink,
+        ResourceStewardship,
+        ScientificObjectExternalIdentity,
+        ScientificObjectRevision,
+        ScientificObjectSeries,
+    )
+
+    models = (
+        ExternalIdentity,
+        ExternalReference,
+        ArtifactReference,
+        ScientificObjectSeries,
+        ScientificObjectRevision,
+        ScientificObjectExternalIdentity,
+        GlobalProvenanceEdge,
+        ProjectResourceLink,
+        ResourceStewardship,
+    )
+    return tuple(
+        int(session.scalar(select(func.count()).select_from(model)) or 0) for model in models
+    )
+
+
+def _structure_bundle_tuple(result) -> tuple:
+    return (
+        result.structure_series_id,
+        result.structure_revision_id,
+        result.coordinate_artifact_id,
+        result.external_reference_id,
+    )
+
+
+def test_phase15_postgres_initial_import_creates_the_canonical_bundle(
+    pg_session: Session, tmp_path
+) -> None:
+    from revolab.content_store import ContentStore
+    from revolab.models import (
+        ArtifactReference,
+        ExternalIdentity,
+        GlobalProvenanceEdge,
+        ScientificObjectExternalIdentity,
+        ScientificObjectRevision,
+    )
+    from revolab.testing.fake_structure import FAKE_STRUCTURE_AUTHORITY
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Phase15 initial {tag}")
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+
+    result = _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+
+    identity = pg_session.scalar(
+        select(ExternalIdentity).where(
+            ExternalIdentity.authority == FAKE_STRUCTURE_AUTHORITY,
+            ExternalIdentity.native_id == native_id,
+        )
+    )
+    assert identity is not None and identity.kind == "structure"
+    mapping = pg_session.scalar(
+        select(ScientificObjectExternalIdentity).where(
+            ScientificObjectExternalIdentity.external_identity_id
+            == identity.external_identity_id
+        )
+    )
+    assert mapping is not None
+    assert mapping.qualifier == "identity" and mapping.is_canonical is True
+    assert mapping.series_id == result.structure_series_id
+
+    revision = pg_session.get(ScientificObjectRevision, result.structure_revision_id)
+    assert revision is not None
+    assert revision.payload["pdb_id"] is None
+    assert revision.payload["coordinates_ref"] is None
+    assert revision.payload["resolution"] == 1.5
+
+    artifact = pg_session.get(ArtifactReference, result.coordinate_artifact_id)
+    assert artifact is not None
+    assert artifact.authority == "revolab"
+    assert artifact.checksum == artifact.native_id
+    assert artifact.content_type == "chemical/x-cif"
+    assert content_store.get(artifact.native_id).startswith(b"data_")
+
+    imported = list(
+        pg_session.scalars(
+            select(GlobalProvenanceEdge).where(
+                GlobalProvenanceEdge.relation_type == "imported_as",
+                GlobalProvenanceEdge.target_id == result.structure_revision_id,
+            )
+        )
+    )
+    assert {edge.source_id for edge in imported} == {
+        result.external_reference_id,
+        result.coordinate_artifact_id,
+    }
+    assert {edge.target_id for edge in imported} == {result.structure_revision_id}
+
+
+def test_phase15_postgres_repeat_import_is_idempotent(pg_session: Session, tmp_path) -> None:
+    from revolab.content_store import ContentStore
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Phase15 repeat {tag}")
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+
+    first = _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+    before = _structure_bundle_counts(pg_session)
+    second = _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+    assert second == first
+    assert _structure_bundle_counts(pg_session) == before
+
+
+def test_phase15_postgres_cross_project_reuse_keeps_stewardship(
+    pg_session: Session, tmp_path
+) -> None:
+    from revolab.content_store import ContentStore
+    from revolab.models import ArtifactReference, ExternalIdentity, ResourceStewardship
+
+    tag = uuid4().hex[:8]
+    owner_a = services.create_actor(pg_session)
+    project_a = services.create_project(pg_session, owner_a, f"Phase15 A {tag}")
+    owner_b = services.create_actor(pg_session)
+    project_b = services.create_project(pg_session, owner_b, f"Phase15 B {tag}")
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+
+    first = _import_structure(pg_session, registry, content_store, owner_a, project_a.id, native_id)
+    second = _import_structure(pg_session, registry, content_store, owner_b, project_b.id, native_id)
+    assert second == first
+    assert (
+        pg_session.scalar(
+            select(func.count())
+            .select_from(ExternalIdentity)
+            .where(ExternalIdentity.native_id == native_id)
+        )
+        == 1
+    )
+    assert (
+        pg_session.scalar(
+            select(func.count())
+            .select_from(ArtifactReference)
+            .where(ArtifactReference.artifact_id == first.coordinate_artifact_id)
+        )
+        == 1
+    )
+    for resource_id in (first.structure_series_id, first.coordinate_artifact_id):
+        stewardship = pg_session.get(ResourceStewardship, resource_id)
+        assert stewardship is not None
+        assert stewardship.steward_project_id == project_a.id
+
+
+def _structure_conflict_spies(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    from revolab import structures as structures_module
+
+    calls = {"identity": 0, "link": 0}
+    real_identity = structures_module._is_external_identity_conflict
+    real_link = structures_module._is_link_conflict
+
+    def identity(exc):
+        if real_identity(exc):
+            calls["identity"] += 1
+        return real_identity(exc)
+
+    def link(exc):
+        if real_link(exc):
+            calls["link"] += 1
+        return real_link(exc)
+
+    monkeypatch.setattr(structures_module, "_is_external_identity_conflict", identity)
+    monkeypatch.setattr(structures_module, "_is_link_conflict", link)
+    return calls
+
+
+@pytest.mark.parametrize("same_project", [True, False])
+def test_phase15_postgres_concurrent_first_import_converges_on_one_bundle(
+    pg_engine: Engine, monkeypatch: pytest.MonkeyPatch, same_project: bool, tmp_path
+) -> None:
+    from revolab.content_store import ContentStore
+    from revolab.domain import scientific_object as scientific_object_module
+    from revolab.models import (
+        ArtifactReference,
+        ExternalIdentity,
+        ExternalReference,
+        ScientificObjectRevision,
+    )
+    from revolab.testing.fake_structure import FAKE_STRUCTURE_AUTHORITY
+
+    tag = uuid4().hex[:8]
+    with Session(pg_engine) as setup:
+        actor = services.create_actor(setup)
+        project_a = services.create_project(setup, actor, f"Phase15 race A {tag}")
+        project_b = (
+            project_a
+            if same_project
+            else services.create_project(setup, actor, f"Phase15 race B {tag}")
+        )
+        actor_id = actor
+        project_a_id = project_a.id
+        project_b_id = project_b.id
+
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+
+    barrier = threading.Barrier(2)
+    real_find = scientific_object_module.find_external_identity
+    local = threading.local()
+
+    def synced_find(session, authority, lookup):
+        found = real_find(session, authority, lookup)
+        # Force BOTH racers past their initial "not found" check before either
+        # inserts, so the unique constraint is genuinely exercised. Each thread syncs
+        # only on its FIRST lookup (post-rollback lookups must not block).
+        if found is None and lookup == native_id and not getattr(local, "synced", False):
+            local.synced = True
+            barrier.wait(timeout=10)
+        return found
+
+    monkeypatch.setattr(scientific_object_module, "find_external_identity", synced_find)
+    conflict_calls = _structure_conflict_spies(monkeypatch)
+
+    outcomes: dict[str, tuple] = {}
+    errors: dict[str, BaseException] = {}
+    lock = threading.Lock()
+
+    def worker(name: str, project_id) -> None:
+        try:
+            with Session(pg_engine) as session:
+                result = _import_structure(
+                    session, registry, content_store, actor_id, project_id, native_id
+                )
+                with lock:
+                    outcomes[name] = _structure_bundle_tuple(result)
+        except BaseException as exc:
+            with lock:
+                errors[name] = exc
+
+    threads = [
+        threading.Thread(target=worker, args=("a", project_a_id)),
+        threading.Thread(target=worker, args=("b", project_b_id)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+    # No raw IntegrityError (or anything else) reached a caller.
+    assert errors == {}
+    assert len(outcomes) == 2
+    # Both racers converged on THE SAME global bundle.
+    assert len(set(outcomes.values())) == 1
+    # ...and the loser recovery path genuinely ran (not a barrier false-pass).
+    assert conflict_calls["identity"] + conflict_calls["link"] >= 1
+
+    with Session(pg_engine) as verify:
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalIdentity)
+                .where(ExternalIdentity.native_id == native_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalReference)
+                .join(
+                    ExternalIdentity,
+                    ExternalIdentity.external_identity_id
+                    == ExternalReference.external_identity_id,
+                )
+                .where(ExternalIdentity.native_id == native_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ScientificObjectRevision)
+                .where(ScientificObjectRevision.series_id == outcomes["a"][0])
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ArtifactReference)
+                .where(ArtifactReference.artifact_id == outcomes["a"][2])
+            )
+            == 1
+        )
+    assert FAKE_STRUCTURE_AUTHORITY
+
+
+def test_phase15_postgres_content_only_race_yields_one_artifact(
+    pg_engine: Engine, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Two DIFFERENT PDB identities with byte-identical coordinates.
+
+    The identity constraint cannot serialize this case, so the internal
+    content-addressed ArtifactReference get-or-create is the only linearization
+    point. It must converge on ONE artifact with no raw uniqueness failure and
+    without aborting either import.
+    """
+    from revolab.content_store import ContentStore
+    from revolab.domain import provenance as provenance_module
+    from revolab.models import (
+        ArtifactReference,
+        GlobalProvenanceEdge,
+        GlobalResourceRegistry,
+    )
+
+    tag = uuid4().hex[:8]
+    shared_seed = f"shared-{tag}"
+    with Session(pg_engine) as setup:
+        actor = services.create_actor(setup)
+        project = services.create_project(setup, actor, f"Phase15 content race {tag}")
+        project_id = project.id
+        actor_id = actor
+
+    registry = _structure_registry()
+    # Two distinct durable identities, IDENTICAL coordinate bytes.
+    native_a = f"P15A{tag}"[:12]
+    native_b = f"P15B{tag}"[:12]
+    _seed_structure(registry, native_a, coordinate_seed=shared_seed)
+    _seed_structure(registry, native_b, coordinate_seed=shared_seed)
+    content_store = ContentStore(tmp_path / "content")
+
+    # The acceptance database is shared and is NOT truncated, so the lost-race
+    # registry cleanup is proven RELATIVELY: the race must add exactly ONE
+    # `artifact_reference` registry row (the winner's), never one per racer.
+    with Session(pg_engine) as pre:
+        registry_rows_before = int(
+            pre.scalar(
+                select(func.count())
+                .select_from(GlobalResourceRegistry)
+                .where(GlobalResourceRegistry.resource_kind == "artifact_reference")
+            )
+            or 0
+        )
+
+    barrier = threading.Barrier(2)
+    real_find = provenance_module.find_artifact_reference
+    local = threading.local()
+
+    def synced_find(session, authority, native_id, version_id):
+        found = real_find(session, authority, native_id, version_id)
+        if (
+            found is None
+            and authority == "revolab"
+            and not getattr(local, "synced", False)
+        ):
+            local.synced = True
+            barrier.wait(timeout=10)
+        return found
+
+    monkeypatch.setattr(provenance_module, "find_artifact_reference", synced_find)
+
+    outcomes: dict[str, tuple] = {}
+    errors: dict[str, BaseException] = {}
+    lock = threading.Lock()
+
+    def worker(name: str, native_id: str) -> None:
+        try:
+            with Session(pg_engine) as session:
+                result = _import_structure(
+                    session, registry, content_store, actor_id, project_id, native_id
+                )
+                with lock:
+                    outcomes[name] = _structure_bundle_tuple(result)
+        except BaseException as exc:
+            with lock:
+                errors[name] = exc
+
+    threads = [
+        threading.Thread(target=worker, args=("a", native_a)),
+        threading.Thread(target=worker, args=("b", native_b)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+    assert errors == {}
+    assert len(outcomes) == 2
+    # Two DISTINCT structures (different identities)...
+    assert outcomes["a"][0] != outcomes["b"][0]
+    # ...sharing exactly ONE internal ArtifactReference.
+    assert outcomes["a"][2] == outcomes["b"][2]
+    with Session(pg_engine) as verify:
+        assert (
+            verify.scalar(select(func.count()).select_from(ArtifactReference)) >= 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ArtifactReference)
+                .where(ArtifactReference.artifact_id == outcomes["a"][2])
+            )
+            == 1
+        )
+        # The SAME artifact is imported as BOTH revisions, and no registry row was
+        # orphaned by the losing insert-if-absent.
+        artifact_edges = list(
+            verify.scalars(
+                select(GlobalProvenanceEdge).where(
+                    GlobalProvenanceEdge.relation_type == "imported_as",
+                    GlobalProvenanceEdge.source_id == outcomes["a"][2],
+                )
+            )
+        )
+        assert {edge.target_id for edge in artifact_edges} == {
+            outcomes["a"][1],
+            outcomes["b"][1],
+        }
+        registry_rows_after = int(
+            verify.scalar(
+                select(func.count())
+                .select_from(GlobalResourceRegistry)
+                .where(GlobalResourceRegistry.resource_kind == "artifact_reference")
+            )
+            or 0
+        )
+        assert registry_rows_after == registry_rows_before + 1
+        # The winner's own registry row is present exactly once.
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(GlobalResourceRegistry)
+                .where(GlobalResourceRegistry.resource_id == outcomes["a"][2])
+            )
+            == 1
+        )
+
+
+def test_phase15_postgres_provider_spelling_switch_reuses_one_bundle(
+    pg_engine: Engine, tmp_path
+) -> None:
+    """PR #16 P1 on the acceptance substrate: the durable identity is ONE fixed form.
+
+    The provider confirms the classic id on the first import and its documented
+    extended alias on the second import of the SAME entry, across two Projects. Both
+    must reuse ONE global bundle and the first Project must keep stewardship.
+    """
+    from revolab.content_store import ContentStore
+    from revolab.models import (
+        ArtifactReference,
+        ExternalIdentity,
+        ExternalReference,
+        ResourceStewardship,
+        ScientificObjectRevision,
+        ScientificObjectSeries,
+    )
+    from revolab.testing.fake_structure import FAKE_STRUCTURE_PROVIDER_KEY
+
+    tag = uuid4().hex[:8]
+    with Session(pg_engine) as setup:
+        owner_a = services.create_actor(setup)
+        project_a = services.create_project(setup, owner_a, f"Phase15 spelling A {tag}")
+        owner_b = services.create_actor(setup)
+        project_b = services.create_project(setup, owner_b, f"Phase15 spelling B {tag}")
+        project_a_id, project_b_id = project_a.id, project_b.id
+
+    # A per-run unique CLASSIC 4-character id (the acceptance database is shared and is
+    # not truncated, so a fixed id would collide across repeated runs).
+    entry = f"9{tag[:3].upper()}"
+    assert len(entry) == 4 and entry[0].isdigit()
+    durable_entry = f"pdb_0000{entry.lower()}"
+    registry = _structure_registry()
+    _seed_structure(registry, entry)
+    content_store = ContentStore(tmp_path / "content")
+
+    # Each import owns its own transaction (a fresh Session).
+    with Session(pg_engine) as session:
+        first = _import_structure(
+            session, registry, content_store, owner_a, project_a_id, entry
+        )
+    assert first.native_id == durable_entry
+
+    # The provider now confirms the OTHER documented spelling of the SAME entry, with
+    # byte-identical coordinates.
+    aliased = _seed_structure(registry, durable_entry, coordinate_seed=entry)
+    registry.get(FAKE_STRUCTURE_PROVIDER_KEY).driver.state.seed_for(entry, aliased)
+
+    with Session(pg_engine) as session:
+        second = _import_structure(
+            session, registry, content_store, owner_b, project_b_id, entry
+        )
+    assert second == first
+    assert second.native_id == durable_entry
+
+    with Session(pg_engine) as verify:
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalIdentity)
+                .where(ExternalIdentity.native_id == durable_entry)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalIdentity)
+                .where(ExternalIdentity.native_id == entry)
+            )
+            == 0
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ScientificObjectSeries)
+                .where(ScientificObjectSeries.series_id == first.structure_series_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ScientificObjectRevision)
+                .where(ScientificObjectRevision.series_id == first.structure_series_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalReference)
+                .where(ExternalReference.external_reference_id == first.external_reference_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ArtifactReference)
+                .where(ArtifactReference.artifact_id == first.coordinate_artifact_id)
+            )
+            == 1
+        )
+        stewardship = verify.get(ResourceStewardship, first.structure_series_id)
+        assert stewardship is not None
+        assert stewardship.steward_project_id == project_a_id
+
+
+def test_phase15_postgres_atomic_rollback_leaves_no_partial_bundle(
+    pg_session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    from revolab import services as services_module
+    from revolab.content_store import ContentStore
+    from revolab.models import ExternalIdentity, ProjectResourceLink
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Phase15 rollback {tag}")
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("injected failure after the bundle was staged")
+
+    monkeypatch.setattr(services_module, "record_imported_as", explode)
+    try:
+        _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+    except RuntimeError:
+        pass
+    else:  # pragma: no cover
+        raise AssertionError("the injected failure did not propagate")
+    pg_session.rollback()
+
+    with Session(pg_session.get_bind()) as verify:
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalIdentity)
+                .where(ExternalIdentity.native_id == native_id)
+            )
+            == 0
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ProjectResourceLink)
+                .where(ProjectResourceLink.project_id == project.id)
+            )
+            == 0
+        )
+    # The ContentStore is NOT transactional: an unreachable content-addressed blob
+    # may remain. It is immutable, content-addressed, and not Project truth.
+    assert content_store is not None
+
+
+def test_phase15_postgres_changed_snapshot_fails_closed(pg_session: Session, tmp_path) -> None:
+    from revolab.content_store import ContentStore
+    from revolab.domain.errors import ConflictError
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Phase15 changed {tag}")
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    seed = _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+
+    first = _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+    before = _structure_bundle_counts(pg_session)
+    import dataclasses
+
+    handle = registry.get(seed.provider_key)
+    handle.driver.state.seed(dataclasses.replace(seed, resolution_angstrom=9.0))
+    with pytest.raises(ConflictError, match="changed since the imported snapshot"):
+        _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+    assert _structure_bundle_counts(pg_session) == before
+    assert first.structure_revision_id is not None
+
+
+def test_phase15_postgres_incomplete_mapping_fails_closed(
+    pg_session: Session, tmp_path
+) -> None:
+    from revolab.content_store import ContentStore
+    from revolab.domain.errors import ConflictError
+    from revolab.models import ScientificObjectSeries
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Phase15 incomplete {tag}")
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+
+    result = _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+    series = pg_session.get(ScientificObjectSeries, result.structure_series_id)
+    assert series is not None
+    series.object_type = "protein"
+    pg_session.commit()
+    before = _structure_bundle_counts(pg_session)
+    with pytest.raises(ConflictError, match="incomplete mapping"):
+        _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+    assert _structure_bundle_counts(pg_session) == before
+
+
+def test_phase15_postgres_project_search_integration(pg_session: Session, tmp_path) -> None:
+    from revolab import search as search_service
+    from revolab.content_store import ContentStore
+    from revolab.enums import SearchScope
+
+    tag = uuid4().hex[:8]
+    actor = services.create_actor(pg_session)
+    project = services.create_project(pg_session, actor, f"Phase15 search {tag}")
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+    result = _import_structure(pg_session, registry, content_store, actor, project.id, native_id)
+
+    hits = search_service.search(
+        pg_session, actor, project.id, query=native_id, scope=SearchScope.PROJECT_SHARED
+    ).hits
+    assert result.structure_series_id in {hit.target_id for hit in hits}
+
+
+def test_phase15_postgres_viewer_cannot_import(pg_session: Session, tmp_path) -> None:
+    from revolab.content_store import ContentStore
+    from revolab.domain.errors import AuthorizationError
+    from revolab.enums import Role
+    from revolab.models import ExternalIdentity
+
+    tag = uuid4().hex[:8]
+    owner = services.create_actor(pg_session)
+    viewer = services.create_actor(pg_session)
+    project = services.create_project(pg_session, owner, f"Phase15 authz {tag}")
+    services.add_membership(pg_session, owner, project.id, viewer, Role.VIEWER)
+    native_id = f"P15{tag}"[:12]
+    registry = _structure_registry()
+    _seed_structure(registry, native_id)
+    content_store = ContentStore(tmp_path / "content")
+
+    with pytest.raises(AuthorizationError):
+        _import_structure(pg_session, registry, content_store, viewer, project.id, native_id)
+    assert (
+        pg_session.scalar(
+            select(func.count())
+            .select_from(ExternalIdentity)
+            .where(ExternalIdentity.native_id == native_id)
+        )
+        == 0
+    )

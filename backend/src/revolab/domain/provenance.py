@@ -15,6 +15,8 @@ from typing import Any, NamedTuple
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from revolab.domain import persistence, scientific_object
@@ -35,6 +37,7 @@ from revolab.models import (
     Evidence,
     ExternalReference,
     GlobalProvenanceEdge,
+    GlobalResourceRegistry,
     LiteratureReference,
     RunReference,
     ScientificObjectRevision,
@@ -108,6 +111,84 @@ def create_artifact_reference_row(
     session.add(row)
     session.flush()
     return row
+
+
+def create_artifact_reference_row_if_absent(
+    session: Session,
+    authority: str,
+    native_id: str,
+    *,
+    content_type: str | None,
+    size: int | None,
+    checksum: str | None,
+    version_id: str = "",
+) -> ArtifactReference | None:
+    """Atomically INSERT the artifact identity row, or return None if it exists.
+
+    A plain read-then-insert is not race-safe: two concurrent creators of the SAME
+    `(authority, native_id, version_id)` can both observe "not found". Catching the
+    resulting `IntegrityError` is NOT a portable recovery either — it aborts the
+    whole PostgreSQL transaction, which would destroy unrelated work for a caller
+    that composed the insert with `commit=False` (the Local Tool Runtime's derived
+    result, or a scientific import bundle), and the `Session.begin_nested()`
+    savepoint shim is not reliable on every substrate.
+
+    The insert is therefore expressed as ONE dialect-level "insert if absent"
+    statement, so a concurrent creator can never fail here and the caller's
+    transaction stays intact and uncommitted. The winner's row is left exactly as
+    it was: this never overwrites an existing immutable assertion.
+    """
+    resource_id = persistence.new_id()
+    registry = GlobalResourceRegistry(
+        resource_id=resource_id, resource_kind=ResourceKind.ARTIFACT_REFERENCE.value
+    )
+    session.add(registry)
+    session.flush()
+    values: dict[str, Any] = {
+        "artifact_id": resource_id,
+        "authority": authority,
+        "native_id": native_id,
+        "content_type": content_type,
+        "size": size,
+        "checksum": checksum,
+        "version_id": version_id,
+    }
+    identity_columns = ["authority", "native_id", "version_id"]
+    dialect = session.get_bind().dialect.name
+    statement: Any
+    if dialect == "postgresql":
+        statement = (
+            pg_insert(ArtifactReference)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=identity_columns)
+        )
+    elif dialect == "sqlite":
+        statement = (
+            sqlite_insert(ArtifactReference)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=identity_columns)
+        )
+    else:  # pragma: no cover - an unsupported substrate fails closed
+        raise ValidationError(f"unsupported database dialect {dialect!r}")
+    # `RETURNING` (not `rowcount`) decides whether we won: SQLAlchemy 2.0's
+    # `CursorResult.rowcount` is `-1` on PostgreSQL for this
+    # `pg_insert(...).on_conflict_do_nothing()` form (SQLite reports `0`), and a
+    # `-1` is truthy, so a `rowcount`-based check silently skipped the lost-race
+    # cleanup on PostgreSQL and leaked an unused `GlobalResourceRegistry` row per lost
+    # race. `RETURNING` is unambiguous on both substrates and a lost race yields no
+    # row. NOTE: this requires SQLite 3.35+ (`RETURNING` with `ON CONFLICT DO
+    # NOTHING`); the development/test substrate is 3.53 and Python 3.12+ bundles a
+    # recent SQLite.
+    inserted_id = session.execute(
+        statement.returning(ArtifactReference.artifact_id)
+    ).scalar_one_or_none()
+    if inserted_id is None:
+        # Our own unused registry row must not survive a lost race.
+        session.delete(registry)
+        session.flush()
+        return None
+    session.flush()
+    return session.get(ArtifactReference, resource_id)
 
 
 def create_literature_reference_row(

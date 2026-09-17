@@ -15,12 +15,15 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, model_
 from revolab.capabilities import (
     DEFAULT_LITERATURE_RESULT_LIMIT,
     DEFAULT_PROTEIN_RESULT_LIMIT,
+    DEFAULT_STRUCTURE_RESULT_LIMIT,
     LEGAL_COMPUTE_INPUT_KINDS,
     MAX_LITERATURE_QUERY_CHARS,
     MAX_LITERATURE_RESULT_LIMIT,
     MAX_PROTEIN_NAME_CHARS,
     MAX_PROTEIN_QUERY_CHARS,
     MAX_PROTEIN_RESULT_LIMIT,
+    MAX_STRUCTURE_QUERY_CHARS,
+    MAX_STRUCTURE_RESULT_LIMIT,
 )
 from revolab.enums import (
     CREDENTIAL_KIND_PATTERN,
@@ -744,6 +747,99 @@ class ProteinImportRead(BaseModel):
     authority: str
     native_id: str
     protein_name: str = Field(max_length=MAX_PROTEIN_NAME_CHARS)
+
+
+# ---------------------------------------------------------------------------
+# External structure discovery + explicit import (Phase 15) — provider-neutral.
+#
+# A `StructureCandidateRead` is EPHEMERAL external discovery data: bounded
+# presentation fields returned by a read-only provider lookup. It is deliberately
+# NOT a ScientificObject, `ReferenceRead`, or `SearchHit`, it carries NO coordinate
+# bytes, and it is never persisted. After an explicit import the durable canonical
+# Structure and its owned coordinate ArtifactReference are returned through
+# `StructureImportRead` and then read through the EXISTING object-detail and
+# resource surfaces, so there is no second object shape.
+# ---------------------------------------------------------------------------
+
+
+class StructureCandidateRead(BaseModel):
+    """One bounded, untrusted external PDB structure discovery candidate (never truth)."""
+
+    provider_key: str
+    authority: str
+    native_id: str
+    title: str | None = None
+    experimental_methods: list[str] = Field(default_factory=list)
+    resolution_angstrom: float | None = None
+    release_date: str | None = None
+    polymer_entity_count: int | None = None
+
+
+class StructureDiscoveryResultsRead(BaseModel):
+    """The bounded envelope of one external structure discovery search.
+
+    Deliberately exposes no total count, no relevance score, and no coordinate
+    bytes: ordered top-N candidates are the contract, and the query text stays
+    opaque provider grammar that Core never parses.
+    """
+
+    provider_key: str
+    query: str
+    candidates: list[StructureCandidateRead] = Field(default_factory=list)
+
+
+class StructureSearchToolInput(BaseModel):
+    """Canonical input for the Agent-facing read-only structure search Tool.
+
+    Deliberately has NO provider endpoint, url, host, scope, import, or coordinate
+    field. The provider is the one named by the Tool's own descriptor (the canonical
+    Tool id is the authority, exactly like remote explicit actions); the query is
+    opaque provider search text and the limit is bounded. The Tool can never import
+    or persist anything, and it never downloads coordinates.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(min_length=1, max_length=MAX_STRUCTURE_QUERY_CHARS)
+    limit: int = Field(
+        default=DEFAULT_STRUCTURE_RESULT_LIMIT, ge=1, le=MAX_STRUCTURE_RESULT_LIMIT
+    )
+
+
+class StructureImportCreate(BaseModel):
+    """Explicit human import request: stable identity ONLY.
+
+    The client supplies enough to RE-RESOLVE the candidate at the current provider
+    (`provider_key` + durable `(authority, native_id)`) and nothing that will be
+    persisted. A title, method, resolution, coordinate URL, coordinate bytes, PDB
+    version, or checksum supplied here would be untrusted browser-provided
+    scientific data and is therefore not part of the contract at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_key: str = Field(pattern=PROVIDER_KEY_PATTERN)
+    authority: str = Field(min_length=1, max_length=100)
+    native_id: str = Field(min_length=1, max_length=300)
+
+
+class StructureImportRead(BaseModel):
+    """The canonical identity of one explicit structure import.
+
+    It names the durable objects the import produced or reused — the Structure
+    Series and its immutable Revision, the internal coordinate `ArtifactReference`,
+    and the snapshot `ExternalReference` — and echoes the stable external identity.
+    It deliberately does NOT echo the provider payload, the normalized scientific
+    snapshot, or the PDBx/mmCIF bytes: the ordinary object-detail and resource
+    surfaces own object detail.
+    """
+
+    structure_series_id: UUID
+    structure_revision_id: UUID
+    coordinate_artifact_id: UUID
+    external_reference_id: UUID
+    authority: str
+    native_id: str
 
 
 # ---------------------------------------------------------------------------

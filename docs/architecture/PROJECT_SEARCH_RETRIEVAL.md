@@ -450,3 +450,42 @@ external candidate (absent from project.search)
 The Agent-facing protein Tool is read-only (`{provider}.protein.search`,
 `automatic`/`remote`/`read_only`); it calls the shared discovery service and never
 imports, never persists, and never enlarges Agent context.
+
+## 13c. Phase-15 seam: external structure discovery is NOT Project search
+
+Phase 15 adds external PDB structure discovery + explicit coordinate import as a
+SEPARATE application sub-boundary (`docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md`,
+ADR-0021). The four surfaces are never merged:
+
+```text
+project.search              -> canonical REvoLab resources already in Project context
+external literature search  -> ephemeral LiteratureCandidates from a remote provider
+external protein search     -> ephemeral ProteinCandidates from a remote provider
+external structure search   -> ephemeral StructureCandidates from a remote provider
+```
+
+`project.search` never calls a provider, and a remote candidate never becomes a
+`SearchHit`. No search index, document table, or retrieval model is added, because an
+imported Structure's series is already matched through its existing external identity
+mapping and its stored name:
+
+```text
+external candidate (absent from project.search)
+    -> explicit human Import (byte custody + one atomic bundle)
+    -> canonical Structure ScientificObject + ExternalIdentity(pdb, <entry>) mapping
+    -> now visible to project.search by PDB ID and by the STORED series name,
+       with no index to update
+```
+
+Because the stored name is only written on FIRST import, a later title-only upstream
+change does not change what `project.search` matches until a steward renames the
+series through the existing `update_series` operation — bounded presentation
+staleness, never silent corruption. Imported coordinate bytes remain ContentStore
+artifact content and are deliberately NOT full-text indexed; they stay reachable
+through the canonical artifact boundaries (object detail → provenance traversal →
+resource summary → artifact content), and a provider outage after import changes
+nothing about search.
+
+The Agent-facing structure Tool is read-only (`{provider}.structure.search`,
+`automatic`/`remote`/`read_only`); it calls the shared discovery service, downloads no
+coordinates, never imports, never persists, and never enlarges Agent context.

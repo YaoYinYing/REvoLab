@@ -87,3 +87,44 @@ def test_fake_protein_provider_claims_its_own_authority() -> None:
 
     assert FAKE_PROTEIN_AUTHORITY != UNIPROT_AUTHORITY
     assert FakeProteinDriver().authorities == (FAKE_PROTEIN_AUTHORITY,)
+
+
+def test_fake_structure_provider_refuses_production() -> None:
+    """The Phase-15 fake carries the same production guard as the earlier ones."""
+    settings = Settings(environment="production", e2e_fake_structure=True)
+    registry = DriverRegistry()
+    with pytest.raises(RuntimeError, match="must not be enabled in production"):
+        install_drivers(registry, build_driver_context(settings), settings)
+
+
+def test_rcsb_driver_is_installed_only_when_enabled() -> None:
+    """The real RCSB provider is opt-in, exactly like NCBI/UniProt.
+
+    A zero-config deployment keeps the Provider Catalog an honest empty set, so no
+    test or browser run can perform a live RCSB request by accident.
+    """
+    default = Settings()
+    registry = DriverRegistry()
+    install_drivers(registry, build_driver_context(default), default)
+    assert "rcsb" not in registry.names()
+
+    enabled = Settings(rcsb_discovery_enabled=True)
+    registry = DriverRegistry()
+    install_drivers(registry, build_driver_context(enabled), enabled)
+    assert "rcsb" in registry.names()
+    assert registry.get("rcsb").driver.authorities == ("pdb",)
+
+    fake = Settings(e2e_fake_structure=True)
+    registry = DriverRegistry()
+    install_drivers(registry, build_driver_context(fake), fake)
+    assert "fakepdb" in registry.names()
+    # The fake NEVER brings the real remote provider with it.
+    assert "rcsb" not in registry.names()
+
+
+def test_fake_structure_provider_claims_its_own_authority() -> None:
+    from revolab.drivers.rcsb import RCSB_AUTHORITY
+    from revolab.testing.fake_structure import FAKE_STRUCTURE_AUTHORITY, FakeStructureDriver
+
+    assert FAKE_STRUCTURE_AUTHORITY != RCSB_AUTHORITY
+    assert FakeStructureDriver().authorities == (FAKE_STRUCTURE_AUTHORITY,)

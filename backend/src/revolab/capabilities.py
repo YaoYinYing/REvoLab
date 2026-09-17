@@ -15,6 +15,7 @@ never as Core enums or fields.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -497,3 +498,282 @@ class ProteinDiscoveryCapability(Protocol):
     def resolve(
         self, authority: str, native_id: str, credentials: CredentialLease
     ) -> ResolvedProteinRecord: ...
+
+
+# ---------------------------------------------------------------------------
+# Structure discovery capability (Phase 15)
+#
+# The provider-neutral boundary for "discover PDB archive structures REvoLab does
+# not yet know, and take custody of ONE immutable PDBx/mmCIF coordinate snapshot".
+# A provider realizing this protocol returns EPHEMERAL candidates and, for an
+# explicit import, a CURRENTLY RE-RESOLVED record whose coordinate bytes are the
+# exact archive snapshot the import will own. Provider vocabulary (the RCSB Search
+# API JSON query DSL, the Data API GraphQL schema, RCSB attribute paths, PDB
+# identifier grammar, file-download routes) stays inside the driver.
+#
+# `search` and `resolve` are both read-only and persist NOTHING: taking byte
+# custody is an explicit human Import step performed by the application service,
+# never by the capability.
+# ---------------------------------------------------------------------------
+
+# Provider-neutral ceilings for one structure discovery call. They are the SINGLE
+# canonical values: the driver enforces them at the wire boundary and the
+# application service re-applies them to the projection, so a misbehaving driver
+# cannot widen the Agent/frontend surface.
+MAX_STRUCTURE_QUERY_CHARS = 300
+DEFAULT_STRUCTURE_RESULT_LIMIT = 10
+MAX_STRUCTURE_RESULT_LIMIT = 20
+MAX_STRUCTURE_TITLE_CHARS = 500
+MAX_STRUCTURE_METHOD_CHARS = 200
+# A deposited entry can legitimately report more than one experimental method
+# (e.g. X-ray + neutron). The set is bounded so an absurd provider body cannot
+# inflate the normalized payload.
+MAX_STRUCTURE_METHODS = 8
+MAX_STRUCTURE_REVISION_TEXT_CHARS = 100
+
+# Durable external identity bounds, mirroring the persisted columns
+# (`external_identities.authority` varchar(100), `.native_id` varchar(300)).
+MAX_STRUCTURE_AUTHORITY_CHARS = 100
+MAX_STRUCTURE_NATIVE_ID_CHARS = 300
+
+# The ONE canonical semantic media type REvoLab records for an imported PDBx/mmCIF
+# coordinate snapshot. It is a REvoLab assertion, NOT a copy of the transport
+# header: the RCSB file-download documentation states that the generic "download"
+# short-style URL sets `Content-Type: application/octet-stream`, which describes a
+# byte stream and carries no scientific meaning. `chemical/x-cif` is the de-facto
+# community media type for CIF-family files (and is the type the RCSB file service
+# itself serves for `.cif`); the `x-` prefix marks it as a non-IANA convention, and
+# PDBx/mmCIF has no IANA-registered type. The content type is presentation metadata
+# over the bytes: durable byte identity is the checksum, and scientific origin is
+# the `pdb:<entry>` ExternalIdentity + `imported_as` provenance.
+STRUCTURE_COORDINATE_CONTENT_TYPE = "chemical/x-cif"
+
+# The canonical coordinate-format discriminator on a ResolvedStructureRecord.
+# Phase 15 imports PDBx/mmCIF only; legacy `.pdb` and BCIF are never imported.
+STRUCTURE_COORDINATE_FORMAT = "mmcif"
+
+# The operational/persistence ceiling for ONE imported canonical PDBx/mmCIF
+# coordinate snapshot (128 MiB). Observed archive entry files are well under a
+# megabyte for ordinary proteins and tens of MiB for the largest ribosomal/viral
+# assemblies, so this is comfortably above the largest deposited entry coordinate
+# file while bounding the memory and time a single import can consume. A structure
+# larger than this fails EXPLICITLY; coordinates are never truncated.
+MAX_STRUCTURE_COORDINATE_BYTES = 134_217_728  # 128 MiB
+
+# ---------------------------------------------------------------------------
+# `pdb` archive-entry identity semantics (the ONE definition)
+#
+# The `pdb` authority's durable identifier is not provider vocabulary: it is the
+# scientific identity namespace, and BOTH the structure-discovery driver (which
+# validates what the provider returned) and the application import boundary (which
+# keys the `ExternalIdentity` lookup/create) must agree on it. The rules therefore
+# live here, in the neutral capability leaf, rather than being restated in either
+# boundary.
+# ---------------------------------------------------------------------------
+
+# The CURRENT official PDB entry identifier forms:
+#
+# * classic: four characters, the first a digit (`4HHB`, `1CRN`, `10AL`);
+# * extended: the prefix `pdb_` followed by eight alphanumerics (12 characters),
+#   whose official grammar, quoted from the PDBx/mmCIF dictionary and the wwPDB
+#   PDB ID Extension FAQ, is `pdb_[a-z0-9]{8}` (e.g. `pdb_00001abc`).
+#
+# PDB identifiers are NOT permanently four characters, so nothing here assumes they
+# are, and an extended-only identifier is always accepted.
+_LEGACY_PDB_ENTRY_ID_RE = re.compile(r"^[0-9][A-Za-z0-9]{3}$")
+_EXTENDED_PDB_ENTRY_ID_RE = re.compile(r"^pdb_[a-z0-9]{8}$")
+
+# The documented extended alias prefix. Quoted from the official wwPDB PDB ID
+# Extension FAQ: "All existing four-character PDB IDs will be extended by adding
+# prefixing 'pdb_0000' to the IDs, e.g., PDB ID '1abc' would be listed as
+# 'pdb_00001abc'".
+PDB_EXTENDED_ALIAS_PREFIX = "pdb_0000"
+
+# A Computed Structure Model identifier (AlphaFold DB `AF_`, ModelArchive `MA_`).
+# Phase 15 imports the experimental PDB archive only.
+_CSM_ENTRY_ID_RE = re.compile(r"^(?:AF|MA)_")
+
+
+def canonical_pdb_entry_id(value: Any) -> str | None:
+    """Normalize the CASE of one PDB entry identifier, or None when it is not one.
+
+    This is the transport/presentation normalization: it preserves WHICH official
+    spelling was used and only fixes its case (a classic id is uppercase, an extended
+    id is lowercase). `durable_pdb_entry_id` is the identity normalization and is what
+    every durable lookup/create must use.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > MAX_STRUCTURE_NATIVE_ID_CHARS:
+        return None
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(text):
+        return text.upper()
+    lowered = text.lower()
+    if _EXTENDED_PDB_ENTRY_ID_RE.fullmatch(lowered):
+        return lowered
+    return None
+
+
+def pdb_extended_alias_of_legacy(legacy_entry_id: str) -> str:
+    """The documented extended alias of a classic four-character PDB entry id."""
+    return f"{PDB_EXTENDED_ALIAS_PREFIX}{legacy_entry_id.lower()}"
+
+
+def pdb_legacy_alias_of_extended(extended_entry_id: str) -> str | None:
+    """The classic four-character id a documented extended alias denotes, or None.
+
+    Only the `pdb_0000<legacy>` form has a legacy alias; a genuinely extended-only
+    identifier has none. This is the TRANSPORT inverse of
+    `pdb_extended_alias_of_legacy` (the RCSB Search/Data APIs currently accept only
+    the classic spelling, while the file service accepts both).
+    """
+    if not extended_entry_id.startswith(PDB_EXTENDED_ALIAS_PREFIX):
+        return None
+    candidate = extended_entry_id[len(PDB_EXTENDED_ALIAS_PREFIX) :]
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(candidate):
+        return candidate.upper()
+    return None
+
+
+def durable_pdb_entry_id(value: Any) -> str | None:
+    """The ONE stable durable PDB identity of an archive entry, or None.
+
+    This single canonicalization is applied before EVERY `ExternalIdentity` lookup or
+    create and before the imported identity is returned, so the durable scientific
+    identity can never depend on whichever official spelling a particular provider
+    response happened to use.
+
+    wwPDB documents the two current forms as aliases of ONE entry, so the durable form
+    is a single fixed choice rather than "whatever the provider said":
+
+    * a classic four-character id is PROMOTED to its documented extended alias
+      (`1abc` / `1ABC` -> `pdb_00001abc`);
+    * an extended id (`pdb_00001abc`, or a future extended-only `pdb_1abc5678`) is
+      unchanged.
+
+    Both spellings stay fully ACCEPTED at the provider/API boundary — the legacy form
+    is a presentation/transport spelling, not a second identity. Promotion (rather than
+    demotion to four characters) is chosen because wwPDB is transitioning to extended
+    primary ids: the fixed point of this function is the extended form, so the durable
+    identity survives that transition in both directions.
+    """
+    canonical = canonical_pdb_entry_id(value)
+    if canonical is None:
+        return None
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(canonical):
+        return pdb_extended_alias_of_legacy(canonical)
+    return canonical
+
+
+def same_pdb_entry_identity(left: str, right: str) -> bool:
+    """Are two official PDB identifiers the SAME archive entry?
+
+    Case-insensitive, and alias-aware for the documented `pdb_0000<legacy>` form, so a
+    request in one spelling and a provider response in the other still describe the
+    same entry. This is a same-entry test, NOT the durable-identity normalization —
+    that is `durable_pdb_entry_id`.
+    """
+    if left.casefold() == right.casefold():
+        return True
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(left):
+        return pdb_extended_alias_of_legacy(left) == right.casefold()
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(right):
+        return pdb_extended_alias_of_legacy(right) == left.casefold()
+    return False
+
+
+def is_computed_structure_model_id(value: Any) -> bool:
+    """Is this identifier a Computed Structure Model (`AF_...` / `MA_...`)?"""
+    return isinstance(value, str) and bool(_CSM_ENTRY_ID_RE.match(value.strip()))
+
+
+@dataclass(frozen=True)
+class StructureCandidate:
+    """One EPHEMERAL external structure discovery candidate (Phase 15).
+
+    This is provider-neutral presentation data returned by a read-only external
+    lookup. It is deliberately NOT a ScientificObject, `ExternalIdentity`,
+    `ExternalReference`, `ArtifactReference`, `Evidence`, `SearchHit`, or Project
+    truth, and searching never persists it. It carries NO coordinate bytes. All
+    text fields are untrusted external data bounded by the driver.
+
+    `authority` is the DURABLE identity namespace (`pdb`), never the
+    resolver/provider key: another resolver may resolve the same
+    `(authority, native_id)` identity without changing any stored reference.
+    """
+
+    provider_key: str
+    authority: str
+    native_id: str
+    title: str | None = None
+    experimental_methods: tuple[str, ...] = ()
+    resolution_angstrom: float | None = None
+    release_date: str | None = None
+    polymer_entity_count: int | None = None
+
+
+@dataclass(frozen=True)
+class StructureSearchResult:
+    """The bounded result of one external structure discovery search (ephemeral)."""
+
+    provider_key: str
+    candidates: tuple[StructureCandidate, ...]
+
+
+@dataclass(frozen=True)
+class ResolvedStructureRecord:
+    """The CURRENT provider record an explicit import re-resolves (Phase 15).
+
+    This is the canonical, provider-neutral scientific snapshot input: everything
+    needed to build ONE `Structure` ScientificObject plus its owned coordinate
+    artifact, and nothing else. It is NOT durable truth by itself — the
+    application service validates it, takes ContentStore custody of
+    `coordinate_bytes`, and turns it into an immutable revision, an
+    `ExternalReference` snapshot, an internal `ArtifactReference`, and typed
+    provenance edges.
+
+    `coordinate_bytes` is the EXACT canonical PDBx/mmCIF archive snapshot for this
+    entry. It is hidden from `repr` so it can never leak through a log line, and it
+    is bounded by `MAX_STRUCTURE_COORDINATE_BYTES` at the wire boundary.
+    """
+
+    provider_key: str
+    authority: str
+    native_id: str
+    coordinate_format: str
+    coordinate_bytes: bytes = field(repr=False)
+    title: str | None = None
+    experimental_methods: tuple[str, ...] = ()
+    resolution_angstrom: float | None = None
+    entry_revision_major: int | None = None
+    entry_revision_minor: int | None = None
+    entry_revision_date: str | None = None
+
+
+class StructureDiscoveryCapability(Protocol):
+    """The executable external-structure discovery + resolution boundary.
+
+    `search` is a bounded read-only lookup by opaque provider search text;
+    `resolve` re-reads ONE archive entry by its durable `(authority, native_id)`
+    identity AND returns that entry's canonical PDBx/mmCIF coordinate bytes, so an
+    explicit import never trusts client-supplied scientific metadata or coordinate
+    content. Neither method persists anything, and neither accepts a URL, host,
+    scheme, port, proxy, or HTTP method.
+
+    Phase 15 resolves EXPERIMENTAL PDB archive entries only: a Computed Structure
+    Model (CSM) identifier, an entry whose determination methodology is not
+    `experimental`, or an unknown identifier fails closed as a typed capability
+    error rather than being imported.
+    """
+
+    provider_key: str
+    kind: CapabilityKind
+
+    def search(
+        self, query: str, limit: int, credentials: CredentialLease
+    ) -> StructureSearchResult: ...
+
+    def resolve(
+        self, authority: str, native_id: str, credentials: CredentialLease
+    ) -> ResolvedStructureRecord: ...

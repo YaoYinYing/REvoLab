@@ -33,6 +33,7 @@ from revolab import literature as literature_service
 from revolab import proteins as protein_service
 from revolab import queries, schemas, services
 from revolab import search as search_service
+from revolab import structures as structure_service
 from revolab.agent.builder import build_context
 from revolab.agent.conversations import (
     create_conversation,
@@ -46,10 +47,13 @@ from revolab.agent.runtime import AgentLoopBounds, AgentTurnRunner
 from revolab.capabilities import (
     DEFAULT_LITERATURE_RESULT_LIMIT,
     DEFAULT_PROTEIN_RESULT_LIMIT,
+    DEFAULT_STRUCTURE_RESULT_LIMIT,
     MAX_LITERATURE_QUERY_CHARS,
     MAX_LITERATURE_RESULT_LIMIT,
     MAX_PROTEIN_QUERY_CHARS,
     MAX_PROTEIN_RESULT_LIMIT,
+    MAX_STRUCTURE_QUERY_CHARS,
+    MAX_STRUCTURE_RESULT_LIMIT,
     CapabilityError,
     ExternalArtifactRef,
     InputBinding,
@@ -171,6 +175,17 @@ def get_driver_registry() -> DriverRegistry:
     from revolab.drivers import default_registry
 
     return default_registry
+
+
+def get_content_store() -> ContentStore:
+    """FastAPI dependency for the ContentStore.
+
+    It delegates to the same process-wide provider the existing artifact surfaces
+    use, so production behavior is unchanged; it exists as an explicit dependency
+    so tests can inject an isolated ContentStore root without patching a private
+    helper.
+    """
+    return _content_store()
 
 
 def get_secret_store() -> SecretStore:
@@ -958,6 +973,88 @@ def import_protein(
     )
 
 
+# ---------------------------------------------------------------------------
+# External structure discovery + explicit import (Phase 15)
+#
+# Discovery is a READ: a viewer may discover PDB structures when ordinary read
+# policy permits, and it never returns a `SearchHit`, a Project resource, or any
+# coordinate bytes. Import is an explicit owner/member command that RE-RESOLVES the
+# stable identity at the CURRENT provider, takes immutable ContentStore custody of
+# the canonical PDBx/mmCIF bytes, and then creates the canonical Structure
+# ScientificObject plus its identity/provenance graph in ONE transaction. Import
+# never creates Evidence, and it never mutates or refreshes an already-imported
+# Structure.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/projects/{project_id}/structures/discover",
+    response_model=schemas.StructureDiscoveryResultsRead,
+)
+def discover_structures(
+    project_id: UUID,
+    provider_key: str = Query(..., pattern=PROVIDER_KEY_PATTERN),
+    q: str = Query(..., min_length=1, max_length=MAX_STRUCTURE_QUERY_CHARS),
+    limit: int = Query(DEFAULT_STRUCTURE_RESULT_LIMIT, ge=1, le=MAX_STRUCTURE_RESULT_LIMIT),
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+) -> schemas.StructureDiscoveryResultsRead:
+    """Read-only bounded external PDB archive discovery (no persistence).
+
+    `q` is opaque provider search text: Core never parses the RCSB Search API JSON
+    query language — provider vocabulary stays behind the driver. No coordinate
+    bytes are fetched, so a candidate is cheap and ephemeral.
+    """
+    return structure_service.discover_structures(
+        session,
+        registry,
+        store,
+        actor_id,
+        project_id,
+        provider_key=provider_key,
+        query=q,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/projects/{project_id}/structures/import",
+    response_model=schemas.StructureImportRead,
+    status_code=201,
+)
+def import_structure(
+    project_id: UUID,
+    payload: schemas.StructureImportCreate,
+    session: Session = Depends(get_session),
+    actor_id: UUID = Depends(get_actor),
+    registry: DriverRegistry = Depends(get_driver_registry),
+    store: SecretStore = Depends(get_secret_store),
+    content_store: ContentStore = Depends(get_content_store),
+) -> schemas.StructureImportRead:
+    """Explicitly import one PDB archive entry and its canonical mmCIF coordinates.
+
+    The request carries stable identity only; the server re-resolves it at the
+    current provider, downloads the bounded canonical PDBx/mmCIF snapshot, builds
+    the canonical normalized scientific snapshot itself, takes immutable ContentStore
+    custody of the bytes, and persists ONE atomic bundle. Coordinate bytes and
+    scientific metadata are never accepted from the client and are never echoed in
+    the response.
+    """
+    return structure_service.import_structure(
+        session,
+        registry,
+        store,
+        content_store,
+        actor_id,
+        project_id,
+        provider_key=payload.provider_key,
+        authority=payload.authority,
+        native_id=payload.native_id,
+    )
+
+
 @router.post("/projects/{project_id}/external-references", status_code=201)
 def create_external_reference(
     project_id: UUID,
@@ -1002,7 +1099,7 @@ def resolve_artifact_content(
     services.readable_membership(session, actor_id, project_id)
     services._require_visible(session, project_id, artifact_id)
     artifact = session.get(ArtifactReference, artifact_id)
-    if artifact is None or artifact.authority != "revolab":
+    if artifact is None or artifact.authority != services.INTERNAL_ARTIFACT_AUTHORITY:
         raise HTTPException(status_code=404, detail="artifact is not an internal revolab artifact")
     data = _content_store().get(artifact.native_id)
     return StreamingResponse(
@@ -2085,7 +2182,7 @@ def resolve_compute_artifact(
     ingestion: nothing is copied into REvoLab ContentStore here."""
     services.readable_membership(session, actor_id, project_id)
     artifact = _require_artifact(session, project_id, artifact_id)
-    if artifact.authority == "revolab":
+    if artifact.authority == services.INTERNAL_ARTIFACT_AUTHORITY:
         raise HTTPException(status_code=404, detail="use the internal artifact content endpoint")
     provider_key = registry.driver_for_authority(artifact.authority)
     if provider_key is None:

@@ -495,6 +495,78 @@ collaboration/sharing and the agent.
 
 ---
 
+### Phase 15 — RCSB PDB Structure Discovery & Immutable Coordinate Import
+
+- **Goal:** build REvoLab's first external **3D-structure** import — discover PDB
+  archive entries REvoLab does not yet know, and let a human explicitly import one as
+  a canonical Structure ScientificObject whose exact coordinate bytes REvoLab then
+  owns — without merging discovery into Project Search, persisting candidates, leaving
+  imported coordinates provider-dependent, duplicating identity or coordinate linkage
+  into the payload, silently refreshing imported structures, creating biological
+  assemblies/Complexes/ligands/proteins, or letting the Agent import.
+- **Owned domains:** Provider / Capability (the new `STRUCTURE_DISCOVERY` capability
+  kind + the RCSB driver) + application orchestration (the discovery/import
+  sub-boundary; normative owner: `docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md`,
+  ADR-0021). `ExternalIdentity` stays owned by Scientific Object, `ExternalReference`
+  and the provenance edges by Evidence/Provenance, byte custody by ContentStore, and
+  the links/stewardship by Project, so **no Core domain and no DAG change**.
+- **Vertical slice:** RCSB Search API read-only discovery over the fixed official host
+  (one bounded `full_text` query + an experimental-archive constraint) → ONE batched
+  Data API GraphQL metadata request → provider-neutral `StructureDiscoveryCapability` →
+  bounded ephemeral `StructureCandidate` → explicit human `Import to Project` →
+  CURRENT provider resolution of `(authority=pdb, native_id=PDB entry id)` (legacy or
+  extended, alias-normalized to the provider-confirmed canonical id) → bounded
+  canonical PDBx/mmCIF coordinate download → ContentStore immutable content-addressed
+  custody → internal `ArtifactReference(authority=revolab)` → ONE `ExternalIdentity` +
+  ONE immutable `ExternalReference` snapshot → ONE Structure ScientificObject with one
+  immutable initial Revision → `identity` mapping → `ExternalReference
+  --imported_as--> StructureRevision` and `ArtifactReference --imported_as-->` the SAME
+  revision → links + new-resource stewardship → Phase-12 Project Search visibility →
+  explicit `ContextSelection`/`ContextBuilder`. The Agent gains ONE read-only remote
+  Tool (`{provider}.structure.search`, `automatic`/`remote`/`read_only`) that downloads
+  no coordinates.
+- **Acceptance evidence:** the real driver translates bounded plain text into the
+  Search API query and never exposes the raw RCSB DSL, accepts both Search result
+  shapes and HTTP 204, treats a GraphQL `errors` array as a failure despite HTTP 200,
+  takes the minimum of the unsorted `resolution_combined` array and invents no
+  resolution for NMR, normalizes the documented legacy↔extended alias while never
+  assuming PDB IDs are four characters, excludes Computed Structure Models from
+  discovery and rejects them (and non-experimental methodologies) at resolution,
+  bounds the coordinate download while streaming and fails closed on empty/oversized/
+  non-mmCIF bodies, and translates every status/redirect/timeout into a typed
+  `CapabilityError` without leaking a URL/query/identifier/body; the caller cannot
+  supply a URL/host/GraphQL; discovery writes nothing and downloads nothing; a viewer
+  may discover but not import; import re-resolves rather than trusting client data and
+  builds the normalized snapshot server-side; initial import creates exactly the
+  canonical bundle (verified in the database, not just the response) with TWO
+  `imported_as` edges onto one revision and null bootstrap payload fields; the
+  coordinate artifact checksum/size match the exact stored bytes and the snapshot
+  digest recomputes from the stored revision payload + artifact checksum; repeat import
+  is idempotent; two Projects share ONE global bundle (including ONE artifact) and the
+  second never steals stewardship; changed coordinates/normalized metadata, a manual
+  incomplete mapping, and a digest/artifact disagreement all fail closed with no
+  durable change; a failed import leaves no partial DATABASE state while any
+  unreachable content-addressed blob is acknowledged honestly; same-Project and
+  cross-Project first-import races and the content-only artifact race converge on one
+  bundle with no raw `IntegrityError` (PostgreSQL); import creates zero Evidence and
+  zero Decision; provider outage invalidates nothing; imported structures become
+  Project-searchable; coordinates never enter `ProjectContext`; the Agent structure
+  search persists nothing, downloads nothing, and cannot import; hostile provider text
+  changes neither authority nor the ToolCatalog; a different resolver for the same
+  authority still creates the `pdb` identity; OpenAPI/TS contracts, frontend
+  tests/build, and the Playwright slice are green; Alembic drift stays clean (no
+  migration).
+- **Non-goals:** structure refresh → new revision semantics, obsolete/superseded/alias
+  reconciliation, integrative (IHM) entries, UniProt↔PDB mapping, polymer entity
+  import, chain objects, biological assemblies, Complex objects, ligand extraction,
+  structure factors/EM maps/NMR restraints/validation reports, associated publication
+  auto-import, legacy PDB/BCIF/XML, mmCIF parsing, structure parsing/analysis/
+  comparison, Mol*/3D visualization, REvoDesign handoff, PyMOL integration,
+  RAG/vector retrieval, an Agent import Tool, automatic import, background
+  sync/crawling, and a PDB mirror/cache.
+
+---
+
 ## Final architecture invariants (enter CLAUDE.md)
 
 These are derived from the whole design; they are the concisely load-bearing rules:

@@ -169,15 +169,16 @@ def test_revocation_changes_next_query_availability_without_stored_state(session
 
 def test_provider_vocabulary_does_not_enter_core_enums():
     core_values = {kind.value for kind in CapabilityKind}
-    # Phase 13 added `literature_discovery` and Phase 14 added `protein_discovery`,
-    # each because a real provider (NCBI PubMed, UniProt) now realizes it.
-    # Capability kinds are provider-NEUTRAL categories; no vendor-specific term is
-    # a Core enum value.
+    # Phase 13 added `literature_discovery`, Phase 14 added `protein_discovery`, and
+    # Phase 15 added `structure_discovery` — each because a real provider (NCBI
+    # PubMed, UniProt, RCSB PDB) now realizes it. Capability kinds are
+    # provider-NEUTRAL categories; no vendor-specific term is a Core enum value.
     assert core_values == {
         "compute",
         "artifact_resolution",
         "literature_discovery",
         "protein_discovery",
+        "structure_discovery",
     }
     # Credential kinds are provider-declared; no vendor-specific term is a Core enum.
     assert "api_key" not in core_values
@@ -185,6 +186,8 @@ def test_provider_vocabulary_does_not_enter_core_enums():
     assert "ncbi" not in core_values
     assert "pubmed" not in core_values
     assert "uniprot" not in core_values
+    assert "rcsb" not in core_values
+    assert "pdb" not in core_values
 
 
 def _started_registry() -> DriverRegistry:

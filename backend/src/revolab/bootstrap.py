@@ -25,6 +25,7 @@ def build_driver_context(settings: Settings) -> DriverContext:
         "ncbi_timeout_seconds": settings.ncbi_timeout_seconds,
         "ncbi_min_request_interval_seconds": settings.ncbi_min_request_interval_seconds,
         "uniprot_timeout_seconds": settings.uniprot_timeout_seconds,
+        "rcsb_timeout_seconds": settings.rcsb_timeout_seconds,
     }
     return DriverContext(
         environment=settings.environment,
@@ -87,3 +88,21 @@ def install_drivers(registry: DriverRegistry, context: DriverContext, settings: 
         from revolab.testing.fake_protein import FakeProteinDriver
 
         registry.register(FakeProteinDriver())
+    # Phase-15 RCSB PDB structure discovery. The public Search/Data/file services
+    # need no credential, but the real remote driver is installed only when the
+    # deployment explicitly enables it — exactly like UniProt/NCBI — so a
+    # zero-config deployment keeps the Provider Catalog an honest empty set and CI
+    # never performs a live RCSB request. Its authority (`pdb`) collides loudly with
+    # any other driver claiming the same durable identity namespace.
+    if settings.rcsb_discovery_enabled:
+        from revolab.drivers.rcsb import RcsbDriver
+
+        registry.register(RcsbDriver())
+    if settings.e2e_fake_structure:
+        if settings.environment == "production":
+            raise RuntimeError(
+                "the in-process fake structure provider must not be enabled in production"
+            )
+        from revolab.testing.fake_structure import FakeStructureDriver
+
+        registry.register(FakeStructureDriver())

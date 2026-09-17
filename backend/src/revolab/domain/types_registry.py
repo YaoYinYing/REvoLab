@@ -8,9 +8,10 @@ schema-versioned JSONB column populated only through these validators.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from revolab.domain.errors import ValidationError
 from revolab.enums import ObjectType
@@ -41,6 +42,34 @@ class StructurePayload(BaseModel):
     pdb_id: str | None = None
     coordinates_ref: str | None = None
     ligand_ref: str | None = None
+
+    @field_validator("resolution", mode="before")
+    @classmethod
+    def _reject_boolean_resolution(cls, value: Any) -> Any:
+        """A boolean is never a resolution: `True`/`False` would otherwise be
+        silently coerced to `1.0`/`0.0` before the numeric check runs."""
+        if isinstance(value, bool):
+            raise ValueError("resolution must be a finite positive angstrom value")
+        return value
+
+    @field_validator("resolution")
+    @classmethod
+    def _resolution_is_a_finite_positive_angstrom_value(
+        cls, value: float | None
+    ) -> float | None:
+        """`resolution` is an Å value or absent — never NaN, infinity, zero, or
+        negative.
+
+        This is the Core semantic invariant, not an import-only rule: any path
+        that persists a `structure` revision (a manual create, an append, or an
+        explicit external import) goes through this registry. A non-application
+        (e.g. NMR) structure records `null`, and no resolution is ever invented.
+        """
+        if value is None:
+            return None
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("resolution must be a finite positive angstrom value")
+        return value
 
 
 class VariantPayload(BaseModel):

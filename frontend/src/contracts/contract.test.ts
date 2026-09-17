@@ -266,4 +266,67 @@ describe('generated API contract boundary', () => {
     // ToolCatalog (`backend/tests/test_protein_agent.py`): exactly {query, limit},
     // extra=forbid, no url/host/sequence/import field, and no protein import Tool.
   })
+
+  it('Phase-15 structure discovery/import surface is typed, generated and strict', () => {
+    for (const path of [
+      '/api/projects/{project_id}/structures/discover',
+      '/api/projects/{project_id}/structures/import',
+    ]) {
+      expect(spec.paths[path], `missing structure path ${path}`).toBeDefined()
+      expect(schemaDts).toContain(JSON.stringify(path))
+    }
+
+    // The new capability kind is a generated contract value, never a hand-written
+    // frontend literal.
+    expect(spec.components.schemas.CapabilityKind.enum).toContain('structure_discovery')
+
+    // An import request carries STABLE IDENTITY ONLY: no title, method, resolution,
+    // coordinate URL, coordinates, PDB version, or checksum, so a tampered browser
+    // payload can never become persisted scientific truth or byte custody.
+    const importCreate = spec.components.schemas.StructureImportCreate as {
+      properties?: Record<string, unknown>
+      additionalProperties?: unknown
+    }
+    expect(Object.keys(importCreate.properties ?? {}).sort()).toEqual([
+      'authority',
+      'native_id',
+      'provider_key',
+    ])
+    expect(importCreate.additionalProperties).toBe(false)
+
+    // The import response names the canonical durable objects (including the
+    // ContentStore-owned coordinate artifact) and never echoes the normalized
+    // snapshot or the coordinates: the ordinary object/resource surfaces own detail.
+    const importRead = spec.components.schemas.StructureImportRead as {
+      properties?: Record<string, unknown>
+    }
+    expect(Object.keys(importRead.properties ?? {}).sort()).toEqual([
+      'authority',
+      'coordinate_artifact_id',
+      'external_reference_id',
+      'native_id',
+      'structure_revision_id',
+      'structure_series_id',
+    ])
+
+    // The ephemeral candidate is bounded provider-neutral presentation data with NO
+    // coordinate bytes.
+    const candidate = spec.components.schemas.StructureCandidateRead as {
+      properties?: Record<string, unknown>
+    }
+    expect(Object.keys(candidate.properties ?? {}).sort()).toEqual([
+      'authority',
+      'experimental_methods',
+      'native_id',
+      'polymer_entity_count',
+      'provider_key',
+      'release_date',
+      'resolution_angstrom',
+      'title',
+    ])
+
+    // The Agent-facing search Tool input is asserted where it is projected into the
+    // ToolCatalog (`backend/tests/test_structure_agent.py`): exactly {query, limit},
+    // extra=forbid, no url/host/graphql/import/coordinate field, and no import Tool.
+  })
 })

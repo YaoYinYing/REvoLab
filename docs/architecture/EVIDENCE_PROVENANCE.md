@@ -63,6 +63,27 @@ ArtifactReference
 - `ContentStore` is a **Core shared storage primitive**; the owning domain for the
   *artifact record + provenance* remains Evidence/Provenance (see `DOMAIN_BOUNDARIES.md`).
 
+**Ingestion use cases (Phase 15 clarification).** The set of things ContentStore holds
+is explicit, and Phase 15 adds the third:
+
+```text
+user uploads
+persisted local-tool outputs
+explicitly imported static external data snapshots   (Phase 15: PDBx/mmCIF coordinates)
+```
+
+It does **NOT** mean REvoLab scientifically originated the bytes, and it does not turn
+ContentStore into a remote cache, an HTTP cache, or a provider mirror. Only an
+**explicit Import** transfers the selected external snapshot into REvoLab custody: a
+read-only discovery or candidate never does, and neither does merely resolving
+metadata. The net-new Phase-15 consequence is that an imported structure's coordinate
+bytes survive the provider becoming unavailable — durability comes from the
+content-addressed `checksum`, never from assuming a remote URL stays reachable. Because
+ContentStore and PostgreSQL are not one distributed transaction, a rolled-back import
+may leave an unreachable content-addressed blob: it is not visible Project truth, it is
+safely reused by a later import of the same bytes, and a future collector may remove
+it.
+
 ## External discovery: candidate = remote read, reference = durable identity
 
 Phase 13 separates three things that are easy to conflate:
@@ -106,6 +127,37 @@ means a new revision, a new object, an alias, or a correction is a separate scie
 question that Phase 14 deliberately does not answer. Provider outage never invalidates
 an imported object or its provenance. Normative semantics:
 `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` (ADR-0020).
+
+**Phase 15 extends this to a 3D structure, and adds the byte-custody vs
+scientific-origin distinction — which is load-bearing.** A PDB structure import takes
+immutable CUSTODY of the coordinate bytes, so three facts must be read from three
+different places:
+
+```text
+StructureCandidate       ephemeral, untrusted output of a REMOTE read-only lookup (no coordinates)
+ExternalIdentity(pdb)    the durable `(authority, native_id)` — global, not Project-owned
+ExternalReference        immutable resolver snapshot provenance over THAT identity
+ArtifactReference(revolab)  the exact BYTES REvoLab owns, addressed by content checksum
+Structure ScientificObject  the normalized imported content (one immutable initial Revision)
+Evidence / Decision      the Project's interpretation (a SEPARATE, explicit human act)
+```
+
+> **`authority=revolab` on an ArtifactReference means REvoLab owns those exact bytes
+> — never that REvoLab authored or scientifically originated them.**
+
+Never infer scientific origin from `authority=revolab`, and never infer byte
+availability from `authority=pdb`: an `authority=pdb` artifact reference would leave
+the imported Structure dependent on live provider availability and current mutable
+archive state. Scientific origin is the `ExternalIdentity(pdb, <entry>)` +
+`ExternalReference` + `imported_as` chain; durable byte identity is the ContentStore
+checksum. The snapshot checksum digests `{structure_payload, coordinate_checksum}`, so
+a changed archive entry — including changed coordinates — raises a typed conflict
+rather than silently rewriting the revision or replacing the artifact. Import creates
+zero Evidence and zero Decision, and provider outage never invalidates an imported
+Structure, its coordinate artifact, its provenance, or its Project Search visibility.
+ContentStore custody is a byte boundary, not a scientific claim: it is deliberately
+not a remote cache, an HTTP cache, or a provider mirror. Normative semantics:
+`docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md` (ADR-0021).
 
 ---
 

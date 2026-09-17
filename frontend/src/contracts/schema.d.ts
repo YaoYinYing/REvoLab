@@ -1162,6 +1162,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/structures/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Discover Structures
+         * @description Read-only bounded external PDB archive discovery (no persistence).
+         *
+         *     `q` is opaque provider search text: Core never parses the RCSB Search API JSON
+         *     query language — provider vocabulary stays behind the driver. No coordinate
+         *     bytes are fetched, so a candidate is cheap and ephemeral.
+         */
+        get: operations["discover_structures_api_projects__project_id__structures_discover_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/structures/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Structure
+         * @description Explicitly import one PDB archive entry and its canonical mmCIF coordinates.
+         *
+         *     The request carries stable identity only; the server re-resolves it at the
+         *     current provider, downloads the bounded canonical PDBx/mmCIF snapshot, builds
+         *     the canonical normalized scientific snapshot itself, takes immutable ContentStore
+         *     custody of the bytes, and persists ONE atomic bundle. Coordinate bytes and
+         *     scientific metadata are never accepted from the client and are never echoed in
+         *     the response.
+         */
+        post: operations["import_structure_api_projects__project_id__structures_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/tool-invocations": {
         parameters: {
             query?: never;
@@ -1551,10 +1602,12 @@ export interface components {
          *     concrete, provider-neutral use case forces it — never pre-projected as
          *     speculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a
          *     real provider (NCBI PubMed) now realizes it; `PROTEIN_DISCOVERY` was added by
-         *     Phase 14 because a real provider (UniProt) now realizes it.
+         *     Phase 14 because a real provider (UniProt) now realizes it;
+         *     `STRUCTURE_DISCOVERY` was added by Phase 15 because a real provider (RCSB PDB)
+         *     now realizes it.
          * @enum {string}
          */
-        CapabilityKind: "compute" | "artifact_resolution" | "literature_discovery" | "protein_discovery";
+        CapabilityKind: "compute" | "artifact_resolution" | "literature_discovery" | "protein_discovery" | "structure_discovery";
         /** CitationCreate */
         CitationCreate: {
             /** @default supports */
@@ -3376,6 +3429,99 @@ export interface components {
             authority: string;
             /** Native Id */
             native_id: string;
+        };
+        /**
+         * StructureCandidateRead
+         * @description One bounded, untrusted external PDB structure discovery candidate (never truth).
+         */
+        StructureCandidateRead: {
+            /** Authority */
+            authority: string;
+            /** Experimental Methods */
+            experimental_methods?: string[];
+            /** Native Id */
+            native_id: string;
+            /** Polymer Entity Count */
+            polymer_entity_count?: number | null;
+            /** Provider Key */
+            provider_key: string;
+            /** Release Date */
+            release_date?: string | null;
+            /** Resolution Angstrom */
+            resolution_angstrom?: number | null;
+            /** Title */
+            title?: string | null;
+        };
+        /**
+         * StructureDiscoveryResultsRead
+         * @description The bounded envelope of one external structure discovery search.
+         *
+         *     Deliberately exposes no total count, no relevance score, and no coordinate
+         *     bytes: ordered top-N candidates are the contract, and the query text stays
+         *     opaque provider grammar that Core never parses.
+         */
+        StructureDiscoveryResultsRead: {
+            /** Candidates */
+            candidates?: components["schemas"]["StructureCandidateRead"][];
+            /** Provider Key */
+            provider_key: string;
+            /** Query */
+            query: string;
+        };
+        /**
+         * StructureImportCreate
+         * @description Explicit human import request: stable identity ONLY.
+         *
+         *     The client supplies enough to RE-RESOLVE the candidate at the current provider
+         *     (`provider_key` + durable `(authority, native_id)`) and nothing that will be
+         *     persisted. A title, method, resolution, coordinate URL, coordinate bytes, PDB
+         *     version, or checksum supplied here would be untrusted browser-provided
+         *     scientific data and is therefore not part of the contract at all.
+         */
+        StructureImportCreate: {
+            /** Authority */
+            authority: string;
+            /** Native Id */
+            native_id: string;
+            /** Provider Key */
+            provider_key: string;
+        };
+        /**
+         * StructureImportRead
+         * @description The canonical identity of one explicit structure import.
+         *
+         *     It names the durable objects the import produced or reused — the Structure
+         *     Series and its immutable Revision, the internal coordinate `ArtifactReference`,
+         *     and the snapshot `ExternalReference` — and echoes the stable external identity.
+         *     It deliberately does NOT echo the provider payload, the normalized scientific
+         *     snapshot, or the PDBx/mmCIF bytes: the ordinary object-detail and resource
+         *     surfaces own object detail.
+         */
+        StructureImportRead: {
+            /** Authority */
+            authority: string;
+            /**
+             * Coordinate Artifact Id
+             * Format: uuid
+             */
+            coordinate_artifact_id: string;
+            /**
+             * External Reference Id
+             * Format: uuid
+             */
+            external_reference_id: string;
+            /** Native Id */
+            native_id: string;
+            /**
+             * Structure Revision Id
+             * Format: uuid
+             */
+            structure_revision_id: string;
+            /**
+             * Structure Series Id
+             * Format: uuid
+             */
+            structure_series_id: string;
         };
         /** SupersedeCreate */
         SupersedeCreate: {
@@ -6466,6 +6612,80 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ResourceShareRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discover_structures_api_projects__project_id__structures_discover_get: {
+        parameters: {
+            query: {
+                provider_key: string;
+                q: string;
+                limit?: number;
+            };
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StructureDiscoveryResultsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_structure_api_projects__project_id__structures_import_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Actor-Id"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StructureImportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StructureImportRead"];
                 };
             };
             /** @description Validation Error */

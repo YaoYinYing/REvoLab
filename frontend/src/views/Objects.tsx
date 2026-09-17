@@ -8,6 +8,7 @@ import { Button } from '../components/buttons'
 import { Badge, Empty, ErrorBox, EnumSelect, Field, LoadMore, Loading } from '../components/ui'
 import { DEFAULT_OBJECT_TYPE, OBJECT_TYPES } from '../contracts/enums'
 import { ProteinDiscoveryView } from './ProteinDiscovery'
+import { StructureDiscoveryView } from './StructureDiscovery'
 
 const PAGE_SIZE = 50
 
@@ -43,10 +44,11 @@ export function ObjectsView({
   const [objectType, setObjectType] = useState<ObjectType>(DEFAULT_OBJECT_TYPE)
   const [description, setDescription] = useState('')
   const [payloadText, setPayloadText] = useState('')
-  // Phase 14: the Objects workspace hosts two compact panels rather than a new
-  // top-level nav entry — "Project objects" (what REvoLab already knows) and
-  // "Discover proteins" (external discovery + explicit import).
-  const [panel, setPanel] = useState<'project' | 'discover'>('project')
+  // Phase 14/15: the Objects workspace hosts compact panels rather than new
+  // top-level nav entries — "Project objects" (what REvoLab already knows),
+  // "Discover proteins", and "Discover structures" (external discovery + explicit
+  // import).
+  const [panel, setPanel] = useState<'project' | 'discover' | 'structures'>('project')
 
   async function onCreate(event: React.FormEvent) {
     event.preventDefault()
@@ -103,9 +105,24 @@ export function ObjectsView({
         >
           Discover proteins
         </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={panel === 'structures'}
+          className={panel === 'structures' ? 'panel-tab active' : 'panel-tab'}
+          onClick={() => setPanel('structures')}
+        >
+          Discover structures
+        </button>
       </div>
 
-      {panel === 'discover' ? (
+      {panel === 'structures' ? (
+        <StructureDiscoveryView
+          actorId={actorId}
+          projectId={projectId}
+          onOpenObject={onOpenObject}
+        />
+      ) : panel === 'discover' ? (
         <ProteinDiscoveryView
           actorId={actorId}
           projectId={projectId}

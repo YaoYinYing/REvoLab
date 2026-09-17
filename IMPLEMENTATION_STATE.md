@@ -1,6 +1,6 @@
 # Implementation State
 
-Last verified: 2026-09-15
+Last verified: 2026-09-17
 
 This file records actual, machine-verified repository state — not future plans.
 
@@ -78,10 +78,11 @@ machine evidence recorded at the feature-branch head and during that PR's indepe
 review; it is not rewritten to look current. The post-merge reconciliation of the
 Phase-13 acceptance is recorded in "Post-merge record" below.
 
-**Phase 14 (UniProt Protein Discovery & Scientific Object Import) is implemented on
-`feat/phase-14-uniprot-protein-import` and machine-verified**; its architectural
-decision is **Proposed — pending human acceptance**
-(`docs/architecture/EXTERNAL_PROTEIN_IMPORT.md`, ADR-0020). It adds REvoLab's first
+**Phase 14 (UniProt Protein Discovery & Scientific Object Import) is merged into
+`main`** (PR #15, squash commit `93e2b221484446de5ca63db318a8099cc8ca799e`,
+`feat(phase 14): add UniProt protein discovery and object import`); its architectural
+decision is **Accepted** (`docs/architecture/EXTERNAL_PROTEIN_IMPORT.md`, ADR-0020) —
+the PR #15 human review and merge is the explicit acceptance event. It adds REvoLab's first
 external **biological-entity** import: UniProt read-only discovery → provider-neutral
 `ProteinDiscoveryCapability` → bounded EPHEMERAL, sequence-free `ProteinCandidate` →
 explicit human Import → CURRENT provider resolution of the active primary
@@ -99,6 +100,38 @@ invariants are:
 > **External candidate ≠ Project truth. Provider/resolver ≠ durable identity
 > authority. Protein ≠ Sequence. Import provenance ≠ Evidence. A changed external
 > record never silently mutates an imported ScientificObject.**
+
+**Phases 1–14 are the accepted `main` state.** The Phase-14 section below preserves the
+machine evidence recorded at the feature-branch head and during that PR's independent
+review; it is not rewritten to look current. The post-merge reconciliation of the
+Phase-14 acceptance is recorded in "Post-merge record" below.
+
+**Phase 15 (RCSB PDB Structure Discovery & Immutable Coordinate Import) is implemented
+on `feat/phase-15-rcsb-structure-import` and machine-verified**; its architectural
+decision is **Proposed — pending human acceptance**
+(`docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md`, ADR-0021). It adds REvoLab's first
+external **3D-structure** import: RCSB PDB Search/Data read-only discovery → one new
+provider-neutral `StructureDiscoveryCapability` → bounded EPHEMERAL, coordinate-free
+`StructureCandidate` → explicit human Import → CURRENT RCSB resolution of
+`(authority=pdb, native_id=PDB entry id)` (legacy or extended, alias-normalized) →
+bounded canonical PDBx/mmCIF coordinate download → **ContentStore immutable
+content-addressed byte custody** → internal `ArtifactReference(authority=revolab)` +
+immutable `ExternalReference` snapshot → ONE canonical Structure ScientificObject with
+one immutable initial Revision → `ExternalReference --imported_as-->` and
+`ArtifactReference --imported_as-->` the SAME revision → links + new-resource
+stewardship → Phase-12 Project Search → explicit `ContextSelection`/`ContextBuilder` —
+without adding a Core domain, a search index, a candidate cache, a second blob store, a
+3D viewer, or an Agent import Tool. The governing invariants are:
+
+> **External identity, coordinate bytes, ScientificObject content, and scientific
+> interpretation are four separate truths, and none may silently substitute for
+> another.**
+
+> **Explicit Import takes custody of one immutable coordinate snapshot; a changed PDB
+> snapshot never silently mutates an imported Structure revision.**
+
+> **`authority=revolab` on an ArtifactReference means REvoLab owns those exact bytes —
+> never that REvoLab authored or scientifically originated them.**
 
 ## Implemented (Phase 1)
 
@@ -3056,6 +3089,559 @@ driver is tested over an injected deterministic HTTP transport, and the browser 
 uses an in-process fake realizing the SAME capability boundary through the SAME
 Driver/Capability registry).
 
+## Implemented (Phase 15)
+
+- **Bookkeeping first.** The human-accepted Phase-14 post-merge truth was reconciled
+  before any Phase-15 code: `ADR-0020` and `EXTERNAL_PROTEIN_IMPORT.md` were marked
+  **Accepted** (squash commit
+  `93e2b221484446de5ca63db318a8099cc8ca799e`), and the Status section above now records
+  Phases 1–14 as the accepted `main` baseline. Historical Phase-14 sections were not
+  rewritten.
+- **One new Core capability kind.** `CapabilityKind.STRUCTURE_DISCOVERY`
+  (`revolab/enums.py`) plus `READ_ONLY_CAPABILITY_KINDS` membership in `services.py`;
+  not persisted, so no migration.
+- **Provider-neutral value objects + Protocol** (`revolab/capabilities.py`):
+  `StructureCandidate`, `StructureSearchResult`, `ResolvedStructureRecord` (with
+  `coordinate_bytes` hidden from `repr`), `StructureDiscoveryCapability`, the canonical
+  `MAX_STRUCTURE_*` bounds, `STRUCTURE_COORDINATE_CONTENT_TYPE = "chemical/x-cif"`,
+  `STRUCTURE_COORDINATE_FORMAT = "mmcif"`, and
+  `MAX_STRUCTURE_COORDINATE_BYTES = 134_217_728` (128 MiB).
+- **One invocation gate** (`revolab/domain/discovery.py`): `search_structures` /
+  `resolve_structure`, reusing the existing `prepared_capability` gate (READY driver →
+  policy → credentials → ephemeral lease), so availability/credential translation
+  exists exactly once.
+- **The real RCSB driver** (`revolab/drivers/rcsb.py`): three FIXED documented hosts
+  (`search.rcsb.org`, `data.rcsb.org`, `files.rcsb.org`) with one client bound per
+  host, `follow_redirects=False`, `trust_env=False`, bounded streaming reads (2 MiB
+  for API JSON, 128 MiB for coordinates), bounded timeouts, typed `CapabilityError`
+  translation, and a fixed bounded health probe. Discovery is ONE Search API
+  `full_text` query (plus an experimental-archive predicate and
+  `results_content_type`) followed by ONE batched GraphQL `entries(entry_ids:…)`
+  request — never N+1. The GraphQL document is a module constant with the entry ids
+  bound as VARIABLES, so no caller input reaches the query text. Inspected against the
+  CURRENT official contracts on 2026-09-17 (documented in
+  `EXTERNAL_STRUCTURE_IMPORT.md` §10) and **live-verified**, including: HTTP 204 is a
+  successful empty search; a GraphQL error arrives with HTTP 200 and an `errors` array;
+  `resolution_combined` is an UNSORTED `[Float]` array (and null for NMR); the
+  identifier grammar `pdb_[a-z0-9]{8}` is the extended form; the documented
+  `pdb_0000<legacy>` alias makes both identifier forms ONE entry; and the Search/Data
+  APIs currently accept only the classic id while the file host accepts both.
+- **The application service** (`revolab/structures.py`): `discover_structures`
+  (read-only, zero persistence, zero coordinate download, re-bounded projection) and
+  `import_structure` (mutation authority → CURRENT re-resolution *including the
+  coordinate bytes* → identity verification → server-side normalized snapshot →
+  ContentStore byte custody → atomic get-or-create). Contains the snapshot-checksum
+  function (`sha256({structure_payload, coordinate_checksum})`), the complete-bundle
+  validator (`_load_bundle` fails closed on a manual/half/wrong-typed/retired/
+  non-canonical/multi-snapshot/provider-authority-artifact bundle **and** on a digest
+  that disagrees with the stored revision payload + artifact checksum), the
+  changed-snapshot conflict, SAVEPOINT-guarded idempotent linking, and narrow
+  `IntegrityError` recovery for concurrent first imports.
+- **Shared concurrency hardening (preserving every existing caller).**
+  `_persist_artifact_reference_trusted` now delegates row creation to ONE new
+  domain operation, `provenance.create_artifact_reference_row_if_absent`, which is a
+  single dialect-level *insert-if-absent* statement (`ON CONFLICT DO NOTHING` on
+  `uq_artifact_identity`) for PostgreSQL and SQLite. Two concurrent creators of the
+  same content-addressed artifact now converge on ONE row, a lost race cleans up its
+  own unused `GlobalResourceRegistry` row, and the loser's transaction is never
+  aborted — which keeps the pre-existing `commit=False` composition contract (the
+  Local Tool Runtime's derived result, and the import bundle) intact.
+  `IntegrityError`-catching recovery and a `begin_nested()` savepoint were both
+  rejected, and the reason is recorded in the ADR.
+- **Core Structure payload invariant.** `domain/types_registry.py` now enforces
+  `resolution` = finite positive Å or absent (rejecting `NaN`, `infinity`, zero,
+  negative, and booleans), so manual creation, revision appends, and imports all obey
+  ONE rule; regression coverage exercises manual `structure` creation through
+  `services.create_object`.
+- **API** (`api.py`): `GET /api/projects/{project_id}/structures/discover` and
+  `POST /api/projects/{project_id}/structures/import`, with strict Pydantic schemas
+  (`StructureCandidateRead`, `StructureDiscoveryResultsRead`, `StructureSearchToolInput`,
+  `StructureImportCreate` — `extra="forbid"`, stable identity only — and
+  `StructureImportRead`, which never echoes the snapshot or the coordinates), plus a new
+  `get_content_store` dependency so the ContentStore is injectable in tests.
+- **Agent Tool**: exactly one read-only remote read registered in `tools/remote_reads.py`
+  (`.structure.search`) and projected by `tools/catalog.py`
+  (`automatic`/`remote`/`read_only`, input `{query, limit}`). It downloads NO
+  coordinates. There is deliberately no `structure.import` Tool and `ActionRequest` was
+  not generalized.
+- **Bootstrap/config**: opt-in `REVOLAB_RCSB_DISCOVERY_ENABLED` (real driver, never
+  enabled in CI), `REVOLAB_RCSB_TIMEOUT_SECONDS`, and `REVOLAB_E2E_FAKE_STRUCTURE`
+  (in-process fake claiming its own `fakepdb` authority). A fake driver
+  (`testing/fake_structure.py`) realizes the SAME capability boundary with deterministic
+  records and `unavailable` / `hostile` / `mutate` / `oversized` affordances, and emits
+  structurally valid synthetic PDBx/mmCIF bytes.
+- **Frontend**: the Objects workspace now hosts three compact panels (`Project objects` /
+  `Discover proteins` / `Discover structures`); a new `StructureDiscoveryView` selects
+  providers by the backend-owned `structure_discovery` capability kind, labels candidates
+  `external · not yet in Project`, imports by stable identity only, and shows
+  `Imported to Project` / `Open Structure` / `Coordinate artifact available`. The
+  Structure detail derives its coordinate artifact by PROVENANCE traversal through the
+  EXISTING object-detail and resource surfaces. No 3D viewer, no second Structure
+  detail, and no raw coordinate rendering. The only provider-specific code is legal
+  data-source attribution.
+- **Docs**: new `docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md` and
+  `ADR-0021-external-structure-import-takes-custody-of-immutable-coordinate-snapshots.md`
+  (both **Proposed**), the new `.agents/skills/structure-research/SKILL.md`, and
+  reconciled `SCIENTIFIC_OBJECT_MODEL.md`, `SCIENTIFIC_GRAPH.md`,
+  `EVIDENCE_PROVENANCE.md` (byte custody vs scientific origin, and the ContentStore
+  ingestion use cases), `PROVIDER_CAPABILITIES.md`, `PROJECT_SEARCH_RETRIEVAL.md`,
+  `AGENT_CONTEXT.md`, `PROJECT_TOOL_HARNESS.md`,
+  `WORKSPACE_INFORMATION_ARCHITECTURE.md`, and `IMPLEMENTATION_ROADMAP.md`.
+  `DOMAIN_BOUNDARIES.md` is unchanged: Phase 15 is an application sub-boundary and
+  changes no ownership.
+- **No migration.** `alembic check` is drift-clean on SQLite and PostgreSQL 16 with no
+  new revision: every table, column, and constraint Phase 15 uses already existed, and
+  `_GLOBAL_EDGE_SHAPE` already accepted an `ARTIFACT_REFERENCE` source for `imported_as`.
+
+## Verified evidence (Phase 15)
+
+All commands were run from the repository root unless noted; the branch head is
+`feat/phase-15-rcsb-structure-import`.
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Backend lint | `ruff check backend` | **All checks passed** |
+| Backend types | `mypy` (strict) | **no issues in 65 source files** |
+| Backend tests | `pytest` | **953 passed, 52 skipped** |
+| RCSB driver (deterministic HTTP) | `pytest backend/tests/test_rcsb_driver.py` | **93 passed** |
+| Structure service/API/Agent | `pytest backend/tests/test_structures.py backend/tests/test_structures_api.py backend/tests/test_structure_agent.py` | **88 passed** (63 + 15 + 10) |
+| SQLite migration drift | `cd backend && REVOLAB_DATABASE_URL=sqlite:////tmp/drift.db alembic upgrade head && alembic check` | **No new upgrade operations detected** |
+| PostgreSQL 16 migration drift | same, `REVOLAB_DATABASE_URL=postgresql+psycopg://…` | **No new upgrade operations detected** |
+| PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **52 passed** (12 Phase-15) |
+| OpenAPI export | `python -m revolab.export_openapi > frontend/src/contracts/openapi.json` | **byte-identical on repeat** (idempotent) |
+| Frontend types | `cd frontend && npm run typecheck` | **clean** |
+| Frontend tests | `npm run test` | **118 passed** (15 files) |
+| Frontend build | `npm run build` | **built** |
+| Generated contracts | `npm run generate:contracts` twice | **byte-identical on repeat** |
+| Browser slice | `npm run test:e2e` (Playwright) | **21 passed** (5 Phase-15 specs) |
+| Whitespace/status | `git diff --check`, `git status` | clean |
+
+Mutation-sensitive regressions added (each fails if the behavior is removed):
+
+1. plain-text search is translated into ONE bounded Search API request with the query
+   in the `full_text` `value` parameter (never an exposed attribute/AST/URL), an
+   experimental-only predicate, and `results_content_type` — then ONE batched GraphQL
+   request whose ids travel as bound VARIABLES;
+2. the hit list is bounded to the requested limit and both documented Search result
+   shapes are accepted; HTTP 204 is a successful empty result;
+3. Computed Structure Models are EXCLUDED from discovery and REJECTED at resolution
+   with a named deferral, and a non-experimental (computational/integrative)
+   methodology fails closed before any byte is downloaded;
+4. the identifier grammar accepts the legacy form, the extended form, and an
+   extended-ONLY identifier (never assuming four characters) while malformed
+   identifiers fail closed BEFORE any request, and the documented
+   `pdb_0000<legacy>` alias is the only permitted translation;
+5. resolve returns the provider-confirmed canonical id and the exact coordinate bytes,
+   hides those bytes from `repr`, and downloads from the FIXED file host only;
+6. a provider that substitutes a different entry fails closed before any write (a
+   driver-level check and a service-level alias-aware check);
+7. metadata normalization is deterministic: multiple methods are de-duplicated,
+   SORTED and bounded, an absurd method list fails closed, the canonical resolution is
+   the MINIMUM of the unsorted provider array, and a null/absent resolution stays null
+   (NMR invents nothing);
+8. the caller cannot supply a URL/host/scheme/GraphQL, and every client disables
+   redirects and ambient proxy configuration; a redirect is a typed failure, not a
+   follow;
+9. timeout / `429` / `5xx` / non-2xx / oversized JSON / malformed Search and Data
+   envelopes become typed failures with no leaked URL, query, identifier, or upstream
+   body;
+10. empty, non-mmCIF, oversized (aborted mid-stream, never truncated), 404, and
+    truncated-transport coordinate bodies all fail closed; the coordinate ceiling is
+    asserted to be the documented value;
+11. discovery performs zero durable writes AND downloads no coordinates; a candidate
+    never enters `project.search` and carries no `coordinate_bytes`/`metadata` escape
+    hatch;
+12. a viewer may discover but cannot import (service and API `403`);
+13. the import body is stable identity only (`extra="forbid"`, no title/method/
+    resolution/coordinates/checksum), and client-supplied scientific data is `422`;
+14. import re-resolves and ignores tampered client presentation; resolver/provider and
+    authority remain conceptually separate, and an alternate `pdbmirror` resolver still
+    creates the `pdb` identity; registering two resolvers for one authority is refused;
+15. initial import creates exactly the canonical bundle **verified in the database**:
+    1 identity, 1 reference, 1 internal artifact, 1 series, 1 revision, 1 mapping,
+    exactly TWO `imported_as` edges onto the SAME revision (from the `ExternalReference`
+    and the `ArtifactReference`), 4 links, 3 stewardships, 0 Evidence, 0 Decision;
+16. `StructurePayload` duplicates neither durable identity nor coordinate linkage
+    (`pdb_id`, `coordinates_ref`, `ligand_ref` all null) and no Protein/Sequence/
+    Complex/Ligand object is created;
+17. the coordinate artifact's checksum and size match the EXACT bytes returned by
+    `ContentStore.get`, its `native_id` is the content handle, its authority is
+    `revolab` (never the scientific authority), and its content type is the canonical
+    `chemical/x-cif`;
+18. the snapshot digest recomputes from the STORED revision payload + artifact checksum
+    and equals the stored `ExternalReference.checksum`, whose `cache_metadata` carries
+    only the resolver key and the PDB revision triple;
+19. the finite-positive-resolution invariant is enforced by the CORE type registry on
+    manual creation (`0`, negative, infinity, boolean, and `"nan"` are rejected; `null`
+    and integers are accepted);
+20. the shared internal-artifact get-or-create reuses ONE row, never orphans a
+    `GlobalResourceRegistry` row, does not commit a caller's `commit=False`
+    composition, and fails closed on a contradictory existing identity;
+21. repeat import is idempotent (same ids, no new rows, no new blob);
+22. cross-Project import reuses the same global objects AND the same artifact, adds
+    links only, and the second Project does not steal stewardship (and still cannot
+    mutate);
+23. changed COORDINATES, changed normalized METADATA (resolution), and a mutated fake
+    snapshot all fail closed with the bounded message and change nothing (no new
+    revision, no new artifact, no edge mutation, no payload rewrite);
+24. a title-only change is presentation drift: idempotent re-import that does NOT
+    rewrite the stored series name;
+25. an incomplete/corrupt existing mapping fails closed for every detected state
+    (missing artifact provenance, wrong object type, disagreeing `kind`, non-canonical
+    mapping, retired series, a second source snapshot, a digest that disagrees with the
+    stored revision + artifact, and a provider-authority coordinate artifact) with no
+    durable change;
+26. a failure after the bundle is staged leaves no partial DATABASE state, while the
+    ContentStore honestly may retain an unreachable content-addressed blob;
+27. same-Project and cross-Project concurrent first imports converge on ONE bundle with
+    no raw `IntegrityError` (PostgreSQL), and the loser-recovery path is proven to have
+    run;
+28. the **content-only race** (two DIFFERENT durable identities with byte-identical
+    coordinates) converges on ONE internal artifact shared by both revisions, leaves no
+    orphan registry row, and raises nothing (PostgreSQL); mutation-verified by replacing
+    the atomic insert-if-absent with a plain insert;
+29. import creates zero Evidence and zero Decision;
+30. provider outage after import invalidates nothing (Structure, coordinates,
+    provenance, Search, and context all survive);
+31. an imported Structure becomes Project-searchable by PDB ID and by the stored series
+    name, with no new index;
+32. coordinates never enter `ProjectContext` (a 200 KB coordinate snapshot yields a
+    bounded context with no coordinate text), and the implicit context carries no
+    revision payload;
+33. the Agent structure search writes nothing (zero identity/reference/artifact/object/
+    Evidence/ActionRequest/ToolInvocation), downloads no coordinates, and cannot
+    import; hostile provider text cannot widen autonomy, change the ToolCatalog, or
+    trigger an import;
+34. a remote structure Tool is never executed by the closed LOCAL runtime;
+35. the exact canonical bundle, coordinate bytes, and coordinate-artifact access are
+    proven through the REAL FastAPI request lifecycle, including the request-scoped
+    rollback;
+36. the generated contract pins `structure_discovery`, the `StructureImportCreate`
+    property set with `additionalProperties: false`, the `StructureImportRead` property
+    set, and the coordinate-free `StructureCandidateRead` property set.
+
+Regressions added by the review-round fixes (all mutation-relevant):
+
+37. discovery re-validates the determination methodology on the returned METADATA and
+    fails closed on `integrative` / `computational` / absent, because
+    `results_content_type` does not exclude them (live-verified);
+38. a present but unparseable `exptl` collection fails closed, while a genuinely empty
+    one is treated as "no method reported";
+39. the Search/Data metadata index is keyed under BOTH identifier forms, so a
+    classic-id hit answered with an extended-form `rcsb_id` still resolves;
+40. the service re-applies the deterministic method rule (re-bound, case-insensitive
+    de-duplication, SORT, count bound) for BOTH the persisted payload and the candidate
+    projection, and fails closed on an absurd method list;
+41. `coordinate_format` must be the canonical PDBx/mmCIF discriminator before byte
+    custody, and the 128 MiB coordinate ceiling is re-applied in the application service;
+42. a lost `insert-if-absent` artifact race deletes its own unused registry row, proven
+    by a focused domain-level test AND by the PostgreSQL content-only race asserting the
+    `artifact_reference` registry population grows by exactly one (this is the
+    verification that exposed the dead `rowcount`-based branch);
+43. a content-addressed internal artifact reuses across a differing content type
+    (presentation metadata) while a provider-authority artifact keeps the strict
+    comparison;
+44. a `pdb`-authority resolver under a different `provider_key` still creates the `pdb`
+    identity with the resolver recorded only in `cache_metadata`, and a second `pdb`
+    claimant is refused;
+45. the fake structure provider refuses production, the real RCSB driver is installed
+    only when explicitly enabled (declaring `authorities == ("pdb",)`), and the fake
+    claims its own authority so it can never be mistaken for a real PDB entry;
+46. the browser slice proves a provider outage after import is non-destructive, and
+    asserts the coordinate artifact appears in Agent context ONLY as its bounded
+    identity card (an exact key set) with no payload and no coordinate content line.
+
+Regressions added by the round-2 (delta) fixes:
+
+47. a non-experimental search hit is EXCLUDED like a CSM hit, and the experimental hits
+    of a MIXED result set survive (one stray hit cannot hide legitimate results);
+48. an import REUSES a pre-existing canonical content-addressed artifact and remains
+    idempotent, while a byte-identical artifact stored under a DIFFERENT or ABSENT media
+    type fails closed BEFORE any durable write (no bundle, no orphan registry row, no
+    identity), and the shared compatibility rule stays strict for content-addressed
+    artifacts (`native_id == checksum`).
+
+Regressions added by the PR-review P1/P2 round:
+
+49. `durable_pdb_entry_id` promotes every classic 4-character id (`1abc`/`1ABC`/`1AbC`)
+    to its documented extended alias, leaves an extended id (including an extended-only
+    one) unchanged, and rejects a malformed identifier;
+50. a provider that CONFIRMS the other documented spelling between two imports of the
+    same entry converges on ONE durable bundle — in BOTH directions — with exactly one
+    `ExternalIdentity`/Series/Revision/`ExternalReference`/`ArtifactReference`, the same
+    returned canonical ids, and NO additional provenance edges; the same holds across two
+    Projects with the original stewardship intact (SQLite AND PostgreSQL);
+51. every documented CALLER spelling (`1abc`, `1ABC`, `pdb_00001abc`) converges on the
+    one durable identity, and a search result set containing both spellings of one entry
+    dedupes to a single candidate;
+52. a genuinely ABSENT resolution (`null` / `[]` / an all-null array) stays `null` and
+    persists as `null`, while a PRESENT-but-malformed one (a scalar, a string, zero, a
+    negative number, a boolean, `NaN`, an infinity) fails closed as a typed
+    `CapabilityError` on BOTH the discovery and the resolving path.
+53. a content-addressed `ContentStore.put` is ATOMIC: with the first writer stalled
+    mid-write, a concurrent writer of the same bytes still completes, exactly one
+    immutable file exists afterwards, no temporary file is left behind, and the stored
+    bytes verify (deterministically red without the fix).
+
+## Independent review (Phase 15)
+
+Three fresh, independent, STRICTLY READ-ONLY reviewers were run in parallel against
+commit `335b0ff` (PR #16) — A: structure / scientific-object / provenance architecture;
+B: provider / network / data-integrity / security; C: persistence / concurrency / API /
+frontend / verification — each allowed up to 10 minutes wall-clock with polling no more
+frequent than every 20 seconds. All three returned **APPROVE WITH FIXES** with **zero P0
+findings**; the integrator reconciled the reports, verified every finding against the
+actual code, and fixed every P1 and every material in-scope P2.
+
+### Verdicts
+
+| Reviewer | Verdict | P0 | P1 | P2 |
+| --- | --- | --- | --- | --- |
+| A — structure / provenance | APPROVE WITH FIXES | 0 | 0 | 6 |
+| B — provider / network / security | APPROVE WITH FIXES | 0 | 1 | 5 |
+| C — persistence / concurrency / API / frontend / verification | APPROVE WITH FIXES | 0 | 1 | 3 |
+
+### P1 findings and fixes
+
+- **B-P1-1 — discovery never re-validated the determination methodology, so a
+  non-experimental entry could become a candidate with `authority="pdb"`.** Reviewer B
+  live-probed the provider and showed the load-bearing premise was wrong:
+  `results_content_type: ["experimental"]` does **not** exclude integrative entries, so
+  the only real filter was the upstream honoring of our own `exact_match experimental`
+  predicate. Discovery therefore delegated a load-bearing invariant to the provider.
+  **Fixed** in `drivers/rcsb.py::search`, which now re-validates
+  `structure_determination_methodology == "experimental"` on the returned METADATA and
+  **excludes** any non-experimental entry exactly like a Computed Structure Model hit
+  (the round-1 draft failed the whole search closed; a delta reviewer showed that would
+  make one stray integrative hit hide every legitimate hit, so the reaction was made
+  consistent with the existing CSM exclusion). Parametrized regressions cover
+  `integrative`/`computational`/absent plus a MIXED result set where the experimental
+  hits survive. The documented claim is now true rather than assumed, and the live
+  finding is recorded in `EXTERNAL_STRUCTURE_IMPORT.md` §10 and the driver docstring.
+- **C-P1-1 — the documented "a lost race cleans up its own `GlobalResourceRegistry`
+  row" claim had no test that could fail, and the underlying behavior was in fact
+  broken on PostgreSQL.** The claim was made in ADR-0021 and in this file, but the
+  SQLite test short-circuited at the caller's read-then-insert and the PostgreSQL race
+  only counted the winner's row id. **Fixing the verification exposed a real defect:**
+  `CursorResult.rowcount` is `-1` under psycopg for `INSERT ... ON CONFLICT DO NOTHING`,
+  and `if not inserted:` treated `-1` as truthy — so the lost-race cleanup branch was
+  **dead on PostgreSQL** and every lost artifact race leaked an unused
+  `GlobalResourceRegistry` row. **Fixed** by deciding the race with
+  `statement.returning(ArtifactReference.artifact_id).scalar_one_or_none()` instead of
+  `rowcount` (unambiguous on PostgreSQL and SQLite 3.35+), and **verified by
+  strengthening the PostgreSQL content-only race to assert the total
+  `artifact_reference` registry population grows by exactly ONE**. Regressions: the
+  strengthened PostgreSQL race, a new focused SQLite
+  `test_a_lost_insert_if_absent_cleans_up_its_own_registry_row` that calls the domain
+  operation directly (reaching the cleanup branch), and a mutation check — reverting the
+  `RETURNING` decision to a non-`RETURNING` one fails the PostgreSQL race.
+
+### P2 findings and fixes
+
+- **A-P2-1 / B-P2-2 — the per-import request-count claim was wrong in four places**
+  (`EXTERNAL_STRUCTURE_IMPORT.md` §10.7, ADR-0021, the `rcsb.py` module docstring, and
+  the `config.py` comment). `resolve` makes exactly ONE batched Data API request plus ONE
+  static-file download. **Fixed** in all four to say so; the "two per search" claim was
+  already correct.
+- **A-P2-2 — the `pdbmirror` alternate-resolver claim was unsupported by any test.**
+  The only such regression used the fake's own `fakepdb` authority. **Fixed by making the
+  claim true rather than weakening it:** a new
+  `test_an_alternate_resolver_for_the_pdb_authority_still_creates_the_pdb_identity`
+  registers a `pdb`-authority double under `provider_key="pdbmirror"` and proves the
+  durable identity is `pdb` while `cache_metadata.resolver_provider` records the
+  resolver — exactly the future wwPDB/PDBe/PDBj scenario TODO §5 requires.
+- **A-P2-3 — `testing/fake_structure.py` named two regressions that did not exist.**
+  **Fixed by adding both** plus the opt-in install guard:
+  `test_bootstrap.py::test_fake_structure_provider_refuses_production`,
+  `test_rcsb_driver_is_installed_only_when_enabled` (asserting the real driver declares
+  `authorities == ("pdb",)` and that the fake never brings it along), and
+  `test_fake_structure_provider_claims_its_own_authority`; the docstring now cites the
+  tests that actually exist.
+- **A-P2-4 — the service did not re-apply the documented deterministic method
+  normalization.** `_normalized_method` and `_candidate_read` now re-bound, de-duplicate
+  case-insensitively, SORT, and bound the count (failing closed on an absurd list), so a
+  mis-wired driver cannot persist an order-dependent or over-long method string.
+  Regressions: a service-level sort/dedup test, an absurd-count failure test, and a
+  candidate-projection normalization test.
+- **A-P2-5 — `coordinate_format` was never validated before persistence.** A driver
+  returning `"pdb"` would have been stored under the canonical mmCIF content type.
+  **Fixed** in `_normalized_snapshot`, which now rejects any non-`mmcif` format, with a
+  regression.
+- **A-P2-6 — the content type was treated as part of the immutable identity assertion
+  for content-addressed internal artifacts**, so byte-identical content previously
+  stored under a different media type made a legitimate import fail with a
+  non-actionable conflict. The first fix relaxed the shared helper; a **delta reviewer
+  then proved that created a P0** (see "Delta review" below), so the relaxation was
+  **reverted** and the requirement is now enforced at the Phase-15 boundary BEFORE any
+  durable write, with an actionable message. The shared rule stays strict for every
+  caller.
+- **B-P2-3 — `_entry_methods` silently returned "no method" for a present but
+  unparseable `exptl` collection.** **Fixed** to distinguish present-but-unparseable
+  (fail closed) from genuinely empty (absent), with regressions for both.
+- **B-P2-4 — a latent Search/Data identifier-key mismatch.** The metadata index was
+  keyed by the provider-confirmed id while the lookup used the API-lookup alias, so a
+  future switch to extended primary ids would have turned a search hit into "no
+  resolvable metadata". **Fixed** by indexing under BOTH forms, with a regression where
+  the hit is classic and the confirmed id is the extended form.
+- **B-P2-5 — the 128 MiB coordinate ceiling was enforced only in the driver**, despite
+  the documentation stating the application service re-applies the canonical bounds.
+  **Fixed** by re-applying `MAX_STRUCTURE_COORDINATE_BYTES` in `_normalized_snapshot`,
+  with a bounded regression.
+- **B-P2-6 — the `application/octet-stream` premise was not reproducible for the exact
+  URL used.** **Fixed** by citing the specific RCSB page for that documented statement
+  and recording that the exact `.cif` URL live-answers `chemical/x-cif`; the conclusion
+  (never adopt the provider header as the scientific type) is unchanged and is now
+  better grounded.
+- **C-P2-2 — the SQLite rollback test did not acknowledge the possible orphan blob.**
+  **Fixed** by stating it explicitly and additionally asserting that no orphan
+  `GlobalResourceRegistry` row survives the rollback.
+- **C-P2-3 — the browser slice omitted TODO §80's "provider may then be disabled" step.**
+  **Fixed** by adding it to the main scenario: a subsequent provider outage blocks only
+  NEW discovery while the imported Structure, its coordinate bytes, and its Project
+  Search visibility all still work.
+- **C-P2-4 — two browser context assertions could not fail.** **Fixed** by replacing them
+  with assertions that can: the coordinate artifact's `references` entry must expose
+  exactly its bounded identity-card key set (adding a byte-bearing field fails), the
+  revision projection must expose no `payload`, and an interior content line of the
+  actually-imported mmCIF must be absent from the serialized context.
+
+No finding was dismissed as style-only; every reported item was either fixed or (for the
+two doc/verification-truth items) fixed by making the claim executable. Nothing was
+silently dropped.
+
+### Delta review
+
+Because the fixes materially change provider/network semantics (B-P1-1), the shared
+content-addressed concurrency path and its verification (C-P1-1), and the application
+service's normalization/validation surface (A-P2-4/5/6, B-P2-3/5), **two additional
+fresh read-only delta reviewers** were run against the fixed head `f38b507` with the
+same 10-minute / ≥20-second rule — total final-review subagents **5**, the maximum
+allowed by TODO §91.
+
+| Delta reviewer | Lens | Verdict | New P0 | New P1 | New P2 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | fix correctness / mutation verification | FIXED | 0 | 0 | 5 |
+| 2 | concurrency / data integrity / provider safety | PARTIALLY FIXED | 1 | 1 | 3 |
+
+Delta reviewer 1 independently reproduced every fix and mutation-killed each new test,
+and delta reviewer 2 independently reproduced the `rowcount == -1` diagnosis against
+real PostgreSQL (two PG threads, barrier past the lookup: exactly one winner, one `None`
+loser, `errors == {}`, registry delta exactly +1, and the loser's transaction still
+usable). Delta reviewer 2 then found a defect that reviewer 1 had verified only at unit
+scope.
+
+- **Delta-2 P0 — the A-P2-6 relaxation produced durable inconsistent truth and permanent
+  non-idempotency.** Relaxing the *shared* content-type comparison on the create path
+  while `_load_bundle` still required the canonical type meant that byte-identical
+  content already stored under a different media type was REUSED, persisting a Structure
+  whose coordinate artifact was mislabeled — after which that same bundle could never be
+  re-imported or cross-Project reused. The integrator independently reproduced it **and
+  found a second variant the reviewer had not reported**: a `NULL` stored content type
+  also slipped through, because `assert_reference_compatible` treats `None` as "no
+  assertion". **Fixed** by (a) reverting the shared-invariant relaxation so
+  `_persist_artifact_reference_trusted` keeps its strict content-type rule for every
+  caller, and (b) adding `structures._assert_coordinate_artifact_type_is_reusable`, which
+  runs BEFORE the first durable write and before any ContentStore write and refuses the
+  reuse with a typed conflict naming the stored type. Create and reuse now agree by
+  construction. Regressions: an end-to-end reuse-and-re-import idempotency test, a
+  parametrized fail-closed test for a differing **and an absent** media type (asserting
+  no durable bundle, no orphan registry row, no identity), and a unit pin for the shared
+  rule with `native_id == checksum`. Mutation-verified: disabling the guard fails both
+  parametrized cases.
+- **Delta-2 P1 / Delta-1 P2-3 — a test that masked the P0.** The original content-type
+  regression called the private helper directly and never re-imported, so it passed while
+  the invariant was broken. **Fixed** by replacing it with the end-to-end tests above.
+- **Delta-2 P2-1 / Delta-1 P2-5 — asymmetric exclusion.** One non-experimental hit
+  aborted the entire search while CSM hits were dropped. **Fixed** by dropping the
+  non-experimental hit too (see B-P1-1), with a mixed-result-set regression.
+- **Delta-1 P2-1 — the live `integrative` finding was not actually recorded in §10** while
+  the state file claimed it was. **Fixed** by recording it in `EXTERNAL_STRUCTURE_IMPORT.md`
+  §10 and ADR-0021, so the claim is now true.
+- **Delta-1 P2-2 / Delta-2 P2-2 — the `rowcount == -1` attribution was imprecise** (it is
+  SQLAlchemy's `CursorResult`, not raw psycopg) and the new `RETURNING` statement
+  introduces an undeclared SQLite ≥ 3.35 requirement. **Fixed** by rewording the comment
+  precisely and documenting the substrate requirement in the same place.
+- **Delta-1 P2-4 — the browser identity-card assertion was overly brittle.** **Fixed** by
+  asserting the required identity-card keys are present and that no byte-bearing field
+  exists, instead of an exact key set.
+- **Delta-2 P2-3 — `api.py` still hardcoded `"revolab"`** while the byte-custody authority
+  had been single-sourced. **Fixed** by using `services.INTERNAL_ARTIFACT_AUTHORITY` at
+  both sites.
+
+After the round-2 fixes every machine gate was re-run green (see the table above), and
+the PR body records the final reconciliation. No unresolved P0/P1 remains.
+
+## Post-review fix round (PR #16 P1 + P2)
+
+A final human-directed review round on PR #16 required one P1 and one P2 fix. Both are
+mutation-verified, and every gate above was re-run on the resulting head.
+
+- **P1 — the durable PDB identity depended on which legacy/extended alias spelling the
+  provider happened to return.** Previously the import keyed the `ExternalIdentity`
+  lookup/create on the provider's confirmed `rcsb_id`, so a first import confirming
+  `1ABC` and a later one confirming the documented alias `pdb_00001abc` produced a SECOND
+  identity and a second Structure bundle for the same scientific entry. **Fixed** by
+  defining ONE stable durable normalization (`capabilities.durable_pdb_entry_id`: a
+  classic 4-character id is PROMOTED to its documented `pdb_0000<legacy>` extended alias,
+  an extended id is unchanged, both spellings stay accepted at the provider/API boundary)
+  and applying it before EVERY lookup/create and before the returned
+  `StructureImportRead.native_id`. The rule now has exactly ONE definition, in the neutral
+  capability leaf, used by BOTH the driver and the application import boundary — which
+  also removed the previously duplicated alias check in `structures.py`. Promotion is
+  chosen over demotion because the fixed point is the extended form, so the durable
+  identity survives the wwPDB transition in both directions. Regressions: A/B (the
+  provider switches spelling between imports, both directions), C (the same across two
+  Projects with unchanged stewardship, on SQLite and PostgreSQL), D (every documented
+  caller spelling converges), plus driver-level unit coverage. Mutation-verified: removing
+  the normalization fails all of them, on both substrates.
+  **Named deferral recorded:** reconciliation of an identity asserted under a
+  NON-canonical spelling through the pre-existing generic identity surface (identifier-
+  spelling reconciliation), following the Phase-14 precedent of naming such a deferral
+  rather than changing that surface's authority.
+- **Follow-on (found by CI on the P1/P2 head) — the content-addressed write was not
+  atomic.** One backend job failed on the REQUIRED content-only race regression with
+  `ConflictError('duplicate checksum with different bytes')`; the other passed, i.e. it
+  was flaky, not deterministic. `ContentStore.put` did a check-then-
+  `open(path, "wb")`, so a concurrent writer of the SAME bytes could observe the
+  destination in its TRUNCATED state and read a prefix. Reproduced locally (1 spurious
+  failure in 30 two-thread trials). **Fixed in the shared byte store** — stage into a
+  private temporary path and rename it into place, so a reader observes only "absent" or
+  the complete file — rather than worked around in the import path, because
+  content-addressed concurrency is exactly what TODO §74 requires to be safe.
+  Regression: a DETERMINISTIC interleaving (the first writer is stalled mid-write by a
+  test filesystem double) that is reliably red without the fix (3/3) and green with it,
+  plus a 12-run repeat of the PostgreSQL content-only race with zero failures.
+- **P2 — a malformed `resolution_combined` was silently laundered into a valid
+  "no resolution".** The provider field is a documented `[Float]` array, and a scalar or
+  a `["x"]` / `[0]` / `[NaN]` element was being collapsed to `resolution=None`, which is
+  the same value a genuine NMR/integrative structure reports. **Fixed** with a
+  `(present, value)` tri-state at the wire boundary: `null` / `[]` / an all-null array
+  mean non-applicable and stay `null`; a null element beside a real value is skipped; a
+  scalar where the array is required, or any non-null element that is not a finite
+  positive angstrom value, fails closed as a typed `CapabilityError` on BOTH the discovery
+  and resolving paths. A service-level regression proves a genuinely non-applicable
+  resolution still persists as `null`. Mutation-verified.
+
+## Explicit deferrals (Phase 15)
+
+Named, not silently postponed (normative detail:
+`docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md` §18, ADR-0021): structure refresh → new
+revision semantics, obsolete/superseded/alias reconciliation, integrative/hybrid (IHM)
+entries, UniProt↔PDB mapping, polymer entity import, chain/asym-unit objects,
+biological assemblies, Complex objects, ligand extraction and `ligand_ref`,
+structure factors, EM maps, NMR restraints, validation reports, associated publication
+auto-import, legacy PDB format, BCIF, XML, mmCIF parsing, structure parsing/analysis/
+comparison, Mol*/3D visualization, REvoDesign handoff, PyMOL integration, RAG/vector
+retrieval, embeddings, semantic memory, an Agent import Tool, automatic import,
+`ActionRequest` generalization, background sync/crawling, a PDB mirror/cache, and
+provider cache tables. Phase 15 adds **no migration**; live RCSB is never CI truth (the
+real driver is tested over an injected deterministic HTTP transport, and the browser
+slice uses an in-process fake realizing the SAME capability boundary through the SAME
+Driver/Capability registry). Byte custody is deliberately NOT a distributed transaction
+with PostgreSQL, and that non-atomicity is documented rather than hidden: a rolled-back
+import can leave an unreachable content-addressed blob, which is never Project truth and
+is safely reused by a later import.
+
 ## Known deferrals (explicit, not silently postponed)
 
 - Real authentication/OIDC; RBAC engine; public sharing (ADR-0008/0011 deferral).
@@ -3186,4 +3772,22 @@ human-reviewed and squash-merged into `main` as
 
 The historical Phase-13 sections above (implementation, the machine evidence recorded at
 the feature-branch head, the independent-review reconciliation, and the explicit
+deferrals) are preserved verbatim; no past test count was rewritten.
+
+### Post-merge record: Phase-14 acceptance reconciliation
+
+PR #15 (`feat(phase 14): add UniProt protein discovery and object import`) was
+human-reviewed and squash-merged into `main` as
+`93e2b221484446de5ca63db318a8099cc8ca799e`. Per the Phase-15 execution contract
+(TODO.md section 2) that merge is the explicit human acceptance of ADR-0020:
+
+- `docs/architecture/adr/ADR-0020-external-protein-resolution-imports-immutable-snapshots.md`
+  — status changed from `Proposed — pending human acceptance` to **Accepted**.
+- `docs/architecture/EXTERNAL_PROTEIN_IMPORT.md` — status header changed to
+  **Accepted**, matching the ADR.
+- This file's Status section now records Phase 14 as accepted `main` state and Phases
+  1–14 as the accepted baseline.
+
+The historical Phase-14 sections above (implementation, the machine evidence recorded
+at the feature-branch head, the independent-review reconciliation, and the explicit
 deferrals) are preserved verbatim; no past test count was rewritten.

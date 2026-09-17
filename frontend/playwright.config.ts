@@ -53,6 +53,12 @@ export default defineConfig({
         // for the Phase-14 discovery/import/search/context vertical slice. The real
         // `uniprot` driver is NEVER enabled here: CI never touches live UniProt.
         REVOLAB_E2E_FAKE_PROTEIN: '1',
+        // Opt-in in-process fake structure provider (the SAME
+        // StructureDiscoveryCapability boundary the real RCSB driver realizes) for
+        // the Phase-15 discovery/import/coordinate-custody/search/context vertical
+        // slice. The real `rcsb` driver is NEVER enabled here: CI never touches live
+        // RCSB, and the fake claims its own `fakepdb` authority.
+        REVOLAB_E2E_FAKE_STRUCTURE: '1',
         // Opt-in in-process scripted model backend (external model boundary
         // double) for the Phase-8 Agent vertical slice.
         REVOLAB_E2E_FAKE_MODEL: '1',

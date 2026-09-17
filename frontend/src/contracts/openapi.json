@@ -500,12 +500,13 @@
         "type": "string"
       },
       "CapabilityKind": {
-        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly realized capability kinds exist. Any additional kind is added only when a\nconcrete, provider-neutral use case forces it \u2014 never pre-projected as\nspeculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a\nreal provider (NCBI PubMed) now realizes it; `PROTEIN_DISCOVERY` was added by\nPhase 14 because a real provider (UniProt) now realizes it.",
+        "description": "Core-owned closed capability vocabulary (ADR-0012). Core categorizes\nrealized capabilities by these kinds; it never parses provider vocabulary.\n\nOnly realized capability kinds exist. Any additional kind is added only when a\nconcrete, provider-neutral use case forces it \u2014 never pre-projected as\nspeculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a\nreal provider (NCBI PubMed) now realizes it; `PROTEIN_DISCOVERY` was added by\nPhase 14 because a real provider (UniProt) now realizes it;\n`STRUCTURE_DISCOVERY` was added by Phase 15 because a real provider (RCSB PDB)\nnow realizes it.",
         "enum": [
           "compute",
           "artifact_resolution",
           "literature_discovery",
-          "protein_discovery"
+          "protein_discovery",
+          "structure_discovery"
         ],
         "title": "CapabilityKind",
         "type": "string"
@@ -4867,6 +4868,180 @@
           "native_id"
         ],
         "title": "SessionReferenceCreate",
+        "type": "object"
+      },
+      "StructureCandidateRead": {
+        "description": "One bounded, untrusted external PDB structure discovery candidate (never truth).",
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "experimental_methods": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Experimental Methods",
+            "type": "array"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "polymer_entity_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Polymer Entity Count"
+          },
+          "provider_key": {
+            "title": "Provider Key",
+            "type": "string"
+          },
+          "release_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Date"
+          },
+          "resolution_angstrom": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Angstrom"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "provider_key",
+          "authority",
+          "native_id"
+        ],
+        "title": "StructureCandidateRead",
+        "type": "object"
+      },
+      "StructureDiscoveryResultsRead": {
+        "description": "The bounded envelope of one external structure discovery search.\n\nDeliberately exposes no total count, no relevance score, and no coordinate\nbytes: ordered top-N candidates are the contract, and the query text stays\nopaque provider grammar that Core never parses.",
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/StructureCandidateRead"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "provider_key": {
+            "title": "Provider Key",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_key",
+          "query"
+        ],
+        "title": "StructureDiscoveryResultsRead",
+        "type": "object"
+      },
+      "StructureImportCreate": {
+        "additionalProperties": false,
+        "description": "Explicit human import request: stable identity ONLY.\n\nThe client supplies enough to RE-RESOLVE the candidate at the current provider\n(`provider_key` + durable `(authority, native_id)`) and nothing that will be\npersisted. A title, method, resolution, coordinate URL, coordinate bytes, PDB\nversion, or checksum supplied here would be untrusted browser-provided\nscientific data and is therefore not part of the contract at all.",
+        "properties": {
+          "authority": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Authority",
+            "type": "string"
+          },
+          "native_id": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Native Id",
+            "type": "string"
+          },
+          "provider_key": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+            "title": "Provider Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_key",
+          "authority",
+          "native_id"
+        ],
+        "title": "StructureImportCreate",
+        "type": "object"
+      },
+      "StructureImportRead": {
+        "description": "The canonical identity of one explicit structure import.\n\nIt names the durable objects the import produced or reused \u2014 the Structure\nSeries and its immutable Revision, the internal coordinate `ArtifactReference`,\nand the snapshot `ExternalReference` \u2014 and echoes the stable external identity.\nIt deliberately does NOT echo the provider payload, the normalized scientific\nsnapshot, or the PDBx/mmCIF bytes: the ordinary object-detail and resource\nsurfaces own object detail.",
+        "properties": {
+          "authority": {
+            "title": "Authority",
+            "type": "string"
+          },
+          "coordinate_artifact_id": {
+            "format": "uuid",
+            "title": "Coordinate Artifact Id",
+            "type": "string"
+          },
+          "external_reference_id": {
+            "format": "uuid",
+            "title": "External Reference Id",
+            "type": "string"
+          },
+          "native_id": {
+            "title": "Native Id",
+            "type": "string"
+          },
+          "structure_revision_id": {
+            "format": "uuid",
+            "title": "Structure Revision Id",
+            "type": "string"
+          },
+          "structure_series_id": {
+            "format": "uuid",
+            "title": "Structure Series Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "structure_series_id",
+          "structure_revision_id",
+          "coordinate_artifact_id",
+          "external_reference_id",
+          "authority",
+          "native_id"
+        ],
+        "title": "StructureImportRead",
         "type": "object"
       },
       "SupersedeCreate": {
@@ -10905,6 +11080,163 @@
           }
         },
         "summary": "Share Resource"
+      }
+    },
+    "/api/projects/{project_id}/structures/discover": {
+      "get": {
+        "description": "Read-only bounded external PDB archive discovery (no persistence).\n\n`q` is opaque provider search text: Core never parses the RCSB Search API JSON\nquery language \u2014 provider vocabulary stays behind the driver. No coordinate\nbytes are fetched, so a candidate is cheap and ephemeral.",
+        "operationId": "discover_structures_api_projects__project_id__structures_discover_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider_key",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9._-]{0,99}$",
+              "title": "Provider Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 300,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 20,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StructureDiscoveryResultsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover Structures"
+      }
+    },
+    "/api/projects/{project_id}/structures/import": {
+      "post": {
+        "description": "Explicitly import one PDB archive entry and its canonical mmCIF coordinates.\n\nThe request carries stable identity only; the server re-resolves it at the\ncurrent provider, downloads the bounded canonical PDBx/mmCIF snapshot, builds\nthe canonical normalized scientific snapshot itself, takes immutable ContentStore\ncustody of the bytes, and persists ONE atomic bundle. Coordinate bytes and\nscientific metadata are never accepted from the client and are never echoed in\nthe response.",
+        "operationId": "import_structure_api_projects__project_id__structures_import_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Actor-Id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Actor-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StructureImportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StructureImportRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Structure"
       }
     },
     "/api/projects/{project_id}/tool-invocations": {

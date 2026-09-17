@@ -150,12 +150,15 @@ class CapabilityKind(StrEnum):
     concrete, provider-neutral use case forces it — never pre-projected as
     speculative vocabulary. `LITERATURE_DISCOVERY` was added by Phase 13 because a
     real provider (NCBI PubMed) now realizes it; `PROTEIN_DISCOVERY` was added by
-    Phase 14 because a real provider (UniProt) now realizes it."""
+    Phase 14 because a real provider (UniProt) now realizes it;
+    `STRUCTURE_DISCOVERY` was added by Phase 15 because a real provider (RCSB PDB)
+    now realizes it."""
 
     COMPUTE = "compute"
     ARTIFACT_RESOLUTION = "artifact_resolution"
     LITERATURE_DISCOVERY = "literature_discovery"
     PROTEIN_DISCOVERY = "protein_discovery"
+    STRUCTURE_DISCOVERY = "structure_discovery"
 
 
 class ProviderRuntimeHealth(StrEnum):

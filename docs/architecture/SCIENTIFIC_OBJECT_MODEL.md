@@ -260,6 +260,47 @@ direct UniProt API, REvoCompute) used to *reach* the authority — changing the 
 must never change the durable identity. See `PROVIDER_CAPABILITIES.md` (#Authority vs
 provider).
 
+**Worked example — Phase-15 external structure import.** One PDB archive entry becomes
+**one** ScientificObject plus a separately-owned coordinate byte artifact:
+
+```text
+ExternalIdentity(authority="pdb", native_id="4HHB", kind="structure")
+    qualifier="identity", is_canonical=true  ->  StructureSeries
+
+Structure payload {resolution: 1.74, method: "X-RAY DIFFRACTION",
+                   pdb_id: null, coordinates_ref: null, ligand_ref: null}
+
+ExternalReference(pdb snapshot)                              --imported_as--> StructureRevision
+ArtifactReference(authority=revolab, content-addressed mmCIF) --imported_as--> same StructureRevision
+```
+
+Four rules this example fixes:
+
+1. **A Structure is ONE object.** A PDB entry is not automatically a Protein, a
+   Sequence, a Complex, or a Ligand; those require their own explicit semantic
+   decision, and a single entry may contain several polymer entities, nucleic acid,
+   ligands, and engineered constructs at once.
+2. **Durable identity is not duplicated in the payload.** `pdb_id` stays null because
+   `ExternalIdentity(pdb, native_id)` already owns identity, and `coordinates_ref`
+   stays null because the typed `imported_as` edge to the `ArtifactReference` already
+   owns coordinate linkage.
+3. **Identity, bytes, content, and origin are four separate truths.** The
+   `ArtifactReference` (`authority="revolab"`) asserts only that REvoLab can reproduce
+   those exact bytes — never that REvoLab authored or scientifically originated them.
+   Scientific origin is the `pdb` identity + `ExternalReference` + `imported_as` chain.
+   Never infer origin from `authority=revolab`, and never infer byte availability from
+   `authority=pdb`.
+4. **The import is a snapshot of both content and bytes.** The
+   `ExternalReference.checksum` digests `{structure_payload, coordinate_checksum}`, so a
+   changed archive entry — including changed coordinates — fails closed rather than
+   silently rewriting the revision or replacing the artifact.
+
+The Structure revision checksum remains REvoLab's existing canonical payload checksum;
+the coordinate checksum is the ContentStore content address and lives on the
+`ArtifactReference`, never as a payload field. `resolution` is a finite positive Å
+value or absent, enforced by the Core type registry so every persistence path agrees.
+Normative semantics: `docs/architecture/EXTERNAL_STRUCTURE_IMPORT.md` (ADR-0021).
+
 ---
 
 ## Organization vs scientific relation
