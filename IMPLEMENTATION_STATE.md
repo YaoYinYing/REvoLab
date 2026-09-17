@@ -2806,8 +2806,8 @@ All commands were run from the repository root unless noted; the branch head is
 | --- | --- | --- |
 | Backend lint | `ruff check backend` | **All checks passed** |
 | Backend types | `mypy` (strict) | **no issues in 62 source files** |
-| Backend tests | `pytest` | **765 passed, 40 skipped** |
-| UniProt driver (deterministic HTTP) | `pytest backend/tests/test_uniprot_driver.py` | **82 passed** |
+| Backend tests | `pytest` | **768 passed, 40 skipped** |
+| UniProt driver (deterministic HTTP) | `pytest backend/tests/test_uniprot_driver.py` | **83 passed** |
 | SQLite migration drift | `cd backend && alembic upgrade head && alembic check` | **No new upgrade operations detected** |
 | PostgreSQL 16 migration drift | same, `REVOLAB_DATABASE_URL=postgresql+psycopg://…` | **No new upgrade operations detected** |
 | PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **40 passed** (9 Phase-14; repeated green) |
@@ -2993,10 +2993,54 @@ and unmounts the un-scoped `ObjectsView`.
 ### Delta review
 
 Because the fixes materially change concurrency (A-P1-1), provider validation
-(B-P2-3), and the bundle-identity checks (A-P2-1/C-P2-1-3), TWO additional fresh
-read-only delta reviewers were run against the fixed head — one on
-concurrency/persistence, one on provider/identity/network — keeping the total
-final-review subagent count at five. Their verdicts are recorded in the PR body.
+(B-P2-3), and the bundle-identity checks (A-P2-1/C-P2-1-3), additional fresh
+read-only delta reviewers were run against the fixed head `81c5f6f` (two attempts
+failed for infrastructure reasons and returned no report; a third, focused delta
+reviewer completed). Total meaningful final-review coverage: **4 completed
+independent reviews** (three first-round + one delta), within the 3–5 bound.
+
+**The delta reviewer returned PARTIALLY FIXED and caught a real defect in the fix
+round itself.** The integrator's own edit script wrote the test file twice from an
+in-memory string read BEFORE the first edit, so the re-applied B-P2-2 assertion was
+silently reverted while the changelog claimed it was fixed. That is exactly the
+"recorded evidence must be executable" hazard, and it is recorded here rather than
+quietly corrected. Re-applied and verified by reading the file back, plus a
+mutation: making `bounded_inert_text` strip markup now FAILS
+`test_search_provider_text_is_made_inert`.
+
+Delta verdict per claim (all re-verified after the re-application):
+
+| Claim | Delta verdict | Independent verification |
+| --- | --- | --- |
+| A-P1-1 concurrency fix | VERIFIED | restore `get_or_create_external_identity` → ONLY `test_a_winner_committing_after_the_first_lookup_still_converges` fails, with the predicted `ConflictError: external identity already maps to another series for this qualifier` |
+| `_load_bundle` hardening (4 checks) | VERIFIED | removing each check alone fails exactly its own regression; 4/4 mutation-verified independently |
+| B-P2-3 length fail-closed | VERIFIED | deleting the driver branch fails exactly the 5 parametrized invalid-length cases |
+| B-P2-1 corrected claim | VERIFIED | fake+real coexist under disjoint authorities; a second `uniprot` resolver is refused |
+| Gates | VERIFIED | ruff / mypy / pytest / driver / PostgreSQL all green |
+
+Delta findings, both fixed:
+
+- **The reverted B-P2-2 assertion** (above) — re-applied, read back, and
+  mutation-verified.
+- **A stale test-name reference** in `testing/fake_protein.py` citing a test the fix
+  round had renamed — corrected to
+  `test_the_real_uniprot_authority_is_guarded_by_the_collision_check` (repo-wide grep
+  now finds no occurrence of the old name).
+
+Delta coverage gaps, all closed with new regressions:
+
+- the SERVICE-side length re-check had no test → `test_import_rejects_an_invalid_reported_length_server_side`
+  (mutation-verified: removing the guard fails it with the "disagrees" message);
+- an explicit JSON `null` length was untested → `test_resolve_treats_an_explicit_null_length_as_absent`
+  documents it as ABSENT (a null means "no value"), never as malformed;
+- no test registered the fake protein driver and the real driver together →
+  asserted in `test_the_real_uniprot_authority_is_guarded_by_the_collision_check`
+  (disjoint authorities, both registered);
+- no literature analogue of the production-refusal guard →
+  `test_fake_literature_provider_refuses_production`.
+
+The delta round therefore added **3 backend regressions and 2 test assertions**
+(`pytest` 765 → 768 passed; driver suite 82 → 83), with every one mutation-verified.
 
 ## Explicit deferrals (Phase 14)
 

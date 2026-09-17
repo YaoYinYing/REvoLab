@@ -1274,6 +1274,15 @@ def test_the_real_uniprot_authority_is_guarded_by_the_collision_check():
 
     assert FAKE_PROTEIN_AUTHORITY != UNIPROT_AUTHORITY
     assert FakeProteinDriver().authorities == (FAKE_PROTEIN_AUTHORITY,)
+    assert set(FakeProteinDriver().authorities).isdisjoint(UniProtDriver().authorities)
+
+    # The fake and the REAL driver coexist, because their authority namespaces are
+    # disjoint: the fixture cannot be mistaken for a real accession, and it does not
+    # suppress the real provider either.
+    coexist = DriverRegistry()
+    coexist.register(FakeProteinDriver())
+    coexist.register(UniProtDriver())
+    assert set(coexist.names()) == {"fakeprotein", "uniprot"}
 
     # (a) A second resolver for the REAL authority is refused alongside the real driver.
     registry = DriverRegistry()
@@ -1764,6 +1773,36 @@ def test_import_rejects_a_sequence_length_disagreement_server_side(session):
     )
     before = _durable_state(session)
     with pytest.raises(ValidationError, match="length"):
+        _import(session, registry, actor, project, FAKE_PROTEIN_AUTHORITY, native_id)
+    assert _durable_state(session) == before
+
+
+def test_import_rejects_an_invalid_reported_length_server_side(session):
+    """The application boundary re-checks the reported length (defense in depth).
+
+    The real driver already fails closed on a present-but-invalid length, so this
+    exercises the SERVICE-side guard with a deliberately mis-wired provider response.
+    Mutation-sensitivity: without that guard the import fails later with the
+    "disagrees" message instead, so the asserted message distinguishes the two paths.
+    """
+    actor = _actor(session)
+    project = _project(session, actor)
+    driver = FakeProteinDriver()
+    registry = _registry(driver)
+    native_id = "bad-length-1"
+    driver.state.seed(
+        ResolvedProteinRecord(
+            provider_key=FAKE_PROTEIN_PROVIDER_KEY,
+            authority=FAKE_PROTEIN_AUTHORITY,
+            native_id=native_id,
+            canonical_sequence=deterministic_sequence(native_id, 30),
+            protein_name="Mis-wired provider record",
+            organism_name="Synthetic organism",
+            sequence_length=0,
+        )
+    )
+    before = _durable_state(session)
+    with pytest.raises(ValidationError, match="invalid sequence length"):
         _import(session, registry, actor, project, FAKE_PROTEIN_AUTHORITY, native_id)
     assert _durable_state(session) == before
 

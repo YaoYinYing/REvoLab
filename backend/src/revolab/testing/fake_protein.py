@@ -10,8 +10,10 @@ Its provider key (`fakeprotein`) and durable authority (`fakeuniprot`) are the
 fake's OWN vocabulary, so a synthetic fixture identity can never be mistaken for a
 real `uniprot` accession. The real namespace is guarded two ways, both covered by
 regressions: the driver registry refuses any SECOND resolver that claims `uniprot`
-alongside the real driver (`test_two_resolvers_for_one_authority_cannot_be_registered_together`),
-and `install_drivers` refuses this fake outright when the environment is
+alongside the real driver
+(`test_the_real_uniprot_authority_is_guarded_by_the_collision_check`, which also
+asserts that the fake and the real driver coexist under distinct authorities), and
+`install_drivers` refuses this fake outright when the environment is
 `production` (`test_fake_protein_provider_refuses_production`). The real driver's
 separation of the `uniprot` AUTHORITY from a resolver key is asserted by its own
 deterministic transport tests plus the `mirrorprotein` regression, which resolves the

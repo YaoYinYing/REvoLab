@@ -49,6 +49,14 @@ def test_fake_protein_provider_refuses_production() -> None:
         install_drivers(registry, build_driver_context(settings), settings)
 
 
+def test_fake_literature_provider_refuses_production() -> None:
+    """The Phase-13 fake carries the same production guard as the Phase-14 one."""
+    settings = Settings(environment="production", e2e_fake_literature=True)
+    registry = DriverRegistry()
+    with pytest.raises(RuntimeError, match="must not be enabled in production"):
+        install_drivers(registry, build_driver_context(settings), settings)
+
+
 def test_uniprot_driver_is_installed_only_when_enabled() -> None:
     """The real remote provider is opt-in, exactly like NCBI.
 
