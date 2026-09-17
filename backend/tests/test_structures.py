@@ -214,6 +214,13 @@ class _StaticCapability:
         )
         return StructureSearchResult(provider_key=self.provider_key, candidates=candidates)
 
+    def set_confirmed_native_id(self, native_id: str) -> None:
+        """Change which official spelling this provider CONFIRMS (same entry/bytes)."""
+        self._records = {
+            key: dataclasses.replace(record, native_id=native_id)
+            for key, record in self._records.items()
+        }
+
     def resolve(
         self, authority: str, native_id: str, credentials: CredentialLease
     ) -> ResolvedStructureRecord:
@@ -265,6 +272,12 @@ class _StaticDriver:
             )
         }
 
+    def set_confirmed_native_id(self, native_id: str) -> None:
+        """Change the official spelling this provider confirms between responses."""
+        self.capabilities[CapabilityKind.STRUCTURE_DISCOVERY].set_confirmed_native_id(
+            native_id
+        )
+
     def start(self, context: DriverContext) -> None:
         pass
 
@@ -275,12 +288,23 @@ class _StaticDriver:
         return ProviderRuntimeHealth.READY
 
 
-def _alias_driver(*, name: str = FAKE_STRUCTURE_PROVIDER_KEY) -> _StaticDriver:
-    """A fake answering the canonical 4-character id from either official form."""
+def _alias_driver(
+    *, name: str = FAKE_STRUCTURE_PROVIDER_KEY, legacy_id: str = "4HHB"
+) -> _StaticDriver:
+    """A fake answering one entry from EITHER official spelling.
+
+    The provider double is authoritative about the ENTRY but can be told to confirm
+    either documented spelling, which is exactly the hazard the durable identity must
+    absorb.
+    """
     return _StaticDriver(
-        {"4HHB": _record("4HHB")},
+        {legacy_id: _record(legacy_id)},
         name=name,
-        alias={"4hhb": "4HHB", "pdb_00004hhb": "4HHB", "4HHB": "4HHB"},
+        alias={
+            legacy_id.lower(): legacy_id,
+            legacy_id.upper(): legacy_id,
+            f"pdb_0000{legacy_id.lower()}": legacy_id,
+        },
     )
 
 
@@ -713,7 +737,7 @@ def test_a_substituted_provider_identity_fails_closed(session, store):
 
 
 def test_an_extended_and_a_legacy_identifier_converge_on_one_identity(session, store):
-    """The documented wwPDB alias maps two spellings onto ONE durable identity."""
+    """Every documented caller spelling maps onto ONE durable identity."""
     actor = _actor(session)
     project = _project(session, actor)
     registry = _registry(_alias_driver())
@@ -724,8 +748,117 @@ def test_an_extended_and_a_legacy_identifier_converge_on_one_identity(session, s
         session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "pdb_00004hhb", store
     )
     assert second == first
-    assert first.native_id == "4HHB"
+    # The durable identity is the documented EXTENDED form, whatever the caller typed.
+    assert first.native_id == "pdb_00004hhb"
     assert _count(session, ExternalIdentity) == 1
+    assert _count(session, ArtifactReference) == 1
+
+
+@pytest.mark.parametrize(
+    ("first_spelling", "second_spelling"),
+    [("1ABC", "pdb_00001abc"), ("pdb_00001abc", "1ABC")],
+)
+def test_a_provider_spelling_switch_cannot_mint_a_second_identity(
+    session, store, first_spelling, second_spelling
+):
+    """PR #16 P1: the durable identity must not depend on provider presentation.
+
+    The provider is authoritative about the ENTRY but not about which documented alias
+    spelling it reports on a given response. The first import confirms one spelling and
+    the second import of the SAME entry confirms the other; both must converge on ONE
+    durable bundle, in BOTH directions.
+    """
+    actor = _actor(session)
+    project = _project(session, actor)
+    driver = _alias_driver(legacy_id="1ABC")
+    driver.set_confirmed_native_id(first_spelling)
+    registry = _registry(driver)
+
+    first = _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    assert first.native_id == "pdb_00001abc"
+    before = _durable_state(session)
+    before_edges = _edge_tuples(session)
+
+    driver.set_confirmed_native_id(second_spelling)
+    second = _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+
+    assert second == first
+    assert second.authority == FAKE_STRUCTURE_AUTHORITY
+    assert second.native_id == "pdb_00001abc"
+    assert _count(session, ExternalIdentity) == 1
+    assert _count(session, ScientificObjectSeries) == 1
+    assert _count(session, ScientificObjectRevision) == 1
+    assert _count(session, ExternalReference) == 1
+    assert _count(session, ArtifactReference) == 1
+    assert _durable_state(session) == before
+    assert _edge_tuples(session) == before_edges
+    identity = session.scalar(select(ExternalIdentity))
+    assert identity is not None and identity.native_id == "pdb_00001abc"
+
+
+def test_a_genuinely_non_applicable_resolution_persists_as_null(session, store):
+    """Genuine NMR/no-resolution behavior is preserved through persistence.
+
+    Only a PRESENT-but-malformed provider value fails closed; a legitimately absent
+    resolution stays `null` (no number is invented).
+    """
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _registry(_StaticDriver({"1ABC": _record("1ABC", resolution=None)}))
+    result = _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    revision = session.get(ScientificObjectRevision, result.structure_revision_id)
+    assert revision is not None
+    assert revision.payload["resolution"] is None
+    assert revision.payload["method"] == "X-RAY DIFFRACTION"
+
+
+@pytest.mark.parametrize(
+    ("first_spelling", "second_spelling"),
+    [("1ABC", "pdb_00001abc"), ("pdb_00001abc", "1ABC")],
+)
+def test_a_provider_spelling_switch_reuses_one_global_bundle_across_projects(
+    session, store, first_spelling, second_spelling
+):
+    """The same hazard across two Projects: one global bundle, no stewardship theft."""
+    owner_a = _actor(session)
+    project_a = _project(session, owner_a, "Spelling A")
+    owner_b = _actor(session)
+    project_b = _project(session, owner_b, "Spelling B")
+    driver = _alias_driver(legacy_id="1ABC")
+    driver.set_confirmed_native_id(first_spelling)
+    registry = _registry(driver)
+
+    first = _import(session, registry, owner_a, project_a, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+    driver.set_confirmed_native_id(second_spelling)
+    second = _import(session, registry, owner_b, project_b, FAKE_STRUCTURE_AUTHORITY, "1ABC", store)
+
+    assert second == first
+    assert _count(session, ExternalIdentity) == 1
+    assert _count(session, ScientificObjectSeries) == 1
+    assert _count(session, ExternalReference) == 1
+    assert _count(session, ArtifactReference) == 1
+    # The first Project keeps stewardship; the second gains only a read lens.
+    for resource_id in (first.structure_series_id, first.coordinate_artifact_id):
+        stewardship = session.get(ResourceStewardship, resource_id)
+        assert stewardship is not None
+        assert stewardship.steward_project_id == project_a.id
+    assert queries.read_only(session, project_b.id, first.structure_series_id) is True
+
+
+def test_every_documented_caller_spelling_converges_on_one_durable_identity(session, store):
+    """`1abc`, `1ABC` and `pdb_00001abc` are the SAME durable identity."""
+    actor = _actor(session)
+    project = _project(session, actor)
+    registry = _registry(_alias_driver(legacy_id="1ABC"))
+    results = [
+        _import(session, registry, actor, project, FAKE_STRUCTURE_AUTHORITY, spelling, store)
+        for spelling in ("1abc", "1ABC", "pdb_00001abc")
+    ]
+    assert all(result == results[0] for result in results)
+    assert results[0].native_id == "pdb_00001abc"
+    assert _count(session, ExternalIdentity) == 1
+    assert _count(session, ScientificObjectSeries) == 1
+    assert _count(session, ExternalReference) == 1
     assert _count(session, ArtifactReference) == 1
 
 

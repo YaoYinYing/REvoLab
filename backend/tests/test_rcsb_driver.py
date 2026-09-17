@@ -36,6 +36,7 @@ from revolab.drivers.rcsb import (
     RCSB_SEARCH_BASE_URL,
     RcsbDriver,
     canonical_entry_id,
+    durable_entry_id,
     extended_alias_of_legacy,
     is_computed_model_id,
     same_entry_identity,
@@ -44,7 +45,10 @@ from revolab.enums import CapabilityErrorKind, CapabilityKind, ProviderRuntimeHe
 
 SEARCH_PATH = "/rcsbsearch/v2/query"
 GRAPHQL_PATH = "/graphql"
-COORDINATE_PATH = "/download/1abc.cif"
+# The canonical ARCHIVE filename for the durable identity: wwPDB documents that the
+# filename of `1abc` becomes `pdb_00001abc.cif` on the extended-id transition, and the
+# file service accepts both forms (live-verified 2026-09-17, byte-identical).
+COORDINATE_PATH = "/download/pdb_00001abc.cif"
 COORDINATE_TEXT = (
     "data_1ABC\n#\n_entry.id 1ABC\n_struct.title Synthetic\n"
     "_refine.ls_d_res_high 1.50\n#\n"
@@ -191,6 +195,63 @@ def test_extended_identifiers_are_not_assumed_to_be_four_characters() -> None:
     assert not same_entry_identity("pdb_1abc5678", "1abc")
 
 
+def test_durable_entry_id_promotes_every_legacy_id_to_its_extended_alias() -> None:
+    """ONE stable durable form: legacy 4-character ids become `pdb_0000<legacy>`.
+
+    Promotion (rather than keeping four characters) is chosen because wwPDB is
+    transitioning to extended primary ids, so the durable identity survives the
+    transition in both directions.
+    """
+    for spelling in ("1abc", "1ABC", "1AbC"):
+        assert durable_entry_id(spelling) == "pdb_00001abc"
+    assert durable_entry_id("pdb_00001abc") == "pdb_00001abc"
+    assert durable_entry_id("PDB_00001ABC") == "pdb_00001abc"
+    # An extended-only id has no legacy alias and is unchanged.
+    assert durable_entry_id("pdb_1abc5678") == "pdb_1abc5678"
+    for malformed in ("", "1AB", "1ABCD", "pdb_0001abc", None, 7):
+        assert durable_entry_id(malformed) is None
+
+
+def test_a_provider_that_switches_alias_spelling_yields_the_same_durable_identity() -> None:
+    """The durable identity is independent of provider presentation.
+
+    The SAME entry is answered once with the classic id and once with its documented
+    extended alias; both must resolve to ONE identity.
+    """
+    legacy_router = _resolve_router(_gql_entry("1ABC"))
+    alias_router = _resolve_router(_gql_entry("pdb_00001abc"))
+    legacy = _capability(_driver(legacy_router)).resolve(RCSB_AUTHORITY, "1ABC", _lease())
+    alias = _capability(_driver(alias_router)).resolve(RCSB_AUTHORITY, "1ABC", _lease())
+    assert legacy.native_id == alias.native_id == "pdb_00001abc"
+
+    # ...and the same holds for the request spelling and for discovery.
+    for request_spelling in ("1abc", "1ABC", "pdb_00001abc"):
+        record = _capability(_driver(alias_router)).resolve(
+            RCSB_AUTHORITY, request_spelling, _lease()
+        )
+        assert record.native_id == "pdb_00001abc"
+    search_legacy = _Router(
+        search=lambda r: _search("1ABC"), graphql=lambda r: _gql(_gql_entry("1ABC"))
+    )
+    search_alias = _Router(
+        search=lambda r: _search("1ABC"), graphql=lambda r: _gql(_gql_entry("pdb_00001abc"))
+    )
+    candidates = [
+        _capability(_driver(router)).search("kinase", 5, _lease()).candidates[0].native_id
+        for router in (search_legacy, search_alias)
+    ]
+    assert candidates == ["pdb_00001abc", "pdb_00001abc"]
+
+
+def test_a_search_hit_dedupes_the_two_documented_spellings_of_one_entry() -> None:
+    router = _Router(
+        search=lambda r: _search("1ABC", "pdb_00001abc"),
+        graphql=lambda r: _gql(_gql_entry("1ABC")),
+    )
+    result = _capability(_driver(router)).search("kinase", 5, _lease())
+    assert [candidate.native_id for candidate in result.candidates] == ["pdb_00001abc"]
+
+
 def test_computed_model_identifiers_are_recognized() -> None:
     assert is_computed_model_id("AF_AFB0M2T2F1")
     assert is_computed_model_id("MA_3J3Q")
@@ -213,7 +274,9 @@ def test_search_translates_plain_text_into_one_bounded_search_request() -> None:
     assert len(result.candidates) == 1
     candidate = result.candidates[0]
     assert candidate.authority == RCSB_AUTHORITY
-    assert candidate.native_id == "1ABC"
+    # The CANONICAL DURABLE identity: a legacy 4-character id is promoted to its
+    # documented extended alias, never the provider's presentation spelling.
+    assert candidate.native_id == "pdb_00001abc"
     assert candidate.title == "Synthetic structure"
     assert candidate.experimental_methods == ("X-RAY DIFFRACTION",)
     assert candidate.resolution_angstrom == 1.5
@@ -255,7 +318,7 @@ def test_search_bounds_the_hit_list_to_the_requested_limit() -> None:
     )
     driver = _driver(router)
     result = _capability(driver).search("kinase", 2, _lease())
-    assert [c.native_id for c in result.candidates] == ["1ABC", "2XYZ"]
+    assert [c.native_id for c in result.candidates] == ["pdb_00001abc", "pdb_00002xyz"]
     assert _search_body(router.of("search.rcsb.org")[0])["request_options"]["paginate"]["rows"] == 2
 
 
@@ -268,7 +331,7 @@ def test_search_accepts_the_compact_string_result_shape() -> None:
     )
     driver = _driver(router)
     result = _capability(driver).search("kinase", 5, _lease())
-    assert [c.native_id for c in result.candidates] == ["1ABC"]
+    assert [c.native_id for c in result.candidates] == ["pdb_00001abc"]
 
 
 def test_search_drops_computed_structure_models_into_an_empty_result() -> None:
@@ -292,7 +355,7 @@ def test_search_maps_the_canonical_provider_id_for_an_extended_hit() -> None:
     )
     driver = _driver(router)
     result = _capability(driver).search("kinase", 5, _lease())
-    assert result.candidates[0].native_id == "1ABC"
+    assert result.candidates[0].native_id == "pdb_00001abc"
 
 
 def test_search_empty_result_is_not_an_error() -> None:
@@ -389,7 +452,7 @@ def test_resolve_returns_the_exact_canonical_snapshot() -> None:
 
     assert record.provider_key == RCSB_PROVIDER_KEY
     assert record.authority == RCSB_AUTHORITY
-    assert record.native_id == "1ABC"
+    assert record.native_id == "pdb_00001abc"
     assert record.coordinate_format == STRUCTURE_COORDINATE_FORMAT
     assert record.coordinate_bytes == COORDINATE_TEXT.encode()
     assert record.title == "Synthetic structure"
@@ -399,10 +462,13 @@ def test_resolve_returns_the_exact_canonical_snapshot() -> None:
     assert record.entry_revision_date == "2026-08-12T00:00:00Z"
     # Coordinate bytes are hidden from repr/logging.
     assert COORDINATE_TEXT not in repr(record)
-    # The file host is the FIXED documented host, and only one download happened.
+    # The file host is the FIXED documented host, and only one download happened. The
+    # path uses the entry's CANONICAL archive filename (the durable identity), which the
+    # file service serves for legacy entries too.
     file_requests = router.of("files.rcsb.org")
     assert len(file_requests) == 1
     assert file_requests[0].url.path == COORDINATE_PATH
+    assert file_requests[0].url.path == "/download/pdb_00001abc.cif"
 
 
 def test_resolve_normalizes_the_documented_extended_alias() -> None:
@@ -411,7 +477,7 @@ def test_resolve_normalizes_the_documented_extended_alias() -> None:
     # and the provider-confirmed canonical id is stored.
     router = _resolve_router()
     record = _capability(_driver(router)).resolve(RCSB_AUTHORITY, "pdb_00001abc", _lease())
-    assert record.native_id == "1ABC"
+    assert record.native_id == "pdb_00001abc"
     assert _gql_variables(router.of("data.rcsb.org")[0]) == {"entry_ids": ["1ABC"]}
 
 
@@ -514,16 +580,51 @@ def test_resolution_is_the_best_minimum_of_the_provider_array() -> None:
     assert record.resolution_angstrom == 1.65
 
 
-@pytest.mark.parametrize(
-    "resolution", [None, [], [None], ["x"], [0], [-1.0], [True], "1.5", 1.5]
-)
-def test_a_non_applicable_or_malformed_resolution_stays_null(resolution: object) -> None:
+@pytest.mark.parametrize("resolution", [None, [], [None]])
+def test_a_genuinely_absent_resolution_is_non_applicable(resolution: object) -> None:
+    """`null` / empty (and an all-null array) mean "no resolution applies".
+
+    This is the honest NMR / integrative answer and is never replaced by a number.
+    """
     router = _resolve_router(_gql_entry(resolution=resolution))
     record = _capability(_driver(router)).resolve(RCSB_AUTHORITY, "1ABC", _lease())
     assert record.resolution_angstrom is None
 
 
-def test_a_non_finite_resolution_stays_null() -> None:
+@pytest.mark.parametrize(
+    "resolution", [["x"], [0], [-1.0], [True], [float("inf")], "1.5", 1.5, ["1.5"], [""]]
+)
+def test_a_present_but_malformed_resolution_fails_closed(resolution: object) -> None:
+    """PRESENT-but-malformed provider data must NOT become a valid absence.
+
+    A scalar where the documented `[Float]` array is required, or any non-null element
+    that is not a finite positive angstrom value, is malformed provider data: it fails
+    closed as a typed `CapabilityError` instead of persisting a scientifically valid
+    `resolution=None` snapshot.
+    """
+    router = _resolve_router(_gql_entry(resolution=resolution))
+    with pytest.raises(CapabilityError) as exc:
+        _capability(_driver(router)).resolve(RCSB_AUTHORITY, "1ABC", _lease())
+    assert exc.value.kind is CapabilityErrorKind.UNKNOWN
+
+
+def test_a_malformed_resolution_fails_closed_on_the_search_path_too() -> None:
+    router = _Router(
+        search=lambda r: _search("1ABC"),
+        graphql=lambda r: _gql(_gql_entry(resolution=["x"])),
+    )
+    with pytest.raises(CapabilityError) as exc:
+        _capability(_driver(router)).search("kinase", 5, _lease())
+    assert exc.value.kind is CapabilityErrorKind.UNKNOWN
+
+
+def test_a_null_member_beside_a_real_value_is_skipped() -> None:
+    router = _resolve_router(_gql_entry(resolution=(1.5, None)))
+    record = _capability(_driver(router)).resolve(RCSB_AUTHORITY, "1ABC", _lease())
+    assert record.resolution_angstrom == 1.5
+
+
+def test_a_non_finite_resolution_fails_closed() -> None:
     # JSON cannot represent NaN, but a lenient upstream body can still carry it.
     # Python's `json.loads` accepts the bare `NaN` literal, so the driver must
     # reject it rather than persisting a non-finite resolution.
@@ -535,8 +636,9 @@ def test_a_non_finite_resolution_stays_null() -> None:
         graphql=lambda r: httpx.Response(200, content=body.encode()),
         files=lambda r: _coordinate_response(),
     )
-    record = _capability(_driver(router)).resolve(RCSB_AUTHORITY, "1ABC", _lease())
-    assert record.resolution_angstrom is None
+    with pytest.raises(CapabilityError) as exc:
+        _capability(_driver(router)).resolve(RCSB_AUTHORITY, "1ABC", _lease())
+    assert exc.value.kind is CapabilityErrorKind.UNKNOWN
 
 
 def test_an_nmr_entry_has_no_invented_resolution() -> None:
@@ -799,7 +901,7 @@ def test_search_keeps_the_experimental_hits_of_a_mixed_result_set() -> None:
         ),
     )
     result = _capability(_driver(router)).search("kinase", 5, _lease())
-    assert [candidate.native_id for candidate in result.candidates] == ["1ABC"]
+    assert [candidate.native_id for candidate in result.candidates] == ["pdb_00001abc"]
     assert all(candidate.authority == "pdb" for candidate in result.candidates)
 
 

@@ -3202,12 +3202,12 @@ All commands were run from the repository root unless noted; the branch head is
 | --- | --- | --- |
 | Backend lint | `ruff check backend` | **All checks passed** |
 | Backend types | `mypy` (strict) | **no issues in 65 source files** |
-| Backend tests | `pytest` | **938 passed, 51 skipped** |
-| RCSB driver (deterministic HTTP) | `pytest backend/tests/test_rcsb_driver.py` | **85 passed** |
-| Structure service/API/Agent | `pytest backend/tests/test_structures.py backend/tests/test_structures_api.py backend/tests/test_structure_agent.py` | **82 passed** (57 + 15 + 10) |
+| Backend tests | `pytest` | **952 passed, 52 skipped** |
+| RCSB driver (deterministic HTTP) | `pytest backend/tests/test_rcsb_driver.py` | **93 passed** |
+| Structure service/API/Agent | `pytest backend/tests/test_structures.py backend/tests/test_structures_api.py backend/tests/test_structure_agent.py` | **88 passed** (63 + 15 + 10) |
 | SQLite migration drift | `cd backend && REVOLAB_DATABASE_URL=sqlite:////tmp/drift.db alembic upgrade head && alembic check` | **No new upgrade operations detected** |
 | PostgreSQL 16 migration drift | same, `REVOLAB_DATABASE_URL=postgresql+psycopg://…` | **No new upgrade operations detected** |
-| PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **51 passed** (11 Phase-15) |
+| PostgreSQL acceptance | `REVOLAB_TEST_DATABASE_URL=… pytest backend/tests/test_postgres_integration.py` | **52 passed** (12 Phase-15) |
 | OpenAPI export | `python -m revolab.export_openapi > frontend/src/contracts/openapi.json` | **byte-identical on repeat** (idempotent) |
 | Frontend types | `cd frontend && npm run typecheck` | **clean** |
 | Frontend tests | `npm run test` | **118 passed** (15 files) |
@@ -3360,6 +3360,24 @@ Regressions added by the round-2 (delta) fixes:
     type fails closed BEFORE any durable write (no bundle, no orphan registry row, no
     identity), and the shared compatibility rule stays strict for content-addressed
     artifacts (`native_id == checksum`).
+
+Regressions added by the PR-review P1/P2 round:
+
+49. `durable_pdb_entry_id` promotes every classic 4-character id (`1abc`/`1ABC`/`1AbC`)
+    to its documented extended alias, leaves an extended id (including an extended-only
+    one) unchanged, and rejects a malformed identifier;
+50. a provider that CONFIRMS the other documented spelling between two imports of the
+    same entry converges on ONE durable bundle — in BOTH directions — with exactly one
+    `ExternalIdentity`/Series/Revision/`ExternalReference`/`ArtifactReference`, the same
+    returned canonical ids, and NO additional provenance edges; the same holds across two
+    Projects with the original stewardship intact (SQLite AND PostgreSQL);
+51. every documented CALLER spelling (`1abc`, `1ABC`, `pdb_00001abc`) converges on the
+    one durable identity, and a search result set containing both spellings of one entry
+    dedupes to a single candidate;
+52. a genuinely ABSENT resolution (`null` / `[]` / an all-null array) stays `null` and
+    persists as `null`, while a PRESENT-but-malformed one (a scalar, a string, zero, a
+    negative number, a boolean, `NaN`, an infinity) fails closed as a typed
+    `CapabilityError` on BOTH the discovery and the resolving path.
 
 ## Independent review (Phase 15)
 
@@ -3548,6 +3566,44 @@ scope.
 
 After the round-2 fixes every machine gate was re-run green (see the table above), and
 the PR body records the final reconciliation. No unresolved P0/P1 remains.
+
+## Post-review fix round (PR #16 P1 + P2)
+
+A final human-directed review round on PR #16 required one P1 and one P2 fix. Both are
+mutation-verified, and every gate above was re-run on the resulting head.
+
+- **P1 — the durable PDB identity depended on which legacy/extended alias spelling the
+  provider happened to return.** Previously the import keyed the `ExternalIdentity`
+  lookup/create on the provider's confirmed `rcsb_id`, so a first import confirming
+  `1ABC` and a later one confirming the documented alias `pdb_00001abc` produced a SECOND
+  identity and a second Structure bundle for the same scientific entry. **Fixed** by
+  defining ONE stable durable normalization (`capabilities.durable_pdb_entry_id`: a
+  classic 4-character id is PROMOTED to its documented `pdb_0000<legacy>` extended alias,
+  an extended id is unchanged, both spellings stay accepted at the provider/API boundary)
+  and applying it before EVERY lookup/create and before the returned
+  `StructureImportRead.native_id`. The rule now has exactly ONE definition, in the neutral
+  capability leaf, used by BOTH the driver and the application import boundary — which
+  also removed the previously duplicated alias check in `structures.py`. Promotion is
+  chosen over demotion because the fixed point is the extended form, so the durable
+  identity survives the wwPDB transition in both directions. Regressions: A/B (the
+  provider switches spelling between imports, both directions), C (the same across two
+  Projects with unchanged stewardship, on SQLite and PostgreSQL), D (every documented
+  caller spelling converges), plus driver-level unit coverage. Mutation-verified: removing
+  the normalization fails all of them, on both substrates.
+  **Named deferral recorded:** reconciliation of an identity asserted under a
+  NON-canonical spelling through the pre-existing generic identity surface (identifier-
+  spelling reconciliation), following the Phase-14 precedent of naming such a deferral
+  rather than changing that surface's authority.
+- **P2 — a malformed `resolution_combined` was silently laundered into a valid
+  "no resolution".** The provider field is a documented `[Float]` array, and a scalar or
+  a `["x"]` / `[0]` / `[NaN]` element was being collapsed to `resolution=None`, which is
+  the same value a genuine NMR/integrative structure reports. **Fixed** with a
+  `(present, value)` tri-state at the wire boundary: `null` / `[]` / an all-null array
+  mean non-applicable and stay `null`; a null element beside a real value is skipped; a
+  scalar where the array is required, or any non-null element that is not a finite
+  positive angstrom value, fails closed as a typed `CapabilityError` on BOTH the discovery
+  and resolving paths. A service-level regression proves a genuinely non-applicable
+  resolution still persists as `null`. Mutation-verified.
 
 ## Explicit deferrals (Phase 15)
 

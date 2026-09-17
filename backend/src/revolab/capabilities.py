@@ -15,6 +15,7 @@ never as Core enums or fields.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -558,6 +559,133 @@ STRUCTURE_COORDINATE_FORMAT = "mmcif"
 # file while bounding the memory and time a single import can consume. A structure
 # larger than this fails EXPLICITLY; coordinates are never truncated.
 MAX_STRUCTURE_COORDINATE_BYTES = 134_217_728  # 128 MiB
+
+# ---------------------------------------------------------------------------
+# `pdb` archive-entry identity semantics (the ONE definition)
+#
+# The `pdb` authority's durable identifier is not provider vocabulary: it is the
+# scientific identity namespace, and BOTH the structure-discovery driver (which
+# validates what the provider returned) and the application import boundary (which
+# keys the `ExternalIdentity` lookup/create) must agree on it. The rules therefore
+# live here, in the neutral capability leaf, rather than being restated in either
+# boundary.
+# ---------------------------------------------------------------------------
+
+# The CURRENT official PDB entry identifier forms:
+#
+# * classic: four characters, the first a digit (`4HHB`, `1CRN`, `10AL`);
+# * extended: the prefix `pdb_` followed by eight alphanumerics (12 characters),
+#   whose official grammar, quoted from the PDBx/mmCIF dictionary and the wwPDB
+#   PDB ID Extension FAQ, is `pdb_[a-z0-9]{8}` (e.g. `pdb_00001abc`).
+#
+# PDB identifiers are NOT permanently four characters, so nothing here assumes they
+# are, and an extended-only identifier is always accepted.
+_LEGACY_PDB_ENTRY_ID_RE = re.compile(r"^[0-9][A-Za-z0-9]{3}$")
+_EXTENDED_PDB_ENTRY_ID_RE = re.compile(r"^pdb_[a-z0-9]{8}$")
+
+# The documented extended alias prefix. Quoted from the official wwPDB PDB ID
+# Extension FAQ: "All existing four-character PDB IDs will be extended by adding
+# prefixing 'pdb_0000' to the IDs, e.g., PDB ID '1abc' would be listed as
+# 'pdb_00001abc'".
+PDB_EXTENDED_ALIAS_PREFIX = "pdb_0000"
+
+# A Computed Structure Model identifier (AlphaFold DB `AF_`, ModelArchive `MA_`).
+# Phase 15 imports the experimental PDB archive only.
+_CSM_ENTRY_ID_RE = re.compile(r"^(?:AF|MA)_")
+
+
+def canonical_pdb_entry_id(value: Any) -> str | None:
+    """Normalize the CASE of one PDB entry identifier, or None when it is not one.
+
+    This is the transport/presentation normalization: it preserves WHICH official
+    spelling was used and only fixes its case (a classic id is uppercase, an extended
+    id is lowercase). `durable_pdb_entry_id` is the identity normalization and is what
+    every durable lookup/create must use.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > MAX_STRUCTURE_NATIVE_ID_CHARS:
+        return None
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(text):
+        return text.upper()
+    lowered = text.lower()
+    if _EXTENDED_PDB_ENTRY_ID_RE.fullmatch(lowered):
+        return lowered
+    return None
+
+
+def pdb_extended_alias_of_legacy(legacy_entry_id: str) -> str:
+    """The documented extended alias of a classic four-character PDB entry id."""
+    return f"{PDB_EXTENDED_ALIAS_PREFIX}{legacy_entry_id.lower()}"
+
+
+def pdb_legacy_alias_of_extended(extended_entry_id: str) -> str | None:
+    """The classic four-character id a documented extended alias denotes, or None.
+
+    Only the `pdb_0000<legacy>` form has a legacy alias; a genuinely extended-only
+    identifier has none. This is the TRANSPORT inverse of
+    `pdb_extended_alias_of_legacy` (the RCSB Search/Data APIs currently accept only
+    the classic spelling, while the file service accepts both).
+    """
+    if not extended_entry_id.startswith(PDB_EXTENDED_ALIAS_PREFIX):
+        return None
+    candidate = extended_entry_id[len(PDB_EXTENDED_ALIAS_PREFIX) :]
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(candidate):
+        return candidate.upper()
+    return None
+
+
+def durable_pdb_entry_id(value: Any) -> str | None:
+    """The ONE stable durable PDB identity of an archive entry, or None.
+
+    This single canonicalization is applied before EVERY `ExternalIdentity` lookup or
+    create and before the imported identity is returned, so the durable scientific
+    identity can never depend on whichever official spelling a particular provider
+    response happened to use.
+
+    wwPDB documents the two current forms as aliases of ONE entry, so the durable form
+    is a single fixed choice rather than "whatever the provider said":
+
+    * a classic four-character id is PROMOTED to its documented extended alias
+      (`1abc` / `1ABC` -> `pdb_00001abc`);
+    * an extended id (`pdb_00001abc`, or a future extended-only `pdb_1abc5678`) is
+      unchanged.
+
+    Both spellings stay fully ACCEPTED at the provider/API boundary — the legacy form
+    is a presentation/transport spelling, not a second identity. Promotion (rather than
+    demotion to four characters) is chosen because wwPDB is transitioning to extended
+    primary ids: the fixed point of this function is the extended form, so the durable
+    identity survives that transition in both directions.
+    """
+    canonical = canonical_pdb_entry_id(value)
+    if canonical is None:
+        return None
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(canonical):
+        return pdb_extended_alias_of_legacy(canonical)
+    return canonical
+
+
+def same_pdb_entry_identity(left: str, right: str) -> bool:
+    """Are two official PDB identifiers the SAME archive entry?
+
+    Case-insensitive, and alias-aware for the documented `pdb_0000<legacy>` form, so a
+    request in one spelling and a provider response in the other still describe the
+    same entry. This is a same-entry test, NOT the durable-identity normalization —
+    that is `durable_pdb_entry_id`.
+    """
+    if left.casefold() == right.casefold():
+        return True
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(left):
+        return pdb_extended_alias_of_legacy(left) == right.casefold()
+    if _LEGACY_PDB_ENTRY_ID_RE.fullmatch(right):
+        return pdb_extended_alias_of_legacy(right) == left.casefold()
+    return False
+
+
+def is_computed_structure_model_id(value: Any) -> bool:
+    """Is this identifier a Computed Structure Model (`AF_...` / `MA_...`)?"""
+    return isinstance(value, str) and bool(_CSM_ENTRY_ID_RE.match(value.strip()))
 
 
 @dataclass(frozen=True)

@@ -3486,6 +3486,116 @@ def test_phase15_postgres_content_only_race_yields_one_artifact(
         )
 
 
+def test_phase15_postgres_provider_spelling_switch_reuses_one_bundle(
+    pg_engine: Engine, tmp_path
+) -> None:
+    """PR #16 P1 on the acceptance substrate: the durable identity is ONE fixed form.
+
+    The provider confirms the classic id on the first import and its documented
+    extended alias on the second import of the SAME entry, across two Projects. Both
+    must reuse ONE global bundle and the first Project must keep stewardship.
+    """
+    from revolab.content_store import ContentStore
+    from revolab.models import (
+        ArtifactReference,
+        ExternalIdentity,
+        ExternalReference,
+        ResourceStewardship,
+        ScientificObjectRevision,
+        ScientificObjectSeries,
+    )
+    from revolab.testing.fake_structure import FAKE_STRUCTURE_PROVIDER_KEY
+
+    tag = uuid4().hex[:8]
+    with Session(pg_engine) as setup:
+        owner_a = services.create_actor(setup)
+        project_a = services.create_project(setup, owner_a, f"Phase15 spelling A {tag}")
+        owner_b = services.create_actor(setup)
+        project_b = services.create_project(setup, owner_b, f"Phase15 spelling B {tag}")
+        project_a_id, project_b_id = project_a.id, project_b.id
+
+    # A per-run unique CLASSIC 4-character id (the acceptance database is shared and is
+    # not truncated, so a fixed id would collide across repeated runs).
+    entry = f"9{tag[:3].upper()}"
+    assert len(entry) == 4 and entry[0].isdigit()
+    durable_entry = f"pdb_0000{entry.lower()}"
+    registry = _structure_registry()
+    _seed_structure(registry, entry)
+    content_store = ContentStore(tmp_path / "content")
+
+    # Each import owns its own transaction (a fresh Session).
+    with Session(pg_engine) as session:
+        first = _import_structure(
+            session, registry, content_store, owner_a, project_a_id, entry
+        )
+    assert first.native_id == durable_entry
+
+    # The provider now confirms the OTHER documented spelling of the SAME entry, with
+    # byte-identical coordinates.
+    aliased = _seed_structure(registry, durable_entry, coordinate_seed=entry)
+    registry.get(FAKE_STRUCTURE_PROVIDER_KEY).driver.state.seed_for(entry, aliased)
+
+    with Session(pg_engine) as session:
+        second = _import_structure(
+            session, registry, content_store, owner_b, project_b_id, entry
+        )
+    assert second == first
+    assert second.native_id == durable_entry
+
+    with Session(pg_engine) as verify:
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalIdentity)
+                .where(ExternalIdentity.native_id == durable_entry)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalIdentity)
+                .where(ExternalIdentity.native_id == entry)
+            )
+            == 0
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ScientificObjectSeries)
+                .where(ScientificObjectSeries.series_id == first.structure_series_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ScientificObjectRevision)
+                .where(ScientificObjectRevision.series_id == first.structure_series_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ExternalReference)
+                .where(ExternalReference.external_reference_id == first.external_reference_id)
+            )
+            == 1
+        )
+        assert (
+            verify.scalar(
+                select(func.count())
+                .select_from(ArtifactReference)
+                .where(ArtifactReference.artifact_id == first.coordinate_artifact_id)
+            )
+            == 1
+        )
+        stewardship = verify.get(ResourceStewardship, first.structure_series_id)
+        assert stewardship is not None
+        assert stewardship.steward_project_id == project_a_id
+
+
 def test_phase15_postgres_atomic_rollback_leaves_no_partial_bundle(
     pg_session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

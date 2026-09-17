@@ -43,9 +43,14 @@ official hosts.
   4-character id `XXXX` is exactly `pdb_0000xxxx`. The Search and Data APIs accept
   the 4-character form as of 2026-09-17 (live-verified: an extended-only id answers
   `204` / `null` / `404`), so the driver normalizes the documented alias before
-  querying and stores the provider-confirmed canonical `rcsb_id`. The metadata index
-  is keyed by BOTH forms, so a future switch to extended primary ids cannot silently
-  break discovery. `results_content_type` does NOT exclude integrative entries
+  querying. The metadata index is keyed by BOTH forms, so a future switch to extended
+  primary ids cannot silently break discovery.
+* Durable identity: `durable_entry_id` normalizes every entry to ONE fixed durable
+  form — a legacy 4-character id is PROMOTED to its documented `pdb_0000<legacy>`
+  extended alias, and an extended id is unchanged. Both spellings stay fully accepted
+  at the provider/API boundary, but the returned `native_id` is always the canonical
+  durable form, so a provider that switches which alias spelling it reports (or the
+  wwPDB switch to extended primary ids) cannot create a second scientific identity. `results_content_type` does NOT exclude integrative entries
   (live-verified), so discovery re-validates the determination methodology on the
   returned METADATA and EXCLUDES any non-experimental entry, exactly like a Computed
   Structure Model hit.
@@ -68,7 +73,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -78,7 +82,6 @@ from revolab.capabilities import (
     MAX_STRUCTURE_COORDINATE_BYTES,
     MAX_STRUCTURE_METHOD_CHARS,
     MAX_STRUCTURE_METHODS,
-    MAX_STRUCTURE_NATIVE_ID_CHARS,
     MAX_STRUCTURE_QUERY_CHARS,
     MAX_STRUCTURE_RESULT_LIMIT,
     MAX_STRUCTURE_REVISION_TEXT_CHARS,
@@ -89,6 +92,12 @@ from revolab.capabilities import (
     StructureCandidate,
     StructureSearchResult,
     bounded_inert_text,
+    canonical_pdb_entry_id,
+    durable_pdb_entry_id,
+    is_computed_structure_model_id,
+    pdb_extended_alias_of_legacy,
+    pdb_legacy_alias_of_extended,
+    same_pdb_entry_identity,
 )
 from revolab.credentials import CredentialLease
 from revolab.drivers import DriverContext
@@ -130,21 +139,6 @@ _EXPERIMENTAL_METHODOLOGY = "experimental"
 # Search API path the discovery capability depends on, and reads a single row.
 _HEALTH_QUERY = "hemoglobin"
 
-# The official identifier grammars (2026-09-17).
-#
-# Classic/legacy PDB entry id: four characters, the first a digit.
-_LEGACY_ENTRY_ID_RE = re.compile(r"^[0-9][A-Za-z0-9]{3}$")
-# Extended PDB entry id, quoted from the PDBx/mmCIF dictionary and the wwPDB
-# PDB ID Extension FAQ: prefix `pdb_` followed by eight alphanumerics
-# (`pdb_[a-z0-9]{8}`), e.g. `pdb_00001abc`.
-_EXTENDED_ENTRY_ID_RE = re.compile(r"^pdb_[a-z0-9]{8}$")
-# The documented extended alias prefix: wwPDB states that every existing
-# four-character id `XXXX` is listed as `pdb_0000xxxx`.
-_EXTENDED_ALIAS_PREFIX = "pdb_0000"
-# A Computed Structure Model identifier (AlphaFold DB `AF_`, ModelArchive `MA_`).
-# Phase 15 imports the experimental PDB archive only.
-_CSM_ENTRY_ID_RE = re.compile(r"^(?:AF|MA)_")
-
 # The mmCIF data-block signature. This is a bounded SIGNATURE CHECK, not a parser:
 # it rejects an HTML/error body served with a 200 and a truncated or garbage
 # payload. No scientific field is ever read from the coordinate file; every
@@ -176,79 +170,31 @@ query StructureEntryMetadata($entry_ids: [String!]!) {
 """
 
 
-def canonical_entry_id(value: Any) -> str | None:
-    """Canonicalize ONE PDB entry identifier, or None when it is not one.
-
-    Exactly two official forms are accepted, and only CASE is normalized:
-
-    * a classic four-character id (`4hhb` -> `4HHB`), which is the form the RCSB
-      APIs and the provider's `rcsb_id` use today;
-    * an extended id (`PDB_00004HHB` -> `pdb_00004hhb`), whose official grammar
-      `pdb_[a-z0-9]{8}` is lowercase.
-
-    No form is ever silently TRANSLATED into the other here: the legacy <->
-    extended alias is handled explicitly by `extended_alias_of_legacy` /
-    `same_entry_identity`, because wwPDB documents them as aliases of one entry.
-    """
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text or len(text) > MAX_STRUCTURE_NATIVE_ID_CHARS:
-        return None
-    if _LEGACY_ENTRY_ID_RE.fullmatch(text):
-        return text.upper()
-    lowered = text.lower()
-    if _EXTENDED_ENTRY_ID_RE.fullmatch(lowered):
-        return lowered
-    return None
+# The `pdb` archive-entry IDENTITY semantics (grammar, case, the documented
+# legacy <-> extended alias, and the ONE durable form) are owned by the neutral
+# capability leaf, because the application import boundary must apply exactly the same
+# rules to the `ExternalIdentity` lookup/create. This module keeps only the RCSB
+# TRANSPORT mapping (`_api_lookup_id`) on top of them; the names are re-exported so the
+# driver remains the place a reader looks for "what this provider accepts".
+canonical_entry_id = canonical_pdb_entry_id
+durable_entry_id = durable_pdb_entry_id
+extended_alias_of_legacy = pdb_extended_alias_of_legacy
+same_entry_identity = same_pdb_entry_identity
+is_computed_model_id = is_computed_structure_model_id
 
 
-def extended_alias_of_legacy(legacy_entry_id: str) -> str:
-    """The documented extended alias of a classic four-character PDB entry id.
-
-    Quoted from the official wwPDB PDB ID Extension FAQ: "All existing
-    four-character PDB IDs will be extended by adding prefixing 'pdb_0000' to the
-    IDs, e.g., PDB ID '1abc' would be listed as 'pdb_00001abc'".
-    """
-    return f"{_EXTENDED_ALIAS_PREFIX}{legacy_entry_id.lower()}"
-
-
-def same_entry_identity(left: str, right: str) -> bool:
-    """Are two official PDB identifiers the SAME archive entry?
-
-    Case-insensitive, and alias-aware for the documented `pdb_0000<legacy>` form.
-    Both forms name one entry, so the provider may legitimately confirm an
-    extended request with the classic id (or the reverse).
-    """
-    if left.casefold() == right.casefold():
-        return True
-    if _LEGACY_ENTRY_ID_RE.fullmatch(left):
-        return extended_alias_of_legacy(left) == right.casefold()
-    if _LEGACY_ENTRY_ID_RE.fullmatch(right):
-        return extended_alias_of_legacy(right) == left.casefold()
-    return False
-
-
-def is_computed_model_id(value: Any) -> bool:
-    """Is this identifier a Computed Structure Model (`AF_...` / `MA_...`)?"""
-    return isinstance(value, str) and bool(_CSM_ENTRY_ID_RE.match(value.strip()))
-
-
-def _api_lookup_id(canonical_id: str) -> str:
+def _api_lookup_id(durable_id: str) -> str:
     """The identifier to send to the RCSB Search/Data APIs.
 
-    Live-verified 2026-09-17: those two services accept the classic four-character
-    id but answer `204`/`null`/`404` for an extended id, while the static-file host
-    accepts both. The alias rule is official, so an extended id of the documented
-    `pdb_0000<legacy>` form is looked up through its legacy alias; any other
-    extended id (an extended-only identifier, which does not exist in the archive
-    yet) is sent as-is and fails closed when the provider does not know it.
+    Live-verified 2026-09-17: those two services accept the classic four-character id
+    but answer `204`/`null`/`404` for an extended id, while the static-file host
+    accepts both. The alias rule is official, so a durable id of the documented
+    `pdb_0000<legacy>` form is looked up through its legacy alias; any other extended
+    id (an extended-only identifier, which does not exist in the archive yet) is sent
+    as-is and fails closed when the provider does not know it.
     """
-    if canonical_id.startswith(_EXTENDED_ALIAS_PREFIX):
-        candidate = canonical_id[len(_EXTENDED_ALIAS_PREFIX) :]
-        if _LEGACY_ENTRY_ID_RE.fullmatch(candidate):
-            return candidate.upper()
-    return canonical_id
+    legacy = pdb_legacy_alias_of_extended(durable_id)
+    return legacy if legacy is not None else durable_id
 
 
 def _has_mmcif_signature(data: bytes) -> bool:
@@ -313,21 +259,44 @@ def _entry_methods(entry: Mapping[str, Any]) -> tuple[str, ...] | None:
     return tuple(seen[key] for key in sorted(seen))
 
 
-def _entry_resolution_angstrom(entry: Mapping[str, Any]) -> float | None:
-    """The ONE canonical resolution of an entry, or None when it has none.
+def _entry_resolution_field(entry: Mapping[str, Any]) -> tuple[bool, float | None]:
+    """Inspect `rcsb_entry_info.resolution_combined`.
 
-    `rcsb_entry_info.resolution_combined` is a documented `[Float]` array holding
-    one value per contributing method (and it is NOT sorted). The BEST value (the
-    minimum in angstroms) is the conventional headline resolution. A null/empty
-    array means "no resolution applies" (NMR, integrative) and is NEVER replaced by
-    an invented number.
+    Returns `(present, value)`. `present` distinguishes **ABSENT/non-applicable**
+    (allowed: `null` or an empty array — the honest answer for an NMR or integrative
+    structure, so no resolution is ever invented) from **PRESENT but malformed**
+    (structurally impossible provider data, which the caller must fail closed on).
+
+    `resolution_combined` is a documented `[Float]` array holding one value per
+    contributing method, and it is NOT sorted, so the BEST value (the minimum in
+    angstroms) is the conventional headline resolution. Malformed means: a scalar
+    where the contract requires an array, or any non-null element that is not a
+    finite positive angstrom value (a string, a boolean, zero, a negative number,
+    `NaN`, or an infinity). A non-null member that is *present but uninterpretable*
+    must NEVER be silently downgraded to "this structure has no resolution", because
+    that would turn malformed provider data into a scientifically valid snapshot.
+    A `null` element carries no value (the documented item type is nullable) and is
+    skipped; an array whose elements are all `null` is non-applicable, not malformed.
     """
     info = _mapping(entry.get("rcsb_entry_info"))
     raw = info.get("resolution_combined")
+    if raw is None:
+        return False, None
     if not isinstance(raw, list):
-        return None
-    values = [value for value in (_finite_positive(item) for item in raw) if value is not None]
-    return min(values) if values else None
+        return True, None
+    if not raw:
+        return False, None
+    values: list[float] = []
+    for item in raw:
+        if item is None:
+            continue
+        number = _finite_positive(item)
+        if number is None:
+            return True, None
+        values.append(number)
+    if not values:
+        return False, None
+    return False, min(values)
 
 
 def _entry_polymer_entity_count(entry: Mapping[str, Any]) -> int | None:
@@ -434,14 +403,23 @@ class RcsbStructureDiscoveryCapability:
                     CapabilityErrorKind.UNKNOWN,
                     "provider returned an invalid experimental-method list",
                 )
+            resolution_present, resolution = _entry_resolution_field(entry)
+            if resolution_present and resolution is None:
+                # Present but malformed: never presented as a valid "no resolution".
+                raise self._error(
+                    CapabilityErrorKind.UNKNOWN,
+                    "provider reported an invalid resolution",
+                )
             candidates.append(
                 StructureCandidate(
                     provider_key=self.provider_key,
                     authority=RCSB_AUTHORITY,
+                    # The CANONICAL DURABLE identity, so a candidate's identity is
+                    # exactly what an import of it will create.
                     native_id=confirmed,
                     title=_entry_title(entry),
                     experimental_methods=methods,
-                    resolution_angstrom=_entry_resolution_angstrom(entry),
+                    resolution_angstrom=resolution,
                     release_date=_entry_release_date(entry),
                     polymer_entity_count=_entry_polymer_entity_count(entry),
                 )
@@ -500,19 +478,26 @@ class RcsbStructureDiscoveryCapability:
                 CapabilityErrorKind.UNKNOWN,
                 "provider returned an invalid experimental-method list",
             )
+        resolution_present, resolution = _entry_resolution_field(entry)
+        if resolution_present and resolution is None:
+            # Present but malformed: an NMR/integrative structure reports `null`, so a
+            # malformed value must never become a scientifically valid absence.
+            raise self._error(
+                CapabilityErrorKind.UNKNOWN, "provider reported an invalid resolution"
+            )
         major, minor, revision_date = _entry_revision(entry)
         coordinate_bytes = self._download_coordinate_bytes(confirmed)
         return ResolvedStructureRecord(
             provider_key=self.provider_key,
             authority=RCSB_AUTHORITY,
-            # The CANONICAL identifier the authoritative provider response
-            # confirmed, never the raw caller spelling.
+            # The CANONICAL DURABLE identity, never the raw caller spelling and never
+            # whichever alias spelling THIS response happened to use.
             native_id=confirmed,
             coordinate_format=STRUCTURE_COORDINATE_FORMAT,
             coordinate_bytes=coordinate_bytes,
             title=_entry_title(entry),
             experimental_methods=methods,
-            resolution_angstrom=_entry_resolution_angstrom(entry),
+            resolution_angstrom=resolution,
             entry_revision_major=major,
             entry_revision_minor=minor,
             entry_revision_date=revision_date,
@@ -522,7 +507,13 @@ class RcsbStructureDiscoveryCapability:
 
     @staticmethod
     def _confirmed_entry_id(entry: Mapping[str, Any]) -> str | None:
-        return canonical_entry_id(entry.get("rcsb_id"))
+        """The entry's canonical DURABLE identity (`durable_entry_id`).
+
+        The provider's `rcsb_id` is only its presentation of the entry; the durable
+        identity is normalized so it cannot change when the provider switches which
+        documented alias spelling it returns.
+        """
+        return durable_entry_id(entry.get("rcsb_id"))
 
     @staticmethod
     def _resolve_entry_id(native_id: Any) -> str:
@@ -625,11 +616,13 @@ class RcsbStructureDiscoveryCapability:
         """Extract and validate the bounded, PDB-only, order-preserving hit list.
 
         Accepts BOTH documented result shapes (a bare string under `compact`
-        verbosity and an `{identifier, score}` object under `minimal`). A Computed
-        Structure Model hit is DROPPED (a legitimate provider result class that
-        Phase 15 deliberately scopes out); any other identifier that is not a valid
-        PDB archive entry identifier is structurally impossible data and fails
-        closed rather than being forwarded.
+        verbosity and an `{identifier, score}` object under `minimal`), and returns
+        each hit's CANONICAL DURABLE identity (`durable_entry_id`), so discovery works
+        entirely in durable-identity space and dedupes the two documented spellings of
+        one entry. A Computed Structure Model hit is DROPPED (a legitimate provider
+        result class that Phase 15 deliberately scopes out); any other identifier that
+        is not a valid PDB archive entry identifier is structurally impossible data and
+        fails closed rather than being forwarded.
         """
         raw = payload.get("result_set")
         if raw is None:
@@ -651,7 +644,7 @@ class RcsbStructureDiscoveryCapability:
                 )
             if is_computed_model_id(value):
                 continue
-            entry_id = canonical_entry_id(value)
+            entry_id = durable_entry_id(value)
             if entry_id is None:
                 raise self._error(
                     CapabilityErrorKind.UNKNOWN,
@@ -668,13 +661,13 @@ class RcsbStructureDiscoveryCapability:
     def _entry_metadata_by_id(
         self, lookup_ids: Sequence[str]
     ) -> dict[str, Mapping[str, Any]]:
-        """ONE batched metadata request, keyed by BOTH identifier forms.
+        """ONE batched metadata request, keyed by BOTH the durable id and its API alias.
 
-        The Data API keys entries by its own canonical `rcsb_id`, while the Search
-        API returns whatever id form it uses. Indexing each entry under its
-        canonical id AND its documented API-lookup alias means a future wwPDB switch
-        to extended primary ids cannot silently turn a search hit into "no
-        resolvable metadata".
+        The Data API keys entries by its own canonical `rcsb_id`, while the Search API
+        returns whatever id form it uses. Indexing each entry under its durable
+        identity AND its documented API-lookup alias means a future wwPDB switch to
+        extended primary ids cannot silently turn a search hit into "no resolvable
+        metadata".
         """
         entries = self._fetch_entries(lookup_ids)
         by_id: dict[str, Mapping[str, Any]] = {}
@@ -1031,6 +1024,7 @@ __all__ = [
     "RcsbDriver",
     "RcsbStructureDiscoveryCapability",
     "canonical_entry_id",
+    "durable_entry_id",
     "extended_alias_of_legacy",
     "is_computed_model_id",
     "same_entry_identity",

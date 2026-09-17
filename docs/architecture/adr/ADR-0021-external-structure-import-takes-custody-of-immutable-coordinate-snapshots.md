@@ -103,26 +103,44 @@ bytes**. It is never persisted, never a `SearchHit`, never Project truth, and it
 carries raw provider JSON or provider field names. Discovery persists nothing, needs
 no candidate cache table, and never downloads a coordinate file.
 
-### The durable identity is the canonical PDB archive entry identifier
+### The durable identity is ONE fixed canonical form of the PDB archive entry id
 
 ```text
-ExternalIdentity(authority="pdb", native_id=<canonical PDB entry id>, kind="structure")
+ExternalIdentity(authority="pdb", native_id=<durable PDB entry id>, kind="structure")
 ```
 
-Both CURRENT official identifier forms are supported, because PDB identifiers are
-**not permanently four characters**:
+Both CURRENT official identifier forms are supported and ACCEPTED, because PDB
+identifiers are **not permanently four characters**:
 
 ```text
 classic  4 characters, first a digit            e.g. 4HHB
 extended "pdb_" + 8 alphanumerics (12 chars)    e.g. pdb_00004hhb, pdb_10021abc
 ```
 
-Only **case** is normalized, plus the ONE alias wwPDB officially documents
-(`pdb_0000<legacy>` <-> `<legacy>` — *"All existing four-character PDB IDs will be
-extended by adding prefixing 'pdb_0000' to the IDs"*). The durable identifier is the
-canonical one the authoritative provider response CONFIRMED, never the raw caller
-spelling, so importing `4hhb` and `pdb_00004hhb` converges on ONE identity. Never an
-entry title, method, resolution, URL, filename, provider response id, or resolver key.
+But "accepted" is not "durable". The durable form is ONE fixed normalization, applied
+before EVERY `ExternalIdentity` lookup/create and before the imported identity is
+returned, so it cannot depend on whichever official spelling a particular provider
+response happens to use — or on the wwPDB transition from classic to extended primary
+ids:
+
+```text
+1abc / 1ABC / 1AbC   -> pdb_00001abc     (a classic id is PROMOTED to its documented alias)
+pdb_00001abc         -> pdb_00001abc     (unchanged)
+pdb_1abc5678         -> pdb_1abc5678     (extended-only: unchanged)
+```
+
+Promotion is chosen over demotion because the fixed point of the normalization is the
+extended form, which is where the archive is heading; the durable identity therefore
+survives the transition in both directions. The rule is owned by the neutral capability
+leaf (`durable_pdb_entry_id`) and applied by BOTH the driver and the application import
+boundary, so a mis-wired or future resolver cannot mint a second identity for the same
+entry either.
+
+Never an entry title, method, resolution, URL, filename, provider response id, or
+resolver key. A named deferral remains: reconciliation of an identity asserted under a
+NON-canonical spelling through the pre-existing generic identity surface (identifier-
+spelling reconciliation), exactly as Phase 14 named its analogous extra-snapshot
+deferral rather than changing that surface's authority.
 
 Computed Structure Models (`AF_…`/`MA_…`, or
 `structure_determination_methodology == "computational"`) and integrative/hybrid
@@ -165,6 +183,14 @@ deterministically, so the persisted method never depends on arbitrary provider
 ordering. `resolution` is a finite positive Å value or absent — enforced by the
 **Core type registry**, so manual creation, revision appends, and imports all obey
 one rule and no resolution is ever invented for NMR/integrative structures.
+
+Absent and malformed are kept distinct at the wire boundary, because collapsing them
+would launder impossible provider data into a valid snapshot: `null`/`[]` (and an
+all-null array) mean "no resolution applies", while a scalar where the documented
+`[Float]` array is required — or any non-null element that is not a finite positive
+angstrom value (`["x"]`, `[0]`, `[-1.0]`, `[NaN]`) — fails closed as a typed
+`CapabilityError` on both the discovery and resolving paths. A null element beside a
+real value is skipped, so a legitimate result is never rejected.
 
 ### The exact coordinates imported are the canonical archive entry file, in PDBx/mmCIF
 

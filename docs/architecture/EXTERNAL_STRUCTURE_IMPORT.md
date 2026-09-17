@@ -194,12 +194,34 @@ identifier the provider response confirmed** (the Data API's `rcsb_id`) — neve
 raw caller spelling. Importing `4hhb` and `pdb_00004hhb` therefore converges on ONE
 `ExternalIdentity`.
 
+**The durable form is ONE fixed choice, not "whatever the provider said."** wwPDB
+documents the two forms as aliases of one entry, and a provider is authoritative about
+the ENTRY but not about which spelling it reports on a given response — and the archive
+is transitioning from classic to extended primary ids. Phase 15 therefore normalizes
+every entry to a single durable form (`durable_pdb_entry_id`), applied before EVERY
+`ExternalIdentity` lookup/create and before the imported identity is returned:
+
+```text
+1abc / 1ABC / 1AbC   -> pdb_00001abc     (a classic id is PROMOTED to its alias)
+pdb_00001abc         -> pdb_00001abc     (unchanged)
+pdb_1abc5678         -> pdb_1abc5678     (extended-only: unchanged)
+```
+
+Promotion rather than demotion is deliberate: the fixed point of the normalization is
+the extended form, so the durable identity survives the wwPDB transition in both
+directions, and a provider that switches which alias spelling it confirms can never
+mint a second `ExternalIdentity` for the same archive entry. Both spellings stay fully
+accepted at the provider and API boundary; the legacy form is a
+presentation/transport spelling, not a second identity.
+
 Because the RCSB Search and Data APIs currently answer `204`/`null`/`404` for an
 extended-only identifier (live-verified 2026-09-17; the static file host accepts
-both), an extended identifier of the documented `pdb_0000<legacy>` form is looked
-up through its legacy alias; any other extended identifier is sent as given and
-fails closed when the provider does not know it. An extended-only identifier is
-**grammar-valid** and is never rejected merely for not being four characters.
+both), the *lookup* for a durable id of the documented `pdb_0000<legacy>` form uses
+its legacy alias, while the *coordinate download* uses the canonical archive filename
+(`pdb_00001abc.cif`, which the file host also serves). Any other extended identifier
+is sent as given and fails closed when the provider does not know it. An extended-only
+identifier is **grammar-valid** and is never rejected merely for not being four
+characters.
 
 Never used as durable identity: a title, a method, a resolution, a URL, a filename,
 a Data API response id, or the **resolver** key.
@@ -269,6 +291,29 @@ negative, and boolean values are rejected by the Core `StructurePayload` validat
 — a manual create, an append, or an external import — obeys the same rule. This is
 deliberately not an import-only shadow rule. No resolution is ever invented for an
 NMR or integrative structure.
+
+**Absent and malformed are different facts (driver boundary).** The provider field is
+`rcsb_entry_info.resolution_combined`, a documented `[Float]` array. Its shape is a
+wire concern, so the distinction is drawn in the driver with a `(present, value)`
+result, not by collapsing both cases into `None`:
+
+```text
+null, []            -> ABSENT / non-applicable      -> resolution stays null (NMR)
+[null]              -> ABSENT (every member is null) -> resolution stays null
+[2.4, 1.65]         -> value: the MINIMUM            -> 1.65 (best resolution)
+[1.5, null]         -> value: nulls are skipped      -> 1.5
+"1.5", 1.5          -> PRESENT but MALFORMED         -> typed failure, never null
+["x"], [0], [-1.0]  -> PRESENT but MALFORMED         -> typed failure, never null
+[NaN], [infinity]   -> PRESENT but MALFORMED         -> typed failure, never null
+```
+
+A scalar where the contract requires an array, or any non-null element that is not a
+finite positive angstrom value, is structurally impossible provider data and fails
+closed as a typed `CapabilityError` — on BOTH the discovery and the resolving path.
+Silently downgrading it to "this structure has no resolution" would turn malformed
+provider data into a scientifically valid snapshot, which is precisely what the
+`resolution` invariant exists to prevent. A genuinely absent resolution therefore
+still persists as `null`, and no number is ever invented.
 
 ### 6.3 A series name is presentation, not identity
 
@@ -976,7 +1021,10 @@ visualization is a separate concern that can later consume the canonical
 ```text
 Structure refresh -> new revision semantics
 obsolete / superseded PDB reconciliation
-PDB entry alias reconciliation beyond the documented legacy<->extended alias
+PDB entry identifier-spelling reconciliation (e.g. an identity asserted through the
+pre-existing generic identity surface under the non-canonical spelling of an entry
+that the importer would key under the canonical durable form, which would otherwise
+be a duplicate scientific identity)
 integrative / hybrid (IHM) PDB entries
 UniProt <-> PDB mapping
 polymer entity import

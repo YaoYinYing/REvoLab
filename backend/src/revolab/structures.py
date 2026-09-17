@@ -75,6 +75,8 @@ from revolab.capabilities import (
     ResolvedStructureRecord,
     StructureCandidate,
     bounded_inert_text,
+    durable_pdb_entry_id,
+    same_pdb_entry_identity,
 )
 from revolab.content_store import ContentStore
 from revolab.domain import persistence, provenance, scientific_object
@@ -274,10 +276,24 @@ def import_structure(
         raise ValidationError("resolved structure came from a different provider")
     if record.authority != bounded_authority:
         raise ValidationError("resolved structure identity authority does not match the import request")
-    confirmed_native_id = _bounded_identity(
-        record.native_id, MAX_STRUCTURE_NATIVE_ID_CHARS, "native_id"
-    )
-    if not _structure_identity_confirmed(bounded_native_id, confirmed_native_id):
+    # THE durable identity normalization. Every `ExternalIdentity` lookup/create below
+    # keys on this ONE value, and it is what the response echoes — never the caller's
+    # spelling and never whichever documented alias spelling THIS provider response
+    # happened to use. It is applied here (not merely trusted from the driver) because
+    # this is the boundary that owns the lookup/create, so a mis-wired or future
+    # resolver cannot mint a second identity for the same archive entry.
+    # `durable_pdb_entry_id` returns None for an identifier that is not a PDB archive
+    # entry id at all; a resolver that uses its own vocabulary (the in-process fake
+    # claims its own `fakepdb` authority, precisely so a synthetic identity can never be
+    # mistaken for a real PDB entry) is therefore normalized TRIVIALLY — its confirmed
+    # id already IS its durable id. The substitution guard below still holds in both
+    # cases, so a resolver can never swap in a different entry.
+    confirmed_native_id = durable_pdb_entry_id(
+        _bounded_identity(record.native_id, MAX_STRUCTURE_NATIVE_ID_CHARS, "native_id")
+    ) or _bounded_identity(record.native_id, MAX_STRUCTURE_NATIVE_ID_CHARS, "native_id")
+    # The provider must confirm the SAME archive entry the caller named (case- and
+    # alias-aware), so a substituted identity fails before any durable write.
+    if not same_pdb_entry_identity(bounded_native_id, confirmed_native_id):
         raise ValidationError("resolved structure identity does not match the import request")
     coordinate_checksum = hashlib.sha256(record.coordinate_bytes).hexdigest()
     snapshot = _normalized_snapshot(record, confirmed_native_id, coordinate_checksum)
@@ -299,22 +315,6 @@ def import_structure(
         external_reference_id=bundle.external_reference_id,
         authority=bounded_authority,
         native_id=confirmed_native_id,
-    )
-
-
-def _structure_identity_confirmed(requested: str, confirmed: str) -> bool:
-    """Did the provider confirm the SAME archive entry the caller named?
-
-    Case-insensitive, and alias-aware for the officially documented wwPDB
-    `pdb_0000<legacy>` <-> `<legacy>` alias. This mirrors the driver's own check
-    (`drivers.rcsb.same_entry_identity`) so a substituted identity fails before any
-    durable write even if a driver were mis-wired; the canonical form that becomes
-    durable is the provider-confirmed one (TODO section 6).
-    """
-    if requested.casefold() == confirmed.casefold():
-        return True
-    return f"pdb_0000{confirmed.casefold()}" == requested.casefold() or (
-        f"pdb_0000{requested.casefold()}" == confirmed.casefold()
     )
 
 
