@@ -3202,7 +3202,7 @@ All commands were run from the repository root unless noted; the branch head is
 | --- | --- | --- |
 | Backend lint | `ruff check backend` | **All checks passed** |
 | Backend types | `mypy` (strict) | **no issues in 65 source files** |
-| Backend tests | `pytest` | **952 passed, 52 skipped** |
+| Backend tests | `pytest` | **953 passed, 52 skipped** |
 | RCSB driver (deterministic HTTP) | `pytest backend/tests/test_rcsb_driver.py` | **93 passed** |
 | Structure service/API/Agent | `pytest backend/tests/test_structures.py backend/tests/test_structures_api.py backend/tests/test_structure_agent.py` | **88 passed** (63 + 15 + 10) |
 | SQLite migration drift | `cd backend && REVOLAB_DATABASE_URL=sqlite:////tmp/drift.db alembic upgrade head && alembic check` | **No new upgrade operations detected** |
@@ -3378,6 +3378,10 @@ Regressions added by the PR-review P1/P2 round:
     persists as `null`, while a PRESENT-but-malformed one (a scalar, a string, zero, a
     negative number, a boolean, `NaN`, an infinity) fails closed as a typed
     `CapabilityError` on BOTH the discovery and the resolving path.
+53. a content-addressed `ContentStore.put` is ATOMIC: with the first writer stalled
+    mid-write, a concurrent writer of the same bytes still completes, exactly one
+    immutable file exists afterwards, no temporary file is left behind, and the stored
+    bytes verify (deterministically red without the fix).
 
 ## Independent review (Phase 15)
 
@@ -3594,6 +3598,19 @@ mutation-verified, and every gate above was re-run on the resulting head.
   NON-canonical spelling through the pre-existing generic identity surface (identifier-
   spelling reconciliation), following the Phase-14 precedent of naming such a deferral
   rather than changing that surface's authority.
+- **Follow-on (found by CI on the P1/P2 head) — the content-addressed write was not
+  atomic.** One backend job failed on the REQUIRED content-only race regression with
+  `ConflictError('duplicate checksum with different bytes')`; the other passed, i.e. it
+  was flaky, not deterministic. `ContentStore.put` did a check-then-
+  `open(path, "wb")`, so a concurrent writer of the SAME bytes could observe the
+  destination in its TRUNCATED state and read a prefix. Reproduced locally (1 spurious
+  failure in 30 two-thread trials). **Fixed in the shared byte store** — stage into a
+  private temporary path and rename it into place, so a reader observes only "absent" or
+  the complete file — rather than worked around in the import path, because
+  content-addressed concurrency is exactly what TODO §74 requires to be safe.
+  Regression: a DETERMINISTIC interleaving (the first writer is stalled mid-write by a
+  test filesystem double) that is reliably red without the fix (3/3) and green with it,
+  plus a 12-run repeat of the PostgreSQL content-only race with zero failures.
 - **P2 — a malformed `resolution_combined` was silently laundered into a valid
   "no resolution".** The provider field is a documented `[Float]` array, and a scalar or
   a `["x"]` / `[0]` / `[NaN]` element was being collapsed to `resolution=None`, which is

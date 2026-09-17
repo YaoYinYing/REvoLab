@@ -310,6 +310,16 @@ mapping, both `imported_as` edges, four `ProjectResourceLink`s, and new-resource
 `ResourceStewardship` — commits exactly once. If any database step fails, NONE of the
 local durable import remains.
 
+### The content-addressed write itself is atomic
+
+Because the same byte-identical snapshot can be imported concurrently, `ContentStore.put`
+stages bytes into a private temporary path and renames them into place, so no writer or
+reader can ever observe a partially written file. The pre-existing non-atomic
+check-then-write let a concurrent writer's verification read another writer's truncated
+file and raise a spurious `duplicate checksum with different bytes`; that defect was
+exposed by Phase 15's required content-only race regression and fixed in the shared byte
+store rather than worked around in the import path.
+
 ### ContentStore and PostgreSQL are NOT one distributed transaction, and that is stated honestly
 
 The coordinate bytes are content-addressed BEFORE the database commit, so a later DB

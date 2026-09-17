@@ -7,9 +7,11 @@ server: bytes are immutable, addressed by checksum, and sized/typed at put time.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 from pathlib import Path
 from typing import TypedDict, cast
+from uuid import uuid4
 
 import fsspec  # type: ignore[import-untyped]
 
@@ -34,18 +36,41 @@ class ContentStore:
         return f"{self._root}/{checksum[:2]}/{checksum}"
 
     def put(self, data: bytes, *, content_type: str | None = None) -> PutResult:
+        """Store immutable bytes under their content address, ATOMICALLY.
+
+        A content-addressed write must be atomic: a concurrent writer of the SAME bytes
+        (two imports of one byte-identical snapshot are a real case) or any concurrent
+        reader must never observe a PARTIALLY written file. A plain
+        check-then-`open(path, "wb")` is not atomic — the truncating open is visible to
+        another writer, whose verification read could then see a prefix and raise a
+        spurious "duplicate checksum with different bytes" (empirically reproducible).
+
+        So the bytes are written to a PRIVATE temporary path in the SAME shard
+        directory and then moved into place; a rename within one directory is atomic, so
+        every reader observes either "absent" or the complete file. The move deliberately
+        overwrites an identical concurrent winner (same checksum means the same bytes by
+        construction), and the final verification still catches genuine corruption.
+        """
         checksum = hashlib.sha256(data).hexdigest()
         size = len(data)
         path = self._path(checksum)
         self._fs.makedirs(path.rsplit("/", 1)[0], exist_ok=True)
         if not self._fs.exists(path):
-            with self._fs.open(path, "wb") as handle:
-                handle.write(data)
-        else:
-            # Content-addressed: same checksum must mean same bytes.
-            existing = self._fs.cat(path)
-            if existing != data:
-                raise ConflictError("duplicate checksum with different bytes")
+            temporary = f"{path}.{uuid4().hex}.tmp"
+            try:
+                with self._fs.open(temporary, "wb") as handle:
+                    handle.write(data)
+                # A concurrent identical winner may already have moved its file into
+                # place; the checksum guarantees the same bytes either way.
+                with contextlib.suppress(FileExistsError):
+                    self._fs.mv(temporary, path)
+            finally:
+                if self._fs.exists(temporary):
+                    self._fs.rm(temporary)
+        # Content-addressed: same checksum must mean same bytes.
+        existing = self._fs.cat(path)
+        if existing != data:
+            raise ConflictError("duplicate checksum with different bytes")
         return {
             "checksum": checksum,
             "size": size,

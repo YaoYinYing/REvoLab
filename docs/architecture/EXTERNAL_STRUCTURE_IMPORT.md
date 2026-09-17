@@ -381,7 +381,7 @@ and the canonical internal-artifact path is reused unchanged.
 
 ```text
 coordinate bytes
-    -> ContentStore.put
+    -> ContentStore.put          (ATOMIC: staged privately, renamed into place)
     -> sha256
     -> ArtifactReference(
            authority     = "revolab",
@@ -391,6 +391,15 @@ coordinate bytes
            content_type  = the ONE canonical PDBx/mmCIF media type
        )
 ```
+
+**A content-addressed write is atomic.** Two importers can legitimately store the SAME
+byte-identical snapshot at the same time (the content-only race below). `ContentStore.put`
+therefore stages the bytes into a private temporary path in the target shard directory and
+renames them into place, so a concurrent writer or reader observes only "absent" or the
+complete file — never a truncated one. A plain check-then-`open(path, "wb")` is not atomic
+and let one writer's verification read another writer's prefix, raising a spurious
+`duplicate checksum with different bytes`. The final verification still runs, so genuine
+corruption is still caught, and `get` still re-checks the checksum.
 
 ### 8.3 `authority=revolab` means byte custody, never scientific origin
 
@@ -852,6 +861,9 @@ Database uniqueness is the backstop, and PostgreSQL is the acceptance truth.
 * Linking an already-existing bundle into a Project is idempotent and
   SAVEPOINT-guarded per link, so a concurrent duplicate resolves to the committed
   winner without damaging the rest of the bundle.
+* The ContentStore is byte-identical and immutable, and its put is ATOMIC (staged
+  privately, renamed into place), so two importers storing the same snapshot can never
+  observe a partially written file — the byte-store half of the same content-only race.
 
 A raw `IntegrityError` never reaches a caller, no orphan loser objects remain, and
 no duplicate global series or artifact is created.
